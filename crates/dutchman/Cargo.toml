@@ -26,7 +26,7 @@ pilot = ["dep:dutchman-pilot"]
 freecad = ["dutchman-core/freecad"]
 
 [dependencies]
-base64 = "0.22"
+base64 = "0.23"
 url = "2"
 flate2 = "1"
 ureq = { version = "2.12", default-features = false, features = ["tls"] }

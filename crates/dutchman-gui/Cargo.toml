@@ -23,17 +23,17 @@ freecad = ["dutchman/freecad"]
 dutchman.workspace = true
 dutchman-core = { workspace = true, features = ["formats"] }
 dutchman-solidcraft.workspace = true
-eframe = { version = "0.33", features = ["persistence"] }
-egui_extras = { version = "0.33", default-features = false, features = ["svg"] }
-pollster = "0.4"
-rfd = "0.15"
+eframe = { version = "0.37", features = ["persistence"] }
+egui_extras = { version = "0.37", default-features = false, features = ["svg"] }
+pollster = "1.0"
+rfd = "0.17"
 serde_json.workspace = true
 image = { version = "0.25", default-features = false, features = ["png"] }
 roxmltree.workspace = true
 ureq = { version = "2.12", default-features = false, features = ["tls"] }
 
 [dev-dependencies]
-egui_kittest = { version = "0.33", features = ["eframe", "wgpu"] }
+egui_kittest = { version = "0.37", features = ["eframe", "wgpu"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 tempfile.workspace = true
 
