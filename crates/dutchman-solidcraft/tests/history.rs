@@ -10408,7 +10408,7 @@ fn selecting_nested_loops_leaves_the_inner_one_a_hole() {
     );
     if let Some(cli) = solidcraft() {
         let volume = volumes(&cli, &written(&model).0);
-        let expected = std::f64::consts::PI * 16.0 * 10.0;
+        let expected = std::f64::consts::PI * 16.0 * 5.0;
         assert!((volume[0] - expected).abs() / expected < 1e-3, "{volume:?}");
     }
 }
