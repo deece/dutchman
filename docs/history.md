@@ -22,7 +22,7 @@ history, with no flattened-history warning.
   - sweeps, lofts, and coils;
   - linear, circular, and path patterns of features or bodies, body mirrors, and body
     booleans;
-  - sheet-metal base flanges;
+  - sheet-metal base flanges, edge flanges and square attached plates with their bends;
   - delete face, for faces cadmpeg resolves in the feature's own input topology: planar faces and
     cylindrical faces, each written as a point inside the face, with the heal setting kept. A
     delete-face selection cadmpeg leaves native is reported as such and stops the history there;
@@ -275,8 +275,12 @@ of the rebuilt base sheet. Fixed outer-face heights, angles between zero and 180
 inside/outside bend placement, and positive bend radii map. Inner-face heights, partial widths,
 object-ended heights, adjacent/tangent bend placement, and picks on already modified sheets
 keep the geometry and report the reason. Final-body edges alone never select a flange.
-Attached plates keep geometry: SolidCraft base flanges make separate sheet bodies and
-nothing joins a plate to a sheet edge through a bend. Hems keep geometry: CADIR specifies developed length while SolidCraft requires length to the
+An attached plate with its paired bend maps to one SolidCraft edge flange (the bend is reported
+as mapped with its plate) when the plate is one rectangle that spans the whole proven input edge,
+stands square to the sheet at 90 degrees, is flush with the edge's end face, has the sheet's
+thickness and starts where the bend ends; the flange height is the plate's far end measured
+from the sheet's outer face. Any other plate, or a bend without its plate, keeps the geometry
+and reports the unsupported shape. Hems keep geometry: CADIR specifies developed length while SolidCraft requires length to the
 outer face, and rolled, teardrop, and unresolved hem forms are not supported yet. CADIR has no
 contour-flange, bend, unfold/refold, or corner-relief operations, nor K-factor or relief
 settings; sheet rules keep SolidCraft's defaults for those settings. The report names the

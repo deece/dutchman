@@ -61,20 +61,7 @@ pub(super) fn edge_flange(
     let selection = definition
         .get("edges")
         .ok_or("its edge selection is missing")?;
-    if selection.get("kind").and_then(Value::as_str) != Some("historical") {
-        return Err("its edge selection needs this feature's input edge geometry".to_owned());
-    }
-    let state = selection
-        .pointer("/value/state")
-        .and_then(Value::as_str)
-        .and_then(|id| ctx.row("feature_input_topologies", id))
-        .filter(|state| state.get("input_of") == feature.get("id"))
-        .ok_or("its selected input topology does not belong to this feature")?;
-    let selected = selection
-        .pointer("/value/edges")
-        .and_then(Value::as_array)
-        .filter(|edges| !edges.is_empty() && edges.len() <= 4)
-        .ok_or("a flange needs one to four resolved input edges")?;
+    let (state, selected) = selected_edges(feature, selection, ctx)?;
     if definition.pointer("/height/kind").and_then(Value::as_str) != Some("distance") {
         return Err("a flange height ending at an object is not supported yet".to_owned());
     }
@@ -98,7 +85,61 @@ pub(super) fn edge_flange(
     let radius = number(definition.get("bend_radius"))
         .filter(|v| *v > 0.0)
         .ok_or("its flange bend radius is not given")?;
-    let rebuilt = base_edges(ctx, preceding)?;
+    let base = base_edges(ctx, preceding)?;
+    let picks: Vec<V3> = prove_picks(state, selected, &base.edges)?
+        .into_iter()
+        .map(|pick| pick.point)
+        .collect();
+    let id = ctx.id();
+    Ok(json!({
+        "id": id,
+        "name": name(feature).map(str::to_owned).unwrap_or_else(|| format!("Flange{id}")),
+        "type": "sheet_flange", "suppressed": false,
+        "edges": picks, "height": format!("{height} mm"),
+        "angle": format!("{} deg", angle.to_degrees()),
+        "radius": format!("{radius} mm"), "position": position,
+    }))
+}
+
+/// One proven input edge of the rebuilt base sheet.
+struct Pick {
+    /// The input edge's midpoint.
+    point: V3,
+    /// Its index among the rebuilt edges: 0 to 3 on the sketch face, 4 to 7 on the far face.
+    index: usize,
+    /// The rebuilt edge's end points.
+    ends: (V3, V3),
+}
+
+/// The input topology row and the selected edge ids of a historical selection.
+fn selected_edges<'a, 'b>(
+    feature: &Value,
+    selection: &'b Value,
+    ctx: &Context<'a>,
+) -> Result<(&'a Value, &'b [Value]), String> {
+    if selection.get("kind").and_then(Value::as_str) != Some("historical") {
+        return Err("its edge selection needs this feature's input edge geometry".to_owned());
+    }
+    let state = selection
+        .pointer("/value/state")
+        .and_then(Value::as_str)
+        .and_then(|id| ctx.row("feature_input_topologies", id))
+        .filter(|state| state.get("input_of") == feature.get("id"))
+        .ok_or("its selected input topology does not belong to this feature")?;
+    let selected = selection
+        .pointer("/value/edges")
+        .and_then(Value::as_array)
+        .filter(|edges| !edges.is_empty() && edges.len() <= 4)
+        .ok_or("a flange needs one to four resolved input edges")?;
+    Ok((state, selected))
+}
+
+/// Proves each selected input edge is exactly one rebuilt edge of the base sheet.
+fn prove_picks(
+    state: &Value,
+    selected: &[Value],
+    rebuilt: &[(V3, V3)],
+) -> Result<Vec<Pick>, String> {
     let geometry = state
         .get("edge_geometry")
         .and_then(Value::as_array)
@@ -151,22 +192,30 @@ pub(super) fn edge_flange(
             );
         }
         taken.push(index % 4);
-        picks.push(point);
+        picks.push(Pick {
+            point,
+            index,
+            ends: (*a, *b),
+        });
     }
-    let id = ctx.id();
-    Ok(json!({
-        "id": id,
-        "name": name(feature).map(str::to_owned).unwrap_or_else(|| format!("Flange{id}")),
-        "type": "sheet_flange", "suppressed": false,
-        "edges": picks, "height": format!("{height} mm"),
-        "angle": format!("{} deg", angle.to_degrees()),
-        "radius": format!("{radius} mm"), "position": position,
-    }))
+    Ok(picks)
+}
+
+/// The rebuilt base sheet: its twelve edges and the numbers a flange on it needs.
+struct Base {
+    edges: Vec<(V3, V3)>,
+    thickness: f64,
+    /// Unit direction the sheet grows from its sketch face.
+    growth: V3,
+    /// A point on the sketch face.
+    origin: V3,
+    /// The centre of the sketch face.
+    center: V3,
 }
 
 /// Enumerates all twelve edges of the pre-feature body from the mapped base sketch.
 /// Refuse other histories rather than assume their final edges survived earlier operations.
-fn base_edges(ctx: &Context, preceding: &[Value]) -> Result<Vec<(V3, V3)>, String> {
+fn base_edges(ctx: &Context, preceding: &[Value]) -> Result<Base, String> {
     let mut solids = preceding
         .iter()
         .filter(|f| f.get("type").and_then(Value::as_str) != Some("sketch"));
@@ -277,6 +326,7 @@ fn base_edges(ctx: &Context, preceding: &[Value]) -> Result<Vec<(V3, V3)>, Strin
             z + sign * thickness * nz,
         ]
     };
+    let center = sketch.world([(x0 + x1) / 2.0, (y0 + y1) / 2.0]);
     let mut edges = Vec::new();
     for top in [false, true] {
         for (a, b) in &ring {
@@ -288,7 +338,14 @@ fn base_edges(ctx: &Context, preceding: &[Value]) -> Result<Vec<(V3, V3)>, Strin
         let p = sketch.world(p);
         edges.push((p, shift(p)));
     }
-    Ok(edges)
+    let [nx, ny, nz] = sketch.normal;
+    Ok(Base {
+        edges,
+        thickness,
+        growth: [sign * nx, sign * ny, sign * nz],
+        origin: sketch.origin,
+        center,
+    })
 }
 
 fn difference(a: V3, b: V3) -> V3 {
@@ -327,15 +384,187 @@ pub(super) fn hem_refusal(definition: &Value) -> String {
     reason.to_owned()
 }
 
-/// An attached plate is a flat plate joined to a sheet edge by its paired bend. SolidCraft's base
-/// flange always makes a separate sheet body and nothing else joins a plate to an existing sheet,
-/// so the plate is refused with that reason, or with the missing sheet when there is none.
-pub(super) fn attached_plate_refusal(definition: &Value) -> String {
-    if definition.get("attachment").is_none() {
-        return "an attached plate has no selected sheet edge to attach to".to_owned();
+/// A plate attached to a sheet edge together with its paired bend, written as one 90 degree
+/// edge flange. SolidCraft has no feature that joins a separate plate, so only a rectangular
+/// plate that spans the whole edge, stands square to the sheet and starts where the bend ends
+/// is the same shape as an edge flange. The bend feature is consumed with its plate.
+pub(super) fn attached_plate(
+    feature: &Value,
+    definition: &Value,
+    ctx: &mut Context,
+    preceding: &[Value],
+) -> Result<Value, String> {
+    const TOL: f64 = 1e-4;
+    let selection = definition
+        .get("attachment")
+        .ok_or("an attached plate has no selected sheet edge to attach to")?;
+    let (state, selected) = selected_edges(feature, selection, ctx)?;
+    let plate_id = feature.get("id").and_then(Value::as_str);
+    let bend = ctx
+        .model
+        .get("features")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .find(|f| {
+            let op = super::operation(f);
+            op.get("definition").and_then(Value::as_str) == Some("sheet_metal_bend")
+                && op.get("plate").and_then(Value::as_str) == plate_id
+        })
+        .ok_or("its paired bend is missing, so the plate has no joining region")?;
+    let bend_id = bend
+        .get("id")
+        .and_then(Value::as_str)
+        .ok_or("its paired bend has no id")?
+        .to_owned();
+    let radius = number(super::operation(bend).get("inside_radius"))
+        .filter(|r| *r > 0.0)
+        .ok_or("its bend radius is not given")?;
+    let thickness = number(definition.get("thickness"))
+        .filter(|t| *t > 0.0)
+        .ok_or("its thickness is not given")?;
+    let base = base_edges(ctx, preceding)?;
+    if (thickness - base.thickness).abs() > TOL {
+        return Err("its thickness differs from the base sheet's".to_owned());
     }
-    "an attached plate joined to an existing sheet by a bend is not supported yet; SolidCraft \
-     base flanges make separate sheet bodies and cannot join a plate to a sheet edge"
+    let picks = prove_picks(state, selected, &base.edges)?;
+    let [pick] = picks.as_slice() else {
+        return Err("a plate attached along several edges is not supported yet".to_owned());
+    };
+    let (sketch_id, _) = profile(definition.get("profile"), ctx)?;
+    let sketch = ctx
+        .sketches
+        .get(&sketch_id)
+        .ok_or("its sketch is not an earlier mapped sketch")?;
+    let corners = rectangle(sketch)
+        .ok_or("an attached plate whose profile is not one rectangle is not supported yet")?;
+    let (a, b) = pick.ends;
+    let along = difference(b, a);
+    let length = dot(along, along).sqrt();
+    let e = scale(along, 1.0 / length);
+    let growth = base.growth;
+    let normal = sketch.normal;
+    if dot(normal, e).abs() > 1e-6 || dot(normal, growth).abs() > 1e-6 {
+        return Err("a plate not square to the base sheet is not supported yet".to_owned());
+    }
+    // Outward from the base across the picked edge, in the base plane.
+    let out = difference(pick.point, base.center);
+    let out = difference(out, scale(e, dot(out, e)));
+    let out = difference(out, scale(growth, dot(out, growth)));
+    let reach = dot(out, out).sqrt();
+    if reach < TOL {
+        return Err("its picked edge has no outward direction".to_owned());
+    }
+    let out = scale(out, 1.0 / reach);
+    let offset = dot(difference(sketch.origin, a), out);
+    if offset.abs() > TOL && (offset + thickness).abs() > TOL {
+        return Err(
+            "a plate not flush with the end face of the sheet is not supported yet".to_owned(),
+        );
+    }
+    // The flange rises from the picked face: up from the far face, down from the sketch face.
+    let top = pick.index >= 4;
+    let rise = if top { growth } else { scale(growth, -1.0) };
+    let outer = if top {
+        base.origin
+    } else {
+        let [x, y, z] = base.origin;
+        let [gx, gy, gz] = growth;
+        [x + thickness * gx, y + thickness * gy, z + thickness * gz]
+    };
+    let mut near = f64::INFINITY;
+    let mut far = f64::NEG_INFINITY;
+    for corner in corners {
+        let at = dot(difference(corner, a), e);
+        if at.abs() > TOL && (at - length).abs() > TOL {
+            return Err(
+                "a plate that does not span the whole edge is not supported yet".to_owned(),
+            );
+        }
+        let up = dot(difference(corner, outer), rise);
+        near = near.min(up);
+        far = far.max(up);
+    }
+    if (near - (radius + thickness)).abs() > TOL {
+        return Err(
+            "a plate that does not start where its 90 degree bend ends is not supported yet"
+                .to_owned(),
+        );
+    }
+    ctx.consumed_bends.insert(bend_id);
+    let id = ctx.id();
+    Ok(json!({
+        "id": id,
+        "name": name(feature).map(str::to_owned).unwrap_or_else(|| format!("Flange{id}")),
+        "type": "sheet_flange", "suppressed": false,
+        "edges": [pick.point], "height": format!("{far} mm"),
+        "angle": "90 deg", "radius": format!("{radius} mm"), "position": "inside",
+    }))
+}
+
+/// The four world-space corners of a sketch that is exactly one rectangle of four lines.
+fn rectangle(sketch: &super::sketch::Mapped) -> Option<[V3; 4]> {
+    let mut corners: Vec<V3> = Vec::new();
+    let mut lines = Vec::new();
+    for shape in sketch.shapes.values() {
+        let Shape::Curve(curve) = shape else {
+            continue;
+        };
+        if curve.kind != "line" {
+            return None;
+        }
+        let a = sketch.world(sketch.points.get(curve.start?)?.1);
+        let b = sketch.world(sketch.points.get(curve.end?)?.1);
+        for p in [a, b] {
+            if !corners.iter().any(|c| near(*c, p)) {
+                corners.push(p);
+            }
+        }
+        lines.push((a, b));
+    }
+    let [c0, c1, c2, c3] = <[V3; 4]>::try_from(corners).ok()?;
+    if lines.len() != 4 {
+        return None;
+    }
+    // The corner farthest from the first is its diagonal; the other two are its neighbours.
+    let mut rest = [c1, c2, c3];
+    rest.sort_by(|p, q| {
+        let (dp, dq) = (difference(*p, c0), difference(*q, c0));
+        dot(dp, dp).total_cmp(&dot(dq, dq))
+    });
+    let [n1, n2, diagonal] = rest;
+    let (s1, s2) = (difference(n1, c0), difference(n2, c0));
+    let scale_of = dot(s1, s1).max(dot(s2, s2));
+    if scale_of < 1e-12
+        || dot(s1, s2).abs() > 1e-9 * scale_of
+        || !near(
+            diagonal,
+            [
+                c0[0] + s1[0] + s2[0],
+                c0[1] + s1[1] + s2[1],
+                c0[2] + s1[2] + s2[2],
+            ],
+        )
+    {
+        return None;
+    }
+    let (l1, l2) = (dot(s1, s1).sqrt(), dot(s2, s2).sqrt());
+    let sides = lines.iter().all(|(a, b)| {
+        let d = difference(*b, *a);
+        let len = dot(d, d).sqrt();
+        (len - l1).abs() < 1e-6 || (len - l2).abs() < 1e-6
+    });
+    sides.then_some([c0, n1, diagonal, n2])
+}
+
+fn scale(a: V3, k: f64) -> V3 {
+    let [x, y, z] = a;
+    [x * k, y * k, z * k]
+}
+
+/// The reason a bend not consumed by its plate cannot be mapped.
+pub(super) fn bend_refusal() -> String {
+    "a bend whose attached plate was not written with it as an edge flange is not supported yet"
         .to_owned()
 }
 
