@@ -106,6 +106,33 @@ pub(super) fn profile(profile: Option<&Value>, ctx: &Context) -> Result<(String,
     Ok((sketch.to_owned(), selection))
 }
 
+/// The area (mm squared) of the sketch region a profile reference selects, from the source's
+/// own loops, or `None` when the reference is not a whole sketch or a list of its profiles, or
+/// the loops cannot be followed.
+pub(super) fn swept_area(profile: Option<&Value>, ctx: &Context) -> Option<f64> {
+    let profile = profile?;
+    let value = profile.get("value")?;
+    let (sketch, wanted): (&str, Vec<usize>) = match profile.get("kind")?.as_str()? {
+        "sketch" => {
+            let sketch = value.as_str()?;
+            (sketch, (0..profile_count(ctx, sketch)).collect())
+        }
+        "sketch_profiles" => (
+            value.get("sketch")?.as_str()?,
+            value
+                .get("profiles")?
+                .as_array()?
+                .iter()
+                .map(|index| index.as_u64().and_then(|i| usize::try_from(i).ok()))
+                .collect::<Option<Vec<_>>>()?,
+        ),
+        _ => return None,
+    };
+    let row = ctx.row("sketches", sketch)?;
+    let entities = sketch_entities(ctx, sketch);
+    super::crossing::selected_area(row, &entities, &wanted)
+}
+
 /// The selected source loops as whole boundaries when some lie inside others: a loop inside
 /// one selected loop is its hole, as Fusion's even-odd profile nesting has it, so concentric
 /// circles are a ring, not a disc. `None` when nothing nests, a loop is not followed whole, or

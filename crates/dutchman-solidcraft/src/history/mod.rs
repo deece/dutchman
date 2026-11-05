@@ -9,6 +9,7 @@
 
 pub(crate) mod base;
 mod blend;
+mod cap;
 mod chain;
 mod constraints;
 mod crossing;
@@ -485,6 +486,13 @@ struct Context<'a> {
     blends: Vec<blend::Pending>,
     /// Features the feature being mapped needs before it (a sketch of a face's boundary).
     extra: Vec<Value>,
+    /// Whether exactly one feature of the timeline builds geometry, so the final model's
+    /// faces at its end are its own.
+    sole_builder: bool,
+    /// Set by the feature being mapped: its profile region was not proven against the source.
+    profile_unverified: bool,
+    /// Set by the feature being mapped: its profile region disagrees with the source.
+    profile_mismatch: bool,
 }
 
 impl<'a> Context<'a> {
@@ -518,6 +526,9 @@ impl<'a> Context<'a> {
             sheet_rules: Vec::new(),
             blends: Vec::new(),
             extra: Vec::new(),
+            sole_builder: false,
+            profile_unverified: false,
+            profile_mismatch: false,
         }
     }
 
@@ -788,6 +799,21 @@ fn map_into(
     let mut features: Vec<&Value> = ctx.arena("features").iter().collect();
     let no_timeline = features.is_empty();
     features.sort_by_key(|feature| feature.get("ordinal").and_then(Value::as_u64));
+    ctx.sole_builder = features
+        .iter()
+        .filter(|feature| feature.get("suppressed").and_then(Value::as_bool) != Some(true))
+        .filter(|feature| {
+            let kind = kind(feature);
+            !(kind == "sketch"
+                || kind.starts_with("datum")
+                || matches!(
+                    kind.as_str(),
+                    "tree_node" | "insert_component" | "assembly_joint"
+                )
+                || helpers::is_helper(feature))
+        })
+        .count()
+        == 1;
 
     let mut history = History::default();
     let mut blocked: Option<String> = None;
@@ -797,6 +823,7 @@ fn map_into(
             kind: kind(feature),
             status,
             reason,
+            profile_unverified: false,
         };
         if feature.get("suppressed").and_then(Value::as_bool) == Some(true) {
             report.push(
@@ -873,7 +900,9 @@ fn map_into(
                     ctx.feature_names.insert(id.to_owned(), name);
                 }
                 history.features.push(mapped);
-                out.push(outcome(FeatureStatus::Mapped, None));
+                let mut kept = outcome(FeatureStatus::Mapped, None);
+                kept.profile_unverified = std::mem::take(&mut ctx.profile_unverified);
+                out.push(kept);
                 let main = history.features.len().saturating_sub(1);
                 for pending in ctx.blends.iter_mut().skip(blends) {
                     pending.feature = pending
@@ -886,6 +915,15 @@ fn map_into(
             }
             Err(reason) => {
                 ctx.builds = builds;
+                ctx.profile_unverified = false;
+                if std::mem::take(&mut ctx.profile_mismatch) {
+                    report.push_coded(
+                        Severity::Degraded,
+                        describe(feature),
+                        "history/profile-region-mismatch",
+                        &reason,
+                    );
+                }
                 ctx.extra.clear();
                 history.features.truncate(before);
                 ctx.blends.truncate(blends);

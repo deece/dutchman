@@ -798,6 +798,61 @@ pub(super) fn single_region(sketch: &Value, entities: &[&Value]) -> Option<usize
     (regions == 1).then_some(outer).flatten()
 }
 
+/// The area (mm squared) of the region the source loops `wanted` (indices into the sketch's
+/// profile table) bound under even-odd nesting: material minus the holes inside it. Arcs and
+/// circles are followed as fine polygons. `None` when a loop cannot be followed, crosses itself,
+/// or touches or crosses another selected loop.
+pub(super) fn selected_area(sketch: &Value, entities: &[&Value], wanted: &[usize]) -> Option<f64> {
+    let loops = loops(sketch);
+    if wanted.is_empty() || wanted.len() > MAX_LINES || loops.len() > MAX_LINES {
+        return None;
+    }
+    let polygons = wanted
+        .iter()
+        .map(|&index| polygon(loops.get(index)?, entities))
+        .collect::<Option<Vec<_>>>()?;
+    if polygons.iter().map(Vec::len).sum::<usize>() > MAX_POINTS
+        || polygons.iter().any(|ring| self_crossing(ring))
+    {
+        return None;
+    }
+    for (i, a) in polygons.iter().enumerate() {
+        for b in polygons.iter().skip(i + 1) {
+            let clearance = tolerance(a).max(tolerance(b)) * 10_000.0;
+            if edges(a).any(|(p, q)| {
+                on_boundary(p, b, clearance)
+                    || edges(b)
+                        .any(|(r, s)| !intersection(p, q, r, s).is_ok_and(|hit| hit.is_none()))
+            }) || b.iter().any(|&p| on_boundary(p, a, clearance))
+            {
+                return None;
+            }
+        }
+    }
+    let mut total = 0.0;
+    for (i, ring) in polygons.iter().enumerate() {
+        let point = ring.first().copied()?;
+        let depth = polygons
+            .iter()
+            .enumerate()
+            .filter(|(j, other)| *j != i && inside(point, other))
+            .count();
+        let area = ring_area(ring);
+        total += if depth % 2 == 0 { area } else { -area };
+    }
+    (total > 0.0).then_some(total)
+}
+
+/// The absolute area of a closed polygon.
+pub(super) fn ring_area(ring: &[P2]) -> f64 {
+    let sum: f64 = ring
+        .iter()
+        .zip(ring.iter().cycle().skip(1))
+        .map(|(a, b)| a[0] * b[1] - b[0] * a[1])
+        .sum();
+    sum.abs() / 2.0
+}
+
 /// The outer loops and holes of the source loops `wanted` (indices into the sketch's profile
 /// table) under even-odd nesting: a selected loop inside an odd number of other selected
 /// loops is a hole of the nearest one around it, one inside an even number is material. `None`

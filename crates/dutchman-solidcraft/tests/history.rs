@@ -10987,3 +10987,84 @@ fn through_all_cuts_require_a_body_before_the_cut_in_ordinal_order() {
         }
     }
 }
+
+/// The example cube with a circle of the given radius added to the history's sketch, centred
+/// in its square, as a second profile loop.
+fn cube_with_circle_profile(length: f64, profile: Value, radius: f64) -> Model {
+    let mut model = cube_with_history(length, profile, None);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let sketch = &mut wire["model"];
+    sketch["sketch_entities"]
+        .as_array_mut()
+        .unwrap()
+        .push(entity(
+            5,
+            json!({"kind": "circle", "center": {"u": 5.0, "v": 5.0}, "radius": radius}),
+        ));
+    let loops = sketch["sketches"][0]["profiles"][0].clone();
+    sketch["sketches"][0]["profiles"] = json!([loops, [{"entity": "f3d:model:sketch-entity#5"}]]);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+fn extrude_outcome(model: &Model) -> (dutchman_core::FeatureOutcome, Report) {
+    let writer = SolidCraftWriter::new().verification(Verification::Off);
+    let (_, report) = convert(model, &writer);
+    let extrude = report
+        .outcome()
+        .unwrap()
+        .features
+        .iter()
+        .find(|f| f.kind == "extrude")
+        .unwrap()
+        .clone();
+    (extrude, report)
+}
+
+fn profile_of(indices: &[usize]) -> Value {
+    json!({"kind": "sketch_profiles", "value": {"sketch": SKETCH, "profiles": indices}})
+}
+
+#[test]
+fn an_extrude_whose_region_differs_from_the_source_end_cap_is_blocked() {
+    // The sweep covers a Ø4 circle; the model's end face is the whole 10 mm square.
+    let model = cube_with_circle_profile(10.0, profile_of(&[1]), 2.0);
+    let (extrude, report) = extrude_outcome(&model);
+    assert_eq!(extrude.status, dutchman_core::FeatureStatus::Blocked);
+    let reason = extrude.reason.unwrap();
+    assert!(
+        reason.starts_with("its profile region doesn't match the source (swept 12.6 mm²"),
+        "{reason}"
+    );
+    assert!(reason.contains("the source 100.0 mm²)"), "{reason}");
+    assert!(report
+        .losses()
+        .iter()
+        .any(|loss| loss.code.as_deref() == Some("history/profile-region-mismatch")));
+    // A hole in the swept region leaves the end face smaller than the source's.
+    let model = cube_with_circle_profile(10.0, profile_of(&[0, 1]), 2.0);
+    let (extrude, _) = extrude_outcome(&model);
+    assert_eq!(extrude.status, dutchman_core::FeatureStatus::Blocked);
+    assert!(extrude.reason.unwrap().contains("swept 87.4 mm²"));
+}
+
+#[test]
+fn an_extrude_whose_region_matches_the_source_end_cap_is_kept_and_proven() {
+    let model = cube_with_circle_profile(10.0, profile_of(&[0]), 2.0);
+    let (extrude, report) = extrude_outcome(&model);
+    assert_eq!(extrude.status, dutchman_core::FeatureStatus::Mapped);
+    assert!(!extrude.profile_unverified);
+    assert!(!report
+        .losses()
+        .iter()
+        .any(|loss| loss.code.as_deref() == Some("history/profile-region-mismatch")));
+}
+
+#[test]
+fn an_extrude_with_no_end_cap_in_the_model_is_kept_but_its_profile_is_unproven() {
+    // The model has no face 5 mm up, so nothing says what this sweep covered.
+    let model = cube_with_circle_profile(5.0, profile_of(&[1]), 2.0);
+    let (extrude, _) = extrude_outcome(&model);
+    assert_eq!(extrude.status, dutchman_core::FeatureStatus::Mapped);
+    assert!(extrude.profile_unverified);
+}

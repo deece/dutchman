@@ -125,6 +125,13 @@ the assembly or give `--project DIR` and `--search DIR`. Missing or unreadable o
 are reported and left out; unavailable referenced configurations use the saved active
 configuration with a Degraded loss. See [SolidWorks assemblies](sldprt.md#assemblies-sldasm).
 
+Before a history is built, Dutchman checks each extrude's profile region against the
+source. When the design's only geometry-building feature is a blind one-sided extrude whose
+end face survives in the stored model, the area of the region the extrude sweeps must match
+that face's area (within 1 mm² or 1%); a mismatch blocks the extrude, and the history stops
+there. An extrude whose region cannot be checked this way stays kept and is marked
+`profile_unverified` in the JSON report (see [json.md](json.md)).
+
 History checks stay on by default and fit themselves to free memory. If a second build
 will not fit after reading the design, conversion still saves a usable original shape
 with retained history unverified; the card and report say

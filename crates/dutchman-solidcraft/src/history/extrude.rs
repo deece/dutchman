@@ -161,7 +161,23 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
     {
         return Err("its through-all cut has no earlier named body; resolve its body-producing feature first".to_owned());
     }
+    let end = end_of_sweep(definition, &extent, sketch, start_height, forward);
     let body_names = body_names(feature, ctx, operation);
+    if !face_profile {
+        let proven = match (operation, end) {
+            ("new_body", Some(end)) if ctx.sole_builder => {
+                match super::cap::check(definition.get("profile"), ctx, &end) {
+                    Ok(proven) => proven,
+                    Err(reason) => {
+                        ctx.profile_mismatch = true;
+                        return Err(reason);
+                    }
+                }
+            }
+            _ => false,
+        };
+        ctx.profile_unverified = !proven;
+    }
 
     let id = ctx.id();
     ctx.builds = true;
@@ -179,6 +195,40 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
         fields.insert("body_names".to_owned(), json!(names));
     }
     Ok(out)
+}
+
+/// Where a one-sided blind sweep of `definition` ends, for the cap proof. `None` for every
+/// other extent (drafted, symmetric, two-sided, to an object, through all).
+fn end_of_sweep(
+    definition: &Value,
+    extent: &Map<String, Value>,
+    sketch: &super::sketch::Mapped,
+    start_height: f64,
+    forward: bool,
+) -> Option<super::cap::End> {
+    if extent.contains_key("taper") || extent.contains_key("draft") {
+        return None;
+    }
+    let side = definition.pointer("/extent/side")?;
+    if definition.pointer("/extent/kind")?.as_str()? != "one_sided"
+        || side.pointer("/termination/kind")?.as_str()? != "blind"
+        || number(side.get("draft")).is_some_and(|draft| draft != 0.0)
+    {
+        return None;
+    }
+    let length = number(side.pointer("/termination/length"))?;
+    if length <= 0.0 {
+        return None;
+    }
+    let travel = if forward { 1.0 } else { -1.0 };
+    Some(super::cap::End {
+        origin: sketch.origin,
+        normal: sketch.normal,
+        x: sketch.x_dir,
+        y: sketch.y_dir,
+        height: start_height + travel * length,
+        travel,
+    })
 }
 
 /// Whether the extrude runs along the sketch normal (`false`: against it).
