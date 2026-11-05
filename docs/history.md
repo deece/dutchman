@@ -17,6 +17,8 @@ history, with no flattened-history warning.
     3D sketches of lines, arcs, circles, splines and points;
   - extrudes and revolves, with their end forms;
   - holes: counterbores, countersinks, chamfered entries, and thread labels on tapped holes;
+    a hole placed at several sketch points, drilled at each when its placements are exactly
+    those points and all drill the same way;
     drill points on plain drilled holes, and on counterbores and countersinks for SolidCraft
     0.22.1 and newer;
   - sweeps, lofts, and coils;

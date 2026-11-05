@@ -388,7 +388,7 @@ fn placement(
 ) -> Result<(V3, V3, Option<Value>), String> {
     if let Some(placements) = definition.get("placements").and_then(Value::as_array) {
         let [placement] = placements.as_slice() else {
-            return Err("multiple spatial hole placements are not mapped yet".to_owned());
+            return sketch_placements(definition, ctx, placements);
         };
         return match placement.get("kind").and_then(Value::as_str) {
             Some("directed") => {
@@ -432,6 +432,57 @@ fn placement(
             _ => Err("a hole of this placement is not mapped yet".to_owned()),
         };
     }
+    let (position, direction, points, _) = sketch_locations(definition, ctx, None)?;
+    Ok((position, direction, points))
+}
+
+/// Several directed placements, drilled at the sketch locations they stand on: every
+/// placement must be one of the hole's sketch locations, every location one of the
+/// placements, and all of them must drill the same way.
+fn sketch_placements(
+    definition: &Value,
+    ctx: &Context,
+    placements: &[Value],
+) -> Result<(V3, V3, Option<Value>), String> {
+    const NEAR: f64 = 1e-6;
+    let mut spots = Vec::new();
+    let mut direction = None::<V3>;
+    for placement in placements {
+        if placement.get("kind").and_then(Value::as_str) != Some("directed") {
+            return Err("multiple spatial hole placements are not mapped yet".to_owned());
+        }
+        let position = v3(placement.get("position")).ok_or("its position is not given")?;
+        let along = v3(placement.get("direction"))
+            .and_then(unit)
+            .ok_or("its direction is zero")?;
+        if direction.is_some_and(|first| dot(first, along) < 1.0 - 1e-9) {
+            return Err("holes drilled in different directions are not mapped yet".to_owned());
+        }
+        direction.get_or_insert(along);
+        spots.push(position);
+    }
+    let direction = direction.ok_or("its placements are missing")?;
+    let (position, direction, points, worlds) = sketch_locations(definition, ctx, Some(direction))
+        .map_err(|reason| {
+            format!("multiple spatial hole placements without sketch locations: {reason}")
+        })?;
+    let near = |a: V3, b: V3| dot(sub(a, b), sub(a, b)).sqrt() <= NEAR;
+    if worlds.len() != spots.len()
+        || !spots.iter().all(|s| worlds.iter().any(|w| near(*s, *w)))
+        || !worlds.iter().all(|w| spots.iter().any(|s| near(*s, *w)))
+    {
+        return Err("its placements are not its sketch locations".to_owned());
+    }
+    Ok((position, direction, points))
+}
+
+/// Sketch locations that keep following their sketch, the first one's position, the drill
+/// direction (`direction`, else against the sketch normal) and every location's position.
+fn sketch_locations(
+    definition: &Value,
+    ctx: &Context,
+    direction: Option<V3>,
+) -> Result<(V3, V3, Option<Value>, Vec<V3>), String> {
     let profile = definition.get("profile").unwrap_or(&Value::Null);
     let kind = profile.get("kind").and_then(Value::as_str);
     let value = profile.get("value").unwrap_or(&Value::Null);
@@ -494,7 +545,7 @@ fn placement(
     let first = locations
         .first()
         .ok_or("its sketch has no points to drill at")?;
-    let direction = match v3(definition.get("direction")) {
+    let direction = match direction.or_else(|| v3(definition.get("direction"))) {
         Some(direction) => unit(direction).ok_or("its direction is zero")?,
         None => sketch.normal.map(|c| -c),
     };
@@ -503,11 +554,13 @@ fn placement(
         return Err("a hole oblique to its location sketch is not mapped yet".to_owned());
     }
     let position = sketch.world(first.1);
+    let worlds = locations.iter().map(|(_, p)| sketch.world(*p)).collect();
     let ids: Vec<String> = locations.into_iter().map(|(id, _)| id).collect();
     Ok((
         position,
         direction,
         Some(json!({"sketch": sketch.feature, "ids": ids})),
+        worlds,
     ))
 }
 
@@ -937,6 +990,33 @@ mod tests {
         assert_eq!(out["points"], json!({"sketch": 7, "ids": ["p1"]}));
         assert_eq!(out["position"], json!([3.0, 4.0, 10.0]));
         assert!(out.get("depth").is_none(), "through all");
+    }
+
+    #[test]
+    fn several_placements_on_sketch_locations_drill_at_those_locations() {
+        let at = |x: f64, y: f64, z: f64| {
+            json!({"kind": "directed", "position": {"x": x, "y": y, "z": z},
+                "direction": {"x": 0.0, "y": 0.0, "z": z.signum()}})
+        };
+        let both = json!({"profile_filter": "all", "placements": [
+            at(3.0, 4.0, 10.0), at(-1.0, 0.0, 10.0)]});
+        let out = mapped(&hole(both)).unwrap();
+        assert_eq!(out["points"]["ids"], json!(["p1", "p2"]));
+        // The placements' direction wins over the sketch's default drilling side.
+        assert_eq!(out["direction"], json!([0.0, 0.0, 1.0]));
+
+        let elsewhere = json!({"profile_filter": "all", "placements": [
+            at(3.0, 4.0, 10.0), at(5.0, 5.0, 10.0)]});
+        assert_eq!(
+            mapped(&hole(elsewhere)).unwrap_err(),
+            "its placements are not its sketch locations"
+        );
+        let opposed = json!({"profile_filter": "all", "placements": [
+            at(3.0, 4.0, 10.0), at(-1.0, 0.0, -10.0)]});
+        assert_eq!(
+            mapped(&hole(opposed)).unwrap_err(),
+            "holes drilled in different directions are not mapped yet"
+        );
     }
 
     #[test]
