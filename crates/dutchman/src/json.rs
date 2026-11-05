@@ -628,8 +628,8 @@ fn outcome_fields(outcome: &Outcome) -> Map<String, Value> {
                 },
                 "reason": feature.reason,
             });
-            if feature.profile_unverified {
-                row["profile_unverified"] = json!(true);
+            if let (true, Some(fields)) = (feature.profile_unverified, row.as_object_mut()) {
+                fields.insert("profile_unverified".to_owned(), json!(true));
             }
             row
         })
