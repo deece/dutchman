@@ -1,7 +1,9 @@
 # The anonymous report: `dutchman.report-anon/1`
 
-`dutchman convert-all --report-anon FILE …` (or the MCP `convert_all` tool's `report_anon`)
-writes, beside the usual results, one JSON file that says how a batch went without saying
+`dutchman convert-all --report-anon FILE …`, `dutchman convert --report-anon FILE …` for one
+file (the report of a batch of one, with `--report-salt` and `--report-key` as for
+`convert-all`, and the same stderr notice with the salt), or the MCP `convert_all` tool's
+`report_anon` writes, beside the usual results, one JSON file that says how a batch went without saying
 which files were in it. It is made to be shared: posted in an issue, sent to the maintainers.
 
 For a conversion that never finishes, enable [a live diagnostic log](troubleshooting.md#diagnostic-logs-for-unfinished-runs)

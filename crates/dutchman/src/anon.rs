@@ -251,32 +251,69 @@ pub fn write(
     options: &crate::ConvertOptions,
     settings: &crate::batch::Settings,
 ) -> Result<Salt, String> {
+    let run = Run::of(options, Some(settings));
+    write_run(request, batch, inputs, out_dir, &run)
+}
+
+/// Writes the anonymous report of one file's convert report `file`, converted from `input`
+/// to `output` with `options`, as the report of a batch of that one file, and returns the
+/// salt its id uses.
+pub fn write_one(
+    request: &Request,
+    file: &Value,
+    input: &Path,
+    output: &Path,
+    options: &crate::ConvertOptions,
+) -> Result<Salt, String> {
+    let batch = json!({"results": [file]});
+    let run = Run::of(options, None);
+    write_run(
+        request,
+        &batch,
+        &[input.to_path_buf()],
+        output.parent().unwrap_or(output),
+        &run,
+    )
+}
+
+impl Run {
+    /// What a run with `options` and `settings` (none: a single file, converted here) says
+    /// about itself.
+    fn of(options: &crate::ConvertOptions, settings: Option<&crate::batch::Settings>) -> Run {
+        let solidcraft = match options.to {
+            crate::OutputFormat::Solidcraft => options.reported_solidcraft_version(),
+            crate::OutputFormat::Freecad
+            | crate::OutputFormat::Fcstd
+            | crate::OutputFormat::Dxf => None,
+        };
+        Run {
+            verify: !options.no_verify && solidcraft.is_some(),
+            solidcraft,
+            import_only: options.import_only,
+            jobs: settings.map_or(1, |settings| crate::batch::workers(settings.jobs)),
+            timeout_s: settings
+                .filter(|settings| settings.worker.is_some())
+                .map(|settings| settings.limits.timeout.as_secs()),
+            max_memory_mb: settings
+                .filter(|settings| settings.worker.is_some())
+                .and_then(|settings| settings.limits.max_memory)
+                .map(|bytes| bytes >> 20),
+        }
+    }
+}
+
+fn write_run(
+    request: &Request,
+    batch: &Value,
+    inputs: &[PathBuf],
+    out_dir: &Path,
+    run: &Run,
+) -> Result<Salt, String> {
     let salt = match &request.salt {
         Some(salt) => salt.clone(),
         None => Salt::random()?,
     };
-    let solidcraft = match options.to {
-        crate::OutputFormat::Solidcraft => options.reported_solidcraft_version(),
-        crate::OutputFormat::Freecad | crate::OutputFormat::Fcstd | crate::OutputFormat::Dxf => {
-            None
-        }
-    };
-    let run = Run {
-        verify: !options.no_verify && solidcraft.is_some(),
-        solidcraft,
-        import_only: options.import_only,
-        jobs: crate::batch::workers(settings.jobs),
-        timeout_s: settings
-            .worker
-            .as_ref()
-            .map(|_| settings.limits.timeout.as_secs()),
-        max_memory_mb: settings
-            .worker
-            .as_ref()
-            .and(settings.limits.max_memory)
-            .map(|bytes| bytes >> 20),
-    };
-    let (anon, key) = report(batch, inputs, out_dir, &salt, &run);
+    let (anon, key) = report(batch, inputs, out_dir, &salt, run);
     let save = |path: &Path, value: &Value| {
         let text = serde_json::to_string_pretty(value).map_err(|err| err.to_string())?;
         std::fs::write(path, text + "\n").map_err(|err| format!("{}: {err}", path.display()))

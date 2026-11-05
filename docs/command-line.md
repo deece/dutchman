@@ -160,9 +160,10 @@ blocked one), and the loss report. `inspect --json` prints the same as a
 
 `convert`, `convert-all`, `inspect`, and `watch` show the current stage, designs read, and
 elapsed time on stderr, in seconds and, past a minute, also in hours and minutes, such as
-`7261 s (2 h 1 min)`; the desktop app shows the same. A terminal gets one updating line; redirected stderr gets a line at
-each stage or design completion and a still-working line every five seconds. `--quiet`
-suppresses progress. With `--json`, stderr contains `dutchman.progress/1` JSON lines; stdout
+`7261 s (2 h 1 min)`; the desktop app shows the same. A terminal gets one updating line. When stderr is redirected or piped, text mode prints no
+progress, so logs and scripts see only errors and warnings; `--verbose` asks for a line at
+each stage or design completion and a still-working line every five seconds there. `--quiet`
+suppresses progress everywhere. With `--json`, stderr contains `dutchman.progress/1` JSON lines; stdout
 stays one final report (or the existing watch-event stream for `watch`). Elapsed time starts
 with each file, including a separate assembly's part files.
 
@@ -229,7 +230,12 @@ Large batches:
   Run the same command again and the files already recorded, unchanged since, are not
   converted again; their results come from the journal. Files another version of Dutchman
   recorded, or an older journal format (before 0.1.4), are converted again.
-- **A report you can share.** `--report-anon FILE` also writes an anonymous report: counts by
+- **Every positional argument is an input.** `convert-all` takes files and folders only; the
+  output folder is `--out-dir DIR`. A missing argument that looks like an output path (no
+  extension, or an output extension such as `.sc`) draws a warning on stderr before
+  anything is converted, and is still reported as a missing input.
+- **A report you can share.** `--report-anon FILE` (also accepted by `convert`, for one file,
+  with `--report-salt` and `--report-key`) also writes an anonymous report: counts by
   format, every loss and failure by cause and stage, and timings, with no file names, paths or
   geometry. See [Testing Dutchman on your library](testing-your-library.md) and
   [the report's fields](report-anon.md).

@@ -194,13 +194,25 @@ enum Command {
         /// Also write the whole text report, every loss in full, to FILE.
         #[arg(long, value_name = "FILE")]
         log: Option<PathBuf>,
+        /// Also write an anonymous report to FILE: counts, causes and timings with no file
+        /// names, paths or geometry, safe to share (see docs/report-anon.md).
+        #[arg(long, value_name = "FILE")]
+        report_anon: Option<PathBuf>,
+        /// The salt for the anonymous report's file ids (32 hex digits), to get the same ids as
+        /// an earlier run (default: a new one, printed when the run ends).
+        #[arg(long, value_name = "HEX", requires = "report_anon")]
+        report_salt: Option<String>,
+        /// Write the key from the anonymous id to the file's path to FILE. Keep it private.
+        #[arg(long, value_name = "FILE", requires = "report_anon")]
+        report_key: Option<PathBuf>,
         /// Print one machine-readable report on stdout instead of the text report.
         #[arg(long)]
         json: bool,
     },
     /// Convert CAD files, folders and project ZIPs into designs under one output folder.
     ConvertAll {
-        /// Design files, project ZIPs, and folders to search with their subfolders.
+        /// Design files, project ZIPs, and folders to search with their subfolders. Every
+        /// positional argument is an input file or folder; use --out-dir for the output folder.
         #[arg(required = true)]
         inputs: Vec<PathBuf>,
         /// Output folder, keeping each project's layout (default: a new (SolidCraft) folder
@@ -565,6 +577,9 @@ fn main() -> ExitCode {
             with_children,
             stop_at_feature,
             log,
+            report_anon,
+            report_salt,
+            report_key,
             json,
         } => {
             let explicit = output.or(output_flag);
@@ -581,6 +596,10 @@ fn main() -> ExitCode {
                 eprintln!("dutchman: --page requires --to dxf");
                 return ExitCode::from(2);
             }
+            let mut anon = match anon_request(report_anon, report_salt, report_key, &mut options) {
+                Ok(anon) => anon,
+                Err(code) => return code,
+            };
             if input.is_dir() || batch::extension_of(&input) == "zip" {
                 let out_dir = explicit.unwrap_or_else(|| batch::default_output(&input));
                 let settings = match batch::Settings::isolated() {
@@ -617,6 +636,19 @@ fn main() -> ExitCode {
                 if let Err(err) = std::fs::write(&log, batch::full_log(&report)) {
                     eprintln!("dutchman: cannot write {}: {err}", log.display());
                 }
+                if let Some(request) = anon.take() {
+                    let written = anon::write(
+                        &request,
+                        &report,
+                        std::slice::from_ref(&input),
+                        &out_dir,
+                        &options,
+                        &settings,
+                    );
+                    if let Err(code) = anon_notice(&request, written) {
+                        return code;
+                    }
+                }
                 return exit(&report);
             }
             let derived = explicit.is_none();
@@ -640,6 +672,12 @@ fn main() -> ExitCode {
                         std::fs::write(&log, json::full_log(&report, &batch::line(&report)))
                     {
                         eprintln!("dutchman: cannot write {}: {err}", log.display());
+                    }
+                }
+                if let Some(request) = anon.take() {
+                    let written = anon::write_one(&request, &report, &input, &output, &options);
+                    if let Err(code) = anon_notice(&request, written) {
+                        return code;
                     }
                 }
                 if json {
@@ -702,6 +740,7 @@ fn main() -> ExitCode {
                 &output,
                 &options,
                 log.as_deref(),
+                anon.as_ref(),
                 json,
                 verbose,
                 quiet,
@@ -727,6 +766,7 @@ fn main() -> ExitCode {
                     .map(|input| batch::default_output(input))
                     .unwrap_or_else(|| PathBuf::from("SolidCraft"))
             });
+            warn_missing_inputs(&inputs);
             let preview = batch::plan(&inputs, &out_dir);
             if !json && !quiet {
                 println!("{}", preview.description);
@@ -736,28 +776,10 @@ fn main() -> ExitCode {
                     return ExitCode::from(2);
                 }
             }
-            let mut anon = match report_salt.as_deref().map(anon::Salt::parse).transpose() {
-                Ok(salt) => report_anon.map(|path| anon::Request {
-                    path,
-                    salt,
-                    key: report_key,
-                }),
-                Err(err) => {
-                    eprintln!("dutchman: --report-salt: {err}");
-                    return ExitCode::from(2);
-                }
+            let anon = match anon_request(report_anon, report_salt, report_key, &mut options) {
+                Ok(anon) => anon,
+                Err(code) => return code,
             };
-            if let Some(request) = &mut anon {
-                let salt = match request.salt.clone().map_or_else(anon::Salt::random, Ok) {
-                    Ok(salt) => salt,
-                    Err(err) => {
-                        eprintln!("dutchman: {err}");
-                        return ExitCode::from(2);
-                    }
-                };
-                request.salt = Some(salt.clone());
-                options.diagnostics_salt = Some(salt);
-            }
             let settings = match batch::Settings::isolated() {
                 Ok(settings) => batch::Settings {
                     jobs,
@@ -773,7 +795,7 @@ fn main() -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             };
-            let progress = dutchman::progress::StderrProgress::new(quiet, json);
+            let progress = dutchman::progress::StderrProgress::new(quiet, json, verbose);
             let report = match batch::convert_all_with_progress(
                 &inputs,
                 &out_dir,
@@ -825,19 +847,10 @@ fn main() -> ExitCode {
                 Err(err) => eprintln!("dutchman: cannot write {}: {err}", log.display()),
             }
             if let Some(request) = anon {
-                match anon::write(&request, &report, &inputs, &out_dir, &options, &settings) {
-                    Ok(salt) => eprintln!(
-                        "dutchman: anonymous report written to {}. Its file ids use the salt {}: \
-                         keep the salt to yourself, and give --report-salt {} to get the same ids \
-                         next time.",
-                        request.path.display(),
-                        salt.hex(),
-                        salt.hex()
-                    ),
-                    Err(err) => {
-                        eprintln!("dutchman: cannot write the anonymous report: {err}");
-                        return ExitCode::FAILURE;
-                    }
+                let written =
+                    anon::write(&request, &report, &inputs, &out_dir, &options, &settings);
+                if let Err(code) = anon_notice(&request, written) {
+                    return code;
                 }
             }
             exit(&report)
@@ -1181,16 +1194,100 @@ fn memory_cli(
     }
 }
 
+/// Reads `--report-anon`, `--report-salt` and `--report-key` into a request, choosing the salt
+/// (a new one unless given) and handing it to `options` so diagnostics use the same ids.
+fn anon_request(
+    report_anon: Option<PathBuf>,
+    report_salt: Option<String>,
+    report_key: Option<PathBuf>,
+    options: &mut ConvertOptions,
+) -> Result<Option<anon::Request>, ExitCode> {
+    let salt = match report_salt.as_deref().map(anon::Salt::parse).transpose() {
+        Ok(salt) => salt,
+        Err(err) => {
+            eprintln!("dutchman: --report-salt: {err}");
+            return Err(ExitCode::from(2));
+        }
+    };
+    let Some(path) = report_anon else {
+        return Ok(None);
+    };
+    let salt = match salt.map_or_else(anon::Salt::random, Ok) {
+        Ok(salt) => salt,
+        Err(err) => {
+            eprintln!("dutchman: {err}");
+            return Err(ExitCode::from(2));
+        }
+    };
+    options.diagnostics_salt = Some(salt.clone());
+    Ok(Some(anon::Request {
+        path,
+        salt: Some(salt),
+        key: report_key,
+    }))
+}
+
+/// Says where the anonymous report went and which salt its ids use, or why it was not written.
+fn anon_notice(
+    request: &anon::Request,
+    written: Result<anon::Salt, String>,
+) -> Result<(), ExitCode> {
+    match written {
+        Ok(salt) => {
+            eprintln!(
+                "dutchman: anonymous report written to {}. Its file ids use the salt {}: \
+                 keep the salt to yourself, and give --report-salt {} to get the same ids \
+                 next time.",
+                request.path.display(),
+                salt.hex(),
+                salt.hex()
+            );
+            Ok(())
+        }
+        Err(err) => {
+            eprintln!("dutchman: cannot write the anonymous report: {err}");
+            Err(ExitCode::FAILURE)
+        }
+    }
+}
+
+/// Output extensions a mistaken positional argument of convert-all is likely to carry.
+const OUTPUT_EXTENSIONS: [&str; 6] = ["sc", "solidcraft", "step", "stp", "fcstd", "fcmacro"];
+
+/// Warns, before anything is converted, about a positional argument of convert-all that does
+/// not exist and looks like an output path: every positional argument is an input.
+fn warn_missing_inputs(inputs: &[PathBuf]) {
+    for input in inputs {
+        if input.try_exists().unwrap_or(true) {
+            continue;
+        }
+        let extension = batch::extension_of(input);
+        let looks_like_output = extension.is_empty()
+            || OUTPUT_EXTENSIONS.contains(&extension.as_str())
+            || (input
+                .parent()
+                .is_some_and(|parent| parent.as_os_str().is_empty() || parent.is_dir())
+                && dutchman_core::Format::from_path(input).is_none());
+        if looks_like_output {
+            eprintln!(
+                "dutchman: {} does not exist; every positional argument is an input \u{2014} to choose the output folder use --out-dir",
+                input.display()
+            );
+        }
+    }
+}
+
 fn convert(
     input: &Path,
     output: &Path,
     options: &ConvertOptions,
     log: Option<&Path>,
+    anon: Option<&anon::Request>,
     as_json: bool,
     verbose: bool,
     quiet: bool,
 ) -> ExitCode {
-    let progress = dutchman::progress::StderrProgress::new(quiet, as_json);
+    let progress = dutchman::progress::StderrProgress::new(quiet, as_json, verbose);
     let report = dutchman::convert_options_with_progress(
         input,
         output,
@@ -1204,6 +1301,12 @@ fn convert(
         let text = json::full_log(&report, &batch::line(&report));
         if let Err(err) = std::fs::write(log, text) {
             eprintln!("dutchman: cannot write {}: {err}", log.display());
+        }
+    }
+    if let Some(request) = anon {
+        let written = anon::write_one(request, &report, input, output, options);
+        if let Err(code) = anon_notice(request, written) {
+            return code;
         }
     }
     if !as_json {
@@ -1261,7 +1364,7 @@ fn inspect(
     verbose: bool,
     quiet: bool,
 ) -> ExitCode {
-    let progress = dutchman::progress::StderrProgress::new(quiet, as_json);
+    let progress = dutchman::progress::StderrProgress::new(quiet, as_json, verbose);
     let result =
         dutchman::inspect_with_progress(input, search, &|event| progress.report(input, event));
     progress.finish();

@@ -1746,19 +1746,11 @@ fn numbered_default_outputs_use_the_base_name_and_keep_existing_files() {
     assert!(!dir.path().join("bracket.prt.sc").exists());
 }
 
-fn assert_text_error_with_progress(out: &Output, input: &std::path::Path, expected: &str) {
+/// Off a terminal the text mode prints no progress lines: the error is the only stderr line.
+fn assert_text_error_with_progress(out: &Output, _input: &std::path::Path, expected: &str) {
     let stderr = String::from_utf8_lossy(&out.stderr);
-    let mut lines: Vec<_> = stderr.lines().collect();
-    assert_eq!(lines.pop(), Some(expected));
-    assert!(!lines.is_empty());
-    let prefix = format!("{}: ", input.display());
-    for line in lines {
-        assert!(line.starts_with(&prefix), "unexpected stderr line: {line}");
-        assert!(
-            line.contains(" s elapsed"),
-            "unexpected stderr line: {line}"
-        );
-    }
+    let lines: Vec<_> = stderr.lines().collect();
+    assert_eq!(lines, [expected]);
 }
 
 fn assert_progress_json(out: &Output) -> Vec<serde_json::Value> {
@@ -1831,8 +1823,9 @@ fn conversion_progress_stays_on_stderr_and_quiet_suppresses_it() {
                     assert_eq!(last["designs_total"], 1);
                 } else {
                     let stderr = String::from_utf8_lossy(&out.stderr);
-                    assert!(stderr.contains("1 of 1 designs read"));
-                    assert!(stderr.contains("s elapsed"));
+                    // Piped stderr is not a terminal: no progress lines.
+                    assert!(!stderr.contains("designs read"));
+                    assert!(!stderr.contains("s elapsed"));
                     assert!(!stderr.contains('\r'));
                     assert!(!stderr.contains('\x1b'));
                 }
@@ -3559,4 +3552,83 @@ fn report_previews_a_converted_result_and_refuses_unconfirmed_sending() {
     let refused = dutchman(&["report", "--folder", folder_text, "--send-summary"]);
     assert_eq!(refused.status.code(), Some(2));
     assert!(!folder.join("submission.json").exists());
+}
+
+#[test]
+fn verbose_asks_for_plain_progress_lines_off_a_terminal() {
+    let dir = tempfile::tempdir().unwrap();
+    let output = dir.path().join("verbose.sc");
+    let out = dutchman(&[
+        "convert",
+        "--no-verify",
+        "--verbose",
+        &fixture("generated_unit_cube.f3d"),
+        output.to_str().unwrap(),
+    ]);
+    assert_eq!(out.status.code(), Some(0));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("s elapsed"), "{stderr}");
+}
+
+#[test]
+fn convert_all_warns_about_a_missing_argument_that_looks_like_an_output_folder() {
+    let dir = tempfile::tempdir().unwrap();
+    let wanted = dir.path().join("Converted");
+    let out = dutchman(&[
+        "convert-all",
+        "--no-verify",
+        &fixture("generated_unit_cube.f3d"),
+        wanted.to_str().unwrap(),
+    ]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let warning = format!(
+        "dutchman: {} does not exist; every positional argument is an input",
+        wanted.display()
+    );
+    assert!(stderr.contains(&warning), "{stderr}");
+    assert!(stderr.contains("--out-dir"), "{stderr}");
+    // The missing input is still reported as before.
+    assert_eq!(out.status.code(), Some(1));
+    assert!(!wanted.exists());
+}
+
+#[test]
+fn convert_all_help_says_every_positional_is_an_input() {
+    let out = dutchman(&["convert-all", "--help"]);
+    let help = String::from_utf8_lossy(&out.stdout);
+    assert!(help.contains("Every"), "{help}");
+    assert!(help.contains("--out-dir for the output folder"), "{help}");
+}
+
+#[test]
+fn convert_writes_the_anonymous_report_of_one_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let output = dir.path().join("one.sc");
+    let anon = dir.path().join("anon.json");
+    let key = dir.path().join("key.json");
+    let input = fixture("generated_unit_cube.f3d");
+    let out = dutchman(&[
+        "convert",
+        "--no-verify",
+        "--report-anon",
+        anon.to_str().unwrap(),
+        "--report-key",
+        key.to_str().unwrap(),
+        &input,
+        output.to_str().unwrap(),
+    ]);
+    assert_eq!(out.status.code(), Some(0));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("anonymous report written to"), "{stderr}");
+    assert!(stderr.contains("the salt "), "{stderr}");
+    let text = std::fs::read_to_string(&anon).unwrap();
+    let report: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(report["schema"], "dutchman.report-anon/1");
+    assert_eq!(report["totals"]["files"], 1);
+    assert_eq!(report["totals"]["converted"], 1);
+    assert!(!text.contains("generated_unit_cube"), "{text}");
+    assert!(!text.contains(dir.path().to_str().unwrap()), "{text}");
+    let key: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&key).unwrap()).unwrap();
+    assert_eq!(key["files"].as_object().unwrap().len(), 1);
 }

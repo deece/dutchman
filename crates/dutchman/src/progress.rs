@@ -11,21 +11,26 @@ pub struct StderrProgress {
     quiet: bool,
     json: bool,
     terminal: bool,
+    plain: bool,
     line: Mutex<Option<usize>>,
 }
 
 impl StderrProgress {
-    pub fn new(quiet: bool, json: bool) -> Self {
+    /// Progress shows as an updating line on a terminal. Off a terminal it is silent, unless
+    /// `json` asks for machine-readable lines or `verbose` for plain ones; `quiet` hides all.
+    pub fn new(quiet: bool, json: bool, verbose: bool) -> Self {
+        let terminal = std::io::stderr().is_terminal();
         Self {
             quiet,
             json,
-            terminal: std::io::stderr().is_terminal(),
+            terminal,
+            plain: verbose,
             line: Mutex::new(None),
         }
     }
 
     pub fn report(&self, input: &Path, event: ProgressEvent) {
-        if self.quiet {
+        if self.quiet || !(self.json || self.terminal || self.plain) {
             return;
         }
         if let Ok(mut line) = self.line.lock() {

@@ -140,7 +140,11 @@ pub fn run_with_progress(mut command: Command, quiet: bool) -> Result<bool, Stri
 }
 
 fn run_prepared(command: Command, quiet: bool, stopped: &mut bool) -> Result<bool, String> {
-    let progress = Arc::new(crate::progress::StderrProgress::new(quiet, command.json));
+    let progress = Arc::new(crate::progress::StderrProgress::new(
+        quiet,
+        command.json,
+        false,
+    ));
     if command.options.to == crate::OutputFormat::Dxf {
         return Err(
             "DXF page output uses dutchman convert --to dxf; batch and watch are not supported yet"
