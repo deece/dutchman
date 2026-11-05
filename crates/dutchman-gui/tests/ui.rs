@@ -1521,6 +1521,9 @@ mod consent_e2e {
                             Err(e) => panic!("{e}"),
                         }
                     };
+                    // On Windows an accepted socket inherits the listener's non-blocking mode;
+                    // this server reads with a timeout instead.
+                    stream.set_nonblocking(false).unwrap();
                     stream
                         .set_read_timeout(Some(Duration::from_secs(10)))
                         .unwrap();
