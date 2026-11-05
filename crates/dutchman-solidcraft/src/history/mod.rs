@@ -1329,6 +1329,7 @@ fn map_feature(
             sheet::edge_flange(feature, definition, ctx, preceding).map(Mapped::Feature)
         }
         Some("sheet_metal_hem") => Err(sheet::hem_refusal(definition)),
+        Some("sheet_metal_attached_plate") => Err(sheet::attached_plate_refusal(definition)),
         Some("stored_geometry") => base::stored(feature, ctx, report).map(Mapped::Feature),
         Some("base_feature") if base::holds_none(definition) => Ok(Mapped::Nothing),
         Some("base_feature") => base::map(feature, definition, ctx).map(Mapped::Feature),

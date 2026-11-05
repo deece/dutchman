@@ -6682,6 +6682,32 @@ fn hems_explain_the_form_or_dimension_that_cannot_be_expressed() {
     }
 }
 
+#[test]
+fn attached_plate_keeps_geometry_with_its_specific_reason() {
+    for (attachment, reason) in [
+        (
+            Some(json!({"kind": "native"})),
+            "cannot join a plate to a sheet edge",
+        ),
+        (None, "no selected sheet edge"),
+    ] {
+        let mut definition = json!({
+            "definition": "sheet_metal_attached_plate", "thickness": 2.0, "side": "forward",
+        });
+        if let Some(attachment) = attachment {
+            definition["attachment"] = attachment;
+        }
+        let model = sheet_operation(definition);
+        let (_, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        let line = history_line(&report);
+        assert!(line.contains(reason), "{line}");
+        assert!(!line.contains("not mapped yet"), "{line}");
+    }
+}
+
 /// The example cube under a timeline of `features`, each `(name, definition)`.
 fn cube_under(features: &[(&str, Value)]) -> Model {
     let ir = cadmpeg_ir::examples::unit_cube().unwrap();

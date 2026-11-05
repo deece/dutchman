@@ -327,6 +327,18 @@ pub(super) fn hem_refusal(definition: &Value) -> String {
     reason.to_owned()
 }
 
+/// An attached plate is a flat plate joined to a sheet edge by its paired bend. SolidCraft's base
+/// flange always makes a separate sheet body and nothing else joins a plate to an existing sheet,
+/// so the plate is refused with that reason, or with the missing sheet when there is none.
+pub(super) fn attached_plate_refusal(definition: &Value) -> String {
+    if definition.get("attachment").is_none() {
+        return "an attached plate has no selected sheet edge to attach to".to_owned();
+    }
+    "an attached plate joined to an existing sheet by a bend is not supported yet; SolidCraft \
+     base flanges make separate sheet bodies and cannot join a plate to a sheet edge"
+        .to_owned()
+}
+
 /// A SolidCraft sheet rule of `thickness` mm, named after it, with SolidCraft's own defaults
 /// for everything else.
 pub(super) fn rule(name: &str, thickness: f64) -> Value {

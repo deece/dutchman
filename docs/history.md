@@ -275,7 +275,8 @@ of the rebuilt base sheet. Fixed outer-face heights, angles between zero and 180
 inside/outside bend placement, and positive bend radii map. Inner-face heights, partial widths,
 object-ended heights, adjacent/tangent bend placement, and picks on already modified sheets
 keep the geometry and report the reason. Final-body edges alone never select a flange.
-Hems keep geometry: CADIR specifies developed length while SolidCraft requires length to the
+Attached plates keep geometry: SolidCraft base flanges make separate sheet bodies and
+nothing joins a plate to a sheet edge through a bend. Hems keep geometry: CADIR specifies developed length while SolidCraft requires length to the
 outer face, and rolled, teardrop, and unresolved hem forms are not supported yet. CADIR has no
 contour-flange, bend, unfold/refold, or corner-relief operations, nor K-factor or relief
 settings; sheet rules keep SolidCraft's defaults for those settings. The report names the
