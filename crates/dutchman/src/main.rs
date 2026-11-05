@@ -741,9 +741,11 @@ fn main() -> ExitCode {
                 &options,
                 log.as_deref(),
                 anon.as_ref(),
-                json,
-                verbose,
-                quiet,
+                Output {
+                    json,
+                    verbose,
+                    quiet,
+                },
             )
         }
         Command::ConvertAll {
@@ -1277,16 +1279,27 @@ fn warn_missing_inputs(inputs: &[PathBuf]) {
     }
 }
 
+/// How a command prints: JSON or text, and how much of it.
+#[derive(Clone, Copy)]
+struct Output {
+    json: bool,
+    verbose: bool,
+    quiet: bool,
+}
+
 fn convert(
     input: &Path,
     output: &Path,
     options: &ConvertOptions,
     log: Option<&Path>,
     anon: Option<&anon::Request>,
-    as_json: bool,
-    verbose: bool,
-    quiet: bool,
+    printing: Output,
 ) -> ExitCode {
+    let Output {
+        json: as_json,
+        verbose,
+        quiet,
+    } = printing;
     let progress = dutchman::progress::StderrProgress::new(quiet, as_json, verbose);
     let report = dutchman::convert_options_with_progress(
         input,
