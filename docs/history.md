@@ -26,6 +26,10 @@ history, with no flattened-history warning.
   - delete face, for faces cadmpeg resolves in the feature's own input topology: planar faces and
     cylindrical faces, each written as a point inside the face, with the heal setting kept. A
     delete-face selection cadmpeg leaves native is reported as such and stops the history there;
+  - move face, as SolidCraft's offset face: planar faces cadmpeg resolves in the feature's own
+    input topology and moves along their normal, each written as a point inside the face with
+    the signed distance. Translations along a direction, rotations, non-planar faces and native
+    selections are reported with their reason and stop the history there;
   - constant-radius fillets and equal-setback chamfers, on edges proven on SolidCraft's own
     replay of the history before them (so they need `solidcraft-cli`); a Fusion fillet with a
     tangency weight of exactly 1 maps as a circular fillet.

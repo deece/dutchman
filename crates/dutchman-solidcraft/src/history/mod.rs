@@ -23,6 +23,7 @@ mod helpers;
 mod hole;
 mod loft;
 mod modify;
+mod move_face;
 pub(crate) mod params;
 mod pattern;
 mod primitive;
@@ -1320,6 +1321,7 @@ fn map_feature(
         Some("fillet" | "chamfer") => {
             blend::map(feature, definition, ctx, report).map(Mapped::Feature)
         }
+        Some("move_face") => move_face::map(feature, definition, ctx).map(Mapped::Feature),
         Some("delete_face") => delete_face::map(feature, definition, ctx).map(Mapped::Feature),
         Some("hole") => hole::map(feature, definition, ctx, report).map(Mapped::Feature),
         Some("sheet_metal_base_flange") => {

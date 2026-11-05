@@ -10193,6 +10193,73 @@ fn a_historical_face_is_deleted_by_a_point_inside_it() {
     }
 }
 
+fn face_move(motion: Value) -> Model {
+    face_extrude(true, |definition| {
+        *definition = json!({
+            "definition": "move_face",
+            "faces": {"kind": "historical", "value": {
+                "state": "test:face:feature-input#3",
+                "faces": ["test:face:historical-face#target"], "native": "synthetic selection"}},
+            "motion": motion,
+        });
+    })
+}
+
+#[test]
+fn a_face_moved_along_its_normal_becomes_an_offset_face_at_a_point_inside_it() {
+    let model = face_move(json!({"kind": "offset", "distance": 2.5}));
+    let (document, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    let feature = document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["type"] == "offset_face")
+        .unwrap_or_else(|| panic!("{}", history_line(&report)));
+    assert_eq!(feature["distance"], json!("2.5 mm"));
+    let points = feature["faces"].as_array().unwrap();
+    assert_eq!(points.len(), 1);
+    let p: Vec<f64> = points[0]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_f64().unwrap())
+        .collect();
+    assert!((p[2] - 10.0).abs() < 1e-9, "{p:?}");
+    assert!(
+        p[0] > 1.0 && p[0] < 9.0 && p[1] > 1.0 && p[1] < 9.0,
+        "{p:?}"
+    );
+}
+
+#[test]
+fn rotated_and_slid_faces_are_refused_for_their_motion() {
+    let rotate = json!({"kind": "rotate",
+        "axis_origin": {"x": 0.0, "y": 0.0, "z": 0.0},
+        "axis_dir": {"x": 1.0, "y": 0.0, "z": 0.0}, "angle": 0.5});
+    let slide = json!({"kind": "translate",
+        "direction": {"x": 0.0, "y": 0.0, "z": 1.0}, "distance": 2.0});
+    for (motion, reason) in [
+        (rotate, "rotating faces is not supported yet"),
+        (
+            slide,
+            "translating faces along a direction is not supported yet",
+        ),
+    ] {
+        let (_, report) = convert(
+            &face_move(motion),
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert!(
+            history_line(&report).contains(reason),
+            "{}",
+            history_line(&report)
+        );
+    }
+}
+
 #[test]
 fn a_native_face_deletion_is_refused_for_its_selection() {
     let model = face_delete(|_, _| json!({"kind": "native", "value": "synthetic"}), true);
