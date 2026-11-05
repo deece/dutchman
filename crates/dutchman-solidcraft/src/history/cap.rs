@@ -167,9 +167,11 @@ fn edge_points(ctx: &Context, edge: &Value) -> Option<Vec<V3>> {
             let mut points: Vec<V3> = (0..=steps)
                 .map(|i| {
                     let a = from + sweep * i as f64 / steps as f64;
-                    std::array::from_fn(|k| {
-                        center[k] + radius * (a.cos() * reference[k] + a.sin() * side[k])
-                    })
+                    let mut point = center;
+                    for ((coordinate, r), s) in point.iter_mut().zip(reference).zip(side) {
+                        *coordinate += radius * (a.cos() * r + a.sin() * s);
+                    }
+                    point
                 })
                 .collect();
             // The stored ends are exact.
