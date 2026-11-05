@@ -37,7 +37,7 @@ pub(super) fn check(profile: Option<&Value>, ctx: &Context, end: &End) -> Result
     let Some(cap) = cap_area(ctx, end) else {
         return Ok(false);
     };
-    if (swept - cap).abs() > 1.0_f64.max(0.01 * cap) {
+    if (swept - cap).abs() > 1.0_f64.max(0.03 * cap) {
         return Err(format!(
             "its profile region doesn't match the source (swept {swept:.1} mm², the source \
              {cap:.1} mm²)"

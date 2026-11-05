@@ -799,9 +799,10 @@ fn map_into(
     let mut features: Vec<&Value> = ctx.arena("features").iter().collect();
     let no_timeline = features.is_empty();
     features.sort_by_key(|feature| feature.get("ordinal").and_then(Value::as_u64));
+    // Suppressed features count too: a caller can suppress a suffix of the timeline (the
+    // FreeCAD partial prefix does) while the final model still holds what that suffix built.
     ctx.sole_builder = features
         .iter()
-        .filter(|feature| feature.get("suppressed").and_then(Value::as_bool) != Some(true))
         .filter(|feature| {
             let kind = kind(feature);
             !(kind == "sketch"

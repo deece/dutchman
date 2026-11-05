@@ -452,7 +452,7 @@ try:
     names = {}
     tip = None
     tip = rebuild(json.loads("{\"id\":1,\"name\":\"Profile\",\"plane\":{\"name\":\"XY\",\"type\":\"origin\"},\"sketch\":{\"constraints\":[],\"curves\":[{\"c\":1,\"construction\":false,\"id\":\"c1\",\"r\":2.00000000000000000e0,\"type\":\"circle\"}],\"points\":[{\"fixed\":true,\"id\":\"origin\",\"pos\":[0.00000000000000000e0,0.00000000000000000e0]},{\"fixed\":false,\"id\":\"p1\",\"pos\":[5.00000000000000000e0,0.00000000000000000e0]}]},\"suppressed\":false,\"type\":\"sketch\"}"), body, objects, names, tip)
-    tip = rebuild(json.loads("{\"extent\":{\"direction\":\"positive\",\"distance\":\"10 mm\"},\"id\":2,\"name\":\"Solid\",\"operation\":\"new_body\",\"profiles\":{\"type\":\"all\"},\"sketch\":1,\"suppressed\":false,\"type\":\"extrude\"}"), body, objects, names, tip)
+    tip = rebuild(json.loads("{\"extent\":{\"direction\":\"positive\",\"distance\":\"5 mm\"},\"id\":2,\"name\":\"Solid\",\"operation\":\"new_body\",\"profiles\":{\"type\":\"all\"},\"sketch\":1,\"suppressed\":false,\"type\":\"extrude\"}"), body, objects, names, tip)
     tip = rebuild(json.loads("{\"features\":[\"Solid\"],\"id\":3,\"name\":\"Copies\",\"pattern\":{\"count1\":\"3\",\"dir1\":[1.00000000000000000e0,0.00000000000000000e0,0.00000000000000000e0],\"spacing1\":\"20 mm\",\"type\":\"rectangular\"},\"suppressed\":false,\"type\":\"pattern\"}"), body, objects, names, tip)
     doc.recompute()
     if body.Shape.isNull() or not body.Shape.isValid():

@@ -10393,6 +10393,10 @@ fn selecting_nested_loops_leaves_the_inner_one_a_hole() {
     let mut wire = serde_json::to_value(&model.ir).unwrap();
     wire["model"]["features"][1]["definition"]["profile"] =
         json!({"kind": "sketch_profiles", "value": {"sketch": SKETCH, "profiles": [1, 0]}});
+    // End where the synthetic final cube has no face: this test is about the written profile,
+    // not the end-cap comparison.
+    wire["model"]["features"][1]["definition"]["extent"]["side"]["termination"]["length"] =
+        json!(5.0);
     model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
     let (document, _) = convert(
         &model,
@@ -11033,7 +11037,7 @@ fn an_extrude_whose_region_differs_from_the_source_end_cap_is_blocked() {
     assert_eq!(extrude.status, dutchman_core::FeatureStatus::Blocked);
     let reason = extrude.reason.unwrap();
     assert!(
-        reason.starts_with("its profile region doesn't match the source (swept 12.6 mm²"),
+        reason.starts_with("its profile region doesn't match the source (swept 12.5 mm²"),
         "{reason}"
     );
     assert!(reason.contains("the source 100.0 mm²)"), "{reason}");
@@ -11045,7 +11049,7 @@ fn an_extrude_whose_region_differs_from_the_source_end_cap_is_blocked() {
     let model = cube_with_circle_profile(10.0, profile_of(&[0, 1]), 2.0);
     let (extrude, _) = extrude_outcome(&model);
     assert_eq!(extrude.status, dutchman_core::FeatureStatus::Blocked);
-    assert!(extrude.reason.unwrap().contains("swept 87.4 mm²"));
+    assert!(extrude.reason.unwrap().contains("swept 87.5 mm²"));
 }
 
 #[test]

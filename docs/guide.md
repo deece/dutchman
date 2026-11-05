@@ -128,7 +128,7 @@ configuration with a Degraded loss. See [SolidWorks assemblies](sldprt.md#assemb
 Before a history is built, Dutchman checks each extrude's profile region against the
 source. When the design's only geometry-building feature is a blind one-sided extrude whose
 end face survives in the stored model, the area of the region the extrude sweeps must match
-that face's area (within 1 mm² or 1%); a mismatch blocks the extrude, and the history stops
+that face's area (within 1 mm² or 3%, which absorbs arcs measured as fine polygons); a mismatch blocks the extrude, and the history stops
 there. An extrude whose region cannot be checked this way stays kept and is marked
 `profile_unverified` in the JSON report (see [json.md](json.md)).
 

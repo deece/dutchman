@@ -7,6 +7,9 @@ use super::{generate, readable, FreeCadWriter};
 
 // Synthetic CADIR, following dutchman-solidcraft/tests/history.rs. The B-rep is
 // cadmpeg's generated cube; the history is authored here to test script text only.
+/// A synthetic part: a sketched circle extruded 5 mm, beside the unit cube's final shape. The
+/// extrude ends where the final shape has no face, so its profile is reported unverified rather
+/// than compared with the cube's 100 mm² top face.
 fn model(kind: &str) -> Model {
     let mut wire = serde_json::to_value(cadmpeg_ir::examples::unit_cube().unwrap()).unwrap();
     let arena = &mut wire["model"];
@@ -32,7 +35,7 @@ fn model(kind: &str) -> Model {
         {"id": "synthetic:test:feature#2", "ordinal": 1, "name": "Solid", "suppressed": false,
          "definition": {"definition": "extrude", "profile": {"kind": "sketch", "value": "synthetic:test:sketch#1"},
              "direction": {"kind": "profile_normal"}, "start": {"kind": "profile_plane"},
-             "extent": {"kind": "one_sided", "side": {"termination": {"kind": "blind", "length": 10.0}}},
+             "extent": {"kind": "one_sided", "side": {"termination": {"kind": "blind", "length": 5.0}}},
              "op": "new_body"}}
     ]);
     if kind == "revolve" {
@@ -96,6 +99,11 @@ fn synthetic_histories_match_macro_goldens() {
                 }
             })
             .collect();
+        if std::env::var_os("DUTCHMAN_FREECAD_BLESS").is_some() {
+            let path = format!("{}/tests/golden/{kind}.FCMacro", env!("CARGO_MANIFEST_DIR"));
+            std::fs::write(path, &normalized).unwrap();
+            continue;
+        }
         assert_eq!(normalized, golden, "{kind}");
     }
 }
@@ -152,7 +160,7 @@ fn partial_history_keeps_pad_and_sketch_beside_the_final_step() {
     let rows: Value = serde_json::from_str(&literal).unwrap();
     assert_eq!(rows[0]["type"], "sketch");
     assert_eq!(rows[1]["type"], "extrude");
-    assert_eq!(rows[1]["extent"]["distance"], "10 mm");
+    assert_eq!(rows[1]["extent"]["distance"], "5 mm");
     assert_eq!(rows.as_array().unwrap().len(), 2);
 }
 
