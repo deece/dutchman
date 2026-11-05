@@ -617,7 +617,11 @@ fn outcome_fields(outcome: &Outcome) -> Map<String, Value> {
         .features
         .iter()
         .map(|feature| {
-            json!({
+            let refusal = feature
+                .reason
+                .as_deref()
+                .and_then(dutchman_core::classify_refusal);
+            let mut row = json!({
                 "name": feature.name,
                 "kind": feature.kind,
                 "status": match feature.status {
@@ -626,8 +630,15 @@ fn outcome_fields(outcome: &Outcome) -> Map<String, Value> {
                     FeatureStatus::LeftOut => "left_out",
                     FeatureStatus::Blocked => "blocked",
                 },
-                "reason": feature.reason,
-            })
+                "reason": refusal.as_ref().map_or(feature.reason.as_deref(), |r| Some(r.text.as_str())),
+            });
+            if let (Some(refusal), Some(fields)) = (&refusal, row.as_object_mut()) {
+                fields.insert("source".into(), json!("solidcraft"));
+                fields.insert("category".into(), json!(refusal.category));
+                fields.insert("upstream".into(), json!(refusal.upstream));
+                fields.insert("reason_raw".into(), json!(feature.reason));
+            }
+            row
         })
         .collect();
     let counted = |f: &&dutchman_core::FeatureOutcome| f.status != FeatureStatus::LeftOut;

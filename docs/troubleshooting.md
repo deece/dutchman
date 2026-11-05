@@ -70,6 +70,15 @@ says whether your small file fails the same way, and `--make-report` gathers the
 Nothing is sent: the zip stays on your machine until you send it. See
 [Let Dutchman do all of it](diagnose.md#let-dutchman-do-all-of-it---narrow).
 
+## "SolidCraft refused feature ..."
+
+The history stopped because SolidCraft itself would not rebuild that feature; it is not a
+Dutchman mapping limit. The rest of the model is kept as the imported shape. The report's
+`history.features[]` entry carries `source: "solidcraft"` and a `category`. For
+`fillet-overflows-neighbouring-face` (the blend is larger than the neighbouring faces) the
+`upstream` link is https://github.com/tangency-labs/solidcraft/issues/4782. Shrinking that fillet
+in the source usually avoids it.
+
 ## Send the file privately
 
 If a file opens in the app that made it but Dutchman can't convert it, it's a bug in Dutchman,

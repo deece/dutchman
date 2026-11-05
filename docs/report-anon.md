@@ -108,7 +108,7 @@ When a maintainer asks about `f3a9c0e1d2b4f5a6`, look it up in your key.
 | `stages` | For each stage (`input`, `decode`, `project`, `map`, `write`, `solidcraft`; see [Stages](json.md#stages)): the files that `failed` there, the `losses` that arose there, and the `files` with either. |
 | `errors` | Every distinct failure, most files first. Messages that differ only in their numbers are one cause. |
 | `losses` | Every distinct loss: by cadmpeg's loss `code`, or for Dutchman's own by a fixed appearance cause code (counts only), or `dutchman/<kind>` (what it is about: `appearance`, `assembly`, `bodies`, `components`, `constraints`, `feature`, `full`, `geometry`, `history`, `joints`, `occurrence`, `parameter`, `parts`, `pattern`, `profile`, `sketch`, `validation`, `writer`, else `other`) and message. `example` is one message, cleaned, except for appearance cause codes, which carry counts only. |
-| `blocked_features` | The source features that kept a history from being written, by `kind` and `reason`. |
+| `blocked_features` | The source features that kept a history from being written, by `kind` and `reason`. A feature SolidCraft refused also carries `source` (`solidcraft`), `category` and `upstream` (a fixed category name and an issue link, never a design name). |
 | `verification` | Why histories were written unchecked (`unverified`), not written (`flattened`), or not applicable, by reason. |
 | `timing` | Times per file, in milliseconds: the nearest-rank 50th, 90th and 99th percentiles, the longest and the total. Files that were never started (a path that does not exist) are not timed. |
 | `slowest` | The 20 slowest files, slowest first: id, format, time, outcome and, for a failure, its stage. |
