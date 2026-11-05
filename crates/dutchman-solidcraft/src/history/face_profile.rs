@@ -257,6 +257,37 @@ pub(super) fn interior_points(
     Ok(points)
 }
 
+/// A point inside the one planar face `value` selects, clear of its edges and its holes, and
+/// the unit normal of its plane, from the boundary samples of its input topology.
+pub(super) fn planar_face(
+    feature: &Value,
+    value: &Value,
+    ctx: &Context,
+) -> Result<(V3, V3), String> {
+    let faces = boundaries(feature, value, ctx)?;
+    let [face] = faces.as_slice() else {
+        return Err("a selection without exactly one face is not supported yet".to_owned());
+    };
+    let (origin, normal) = plane(std::slice::from_ref(face), &samples(face))
+        .map_err(|_| "an extrude face that is not planar is not supported yet".to_owned())?;
+    Ok((planar_point(face, origin, normal)?, normal))
+}
+
+/// The ends and middle of every boundary edge of `face`.
+fn samples(face: &Boundary) -> Vec<V3> {
+    face.edges
+        .iter()
+        .flat_map(|edge| {
+            let (start, end) = edge.ends();
+            let mid = match edge {
+                Edge::Line { start, end } => scale(add(*start, *end), 0.5),
+                Edge::Arc { mid, .. } | Edge::Circle { mid, .. } => *mid,
+            };
+            [start, mid, end]
+        })
+        .collect()
+}
+
 /// A point on one face: planar when its boundary is flat, else the cylinder it is part of.
 fn point_in(face: &Boundary) -> Result<V3, String> {
     let samples: Vec<V3> = face

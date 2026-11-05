@@ -197,9 +197,12 @@ dimension linked to its parameter (a constraint that does not map is dropped and
 since the geometry is already exact); extrudes of a whole sketch, of selected sketch
 profiles, of profile regions (whole loops with their holes, or regions bounded by pieces of
 curves) or of selected curves, one-sided, symmetric or two-sided, blind or through all, from the sketch plane or an
-offset, or a resolved parallel planar face on an earlier named body. Curves that bound a
-selected trimmed sketch region stay solid (not construction), so SolidCraft splits the sketch
-there and sweeps that region, not the merged area around it. One-sided extrudes may
+offset, or a resolved parallel planar face on an earlier named body. A face of the
+feature's own input topology (a face of an earlier history state) is rebuilt as its plane and
+an interior point from that state's boundary samples; a face that is not parallel to the
+sketch is refused. Curves that bound a selected trimmed sketch region stay solid (not
+construction), so SolidCraft splits the sketch there and sweeps that region, not the merged
+area around it. One-sided extrudes may
 carry draft (positive grows outward), end on such a face with an offset, or end on a resolved
 parallel plane. Before any body-building feature, a plane end uses its origin as a fixed
 To Object point (SolidCraft accepts a free point without a construction plane or body face).

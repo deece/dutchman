@@ -13,10 +13,29 @@ use serde_json::{json, Value};
 use super::sketch::{dot, v3, V3};
 use super::Context;
 
-/// A single resolved planar face on an earlier named body, as a SolidCraft pick.
-/// Native, generated and historical selections need their own topology resolver.
-pub(super) fn pick(ctx: &Context, selection: Option<&Value>, normal: V3) -> Result<V3, String> {
+/// A single planar face parallel to the sketch, as a SolidCraft pick: a resolved face on an
+/// earlier named body, or a face of `feature`'s own input topology rebuilt from its boundary.
+/// Native and generated selections need their own topology resolver.
+pub(super) fn pick(
+    ctx: &Context,
+    feature: &Value,
+    selection: Option<&Value>,
+    normal: V3,
+) -> Result<V3, String> {
     let selection = selection.ok_or("its face selection is missing")?;
+    if selection.get("kind").and_then(Value::as_str) == Some("historical") {
+        let (point, face_normal) = super::face_profile::planar_face(
+            feature,
+            selection.get("value").unwrap_or(&Value::Null),
+            ctx,
+        )?;
+        if dot(face_normal, normal).abs() < 1.0 - 1e-9 {
+            return Err(
+                "an extrude face not parallel to its sketch is not supported yet".to_owned(),
+            );
+        }
+        return Ok(point);
+    }
     let ids = match selection.get("kind").and_then(Value::as_str) {
         Some("faces") => selection.get("value"),
         Some("resolved") => selection.pointer("/value/faces"),
@@ -689,6 +708,64 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 
     use super::*;
+
+    /// A model whose feature `f` has an input topology holding one rectangular face
+    /// `x0..x1` by `y0..y1` on the plane `z`, given only by its sampled boundary.
+    fn input_face(corners: [[f64; 3]; 4]) -> Value {
+        let p = |c: [f64; 3]| json!({"x": c[0], "y": c[1], "z": c[2]});
+        let rows: Vec<Value> = (0..4)
+            .map(|k| {
+                let (a, b) = (corners[k], corners[(k + 1) % 4]);
+                let mid = [
+                    (a[0] + b[0]) / 2.0,
+                    (a[1] + b[1]) / 2.0,
+                    (a[2] + b[2]) / 2.0,
+                ];
+                let tangent = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+                json!({"edge": format!("e{k}"), "start": p(a), "end": p(b),
+                    "interior": p(mid), "tangent": p(tangent), "faces": ["face"]})
+            })
+            .collect();
+        json!({"feature_input_topologies": [
+            {"id": "st", "input_of": "f", "faces": ["face"], "edge_geometry": rows}]})
+    }
+
+    fn historical() -> Value {
+        json!({"kind": "historical", "value": {"state": "st", "faces": ["face"], "native": "n"}})
+    }
+
+    #[test]
+    fn an_extrude_starts_from_a_face_of_its_own_input_topology() {
+        let z = -30.0;
+        let model = input_face([
+            [10.0, -14.0, z],
+            [14.0, -14.0, z],
+            [14.0, 14.0, z],
+            [10.0, 14.0, z],
+        ]);
+        let ctx = Context::new(&model);
+        let feature = json!({"id": "f"});
+        let point = pick(&ctx, &feature, Some(&historical()), [0.0, 0.0, 1.0]).unwrap();
+        assert!((point[2] - z).abs() < 1e-9, "{point:?}");
+        assert!(
+            point[0] > 10.0 && point[0] < 14.0 && point[1].abs() < 14.0,
+            "{point:?}"
+        );
+
+        let wall = input_face([
+            [-14.0, -14.0, -30.0],
+            [-14.0, 14.0, -30.0],
+            [-14.0, 14.0, 2.0],
+            [-14.0, -14.0, 2.0],
+        ]);
+        let ctx = Context::new(&wall);
+        assert_eq!(
+            pick(&ctx, &feature, Some(&historical()), [0.0, 0.0, 1.0]).unwrap_err(),
+            "an extrude face not parallel to its sketch is not supported yet"
+        );
+        let other = json!({"id": "g"});
+        assert!(pick(&ctx, &other, Some(&historical()), [0.0, 0.0, 1.0]).is_err());
+    }
 
     #[test]
     fn points_inside_a_concave_outline() {

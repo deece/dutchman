@@ -41,7 +41,13 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
         .ok_or("its sketch is not an earlier mapped sketch")?;
     let sketch_feature = sketch.feature;
     let forward = forward(definition.get("direction"), sketch.normal)?;
-    let mut extent = extent(definition.get("extent"), forward, ctx, sketch.normal)?;
+    let mut extent = extent(
+        feature,
+        definition.get("extent"),
+        forward,
+        ctx,
+        sketch.normal,
+    )?;
     if face_profile
         && (extent.contains_key("to")
             || extent.contains_key("from")
@@ -97,7 +103,7 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
     }
     if definition.pointer("/start/kind").and_then(Value::as_str) == Some("from_face") {
         let start = definition.get("start").ok_or("its start is malformed")?;
-        let point = super::faces::pick(ctx, start.get("face"), sketch.normal)?;
+        let point = super::faces::pick(ctx, feature, start.get("face"), sketch.normal)?;
         start_height = point
             .iter()
             .zip(sketch.origin)
@@ -206,6 +212,7 @@ fn forward(direction: Option<&Value>, normal: [f64; 3]) -> Result<bool, String> 
 
 /// The SolidCraft extent, with `forward` saying which way the first side runs.
 fn extent(
+    feature: &Value,
     extent: Option<&Value>,
     forward: bool,
     ctx: &Context,
@@ -216,12 +223,12 @@ fn extent(
     let mut out = Map::new();
     match extent.get("kind").and_then(Value::as_str) {
         Some("one_sided") => {
-            let side = side(extent.get("side"), ctx, normal)?;
+            let side = side(feature, extent.get("side"), ctx, normal)?;
             out.insert("direction".to_owned(), json!(way));
             put(&mut out, side, "distance");
         }
         Some("symmetric") => {
-            let side = side(extent.get("side"), ctx, normal)?;
+            let side = side(feature, extent.get("side"), ctx, normal)?;
             if matches!(side, Side::ToObject(..)) {
                 return Err("a symmetric extrude to an object is not supported yet".to_owned());
             }
@@ -230,8 +237,8 @@ fn extent(
             put(&mut out, side, "distance");
         }
         Some("two_sided") => {
-            let first = side(extent.get("first"), ctx, normal)?;
-            let second = side(extent.get("second"), ctx, normal)?;
+            let first = side(feature, extent.get("first"), ctx, normal)?;
+            let second = side(feature, extent.get("second"), ctx, normal)?;
             // SolidCraft stores distance2 against the normal, regardless of direction.
             let (positive, negative) = if forward {
                 (first, second)
@@ -281,7 +288,12 @@ enum Side {
     ToObject([f64; 3], Option<f64>),
 }
 
-fn side(side: Option<&Value>, ctx: &Context, normal: [f64; 3]) -> Result<Side, String> {
+fn side(
+    feature: &Value,
+    side: Option<&Value>,
+    ctx: &Context,
+    normal: [f64; 3],
+) -> Result<Side, String> {
     let side = side.ok_or("its extent has no side")?;
     let termination = side.get("termination").unwrap_or(&Value::Null);
     match termination.get("kind").and_then(Value::as_str) {
@@ -291,7 +303,7 @@ fn side(side: Option<&Value>, ctx: &Context, normal: [f64; 3]) -> Result<Side, S
             .ok_or_else(|| "its blind length is malformed".to_owned()),
         Some("through_all") => Ok(Side::ThroughAll),
         Some("to_face") => Ok(Side::ToObject(
-            super::faces::pick(ctx, termination.get("face"), normal)?,
+            super::faces::pick(ctx, feature, termination.get("face"), normal)?,
             number(termination.get("offset")),
         )),
         Some("to_plane") => {
@@ -455,6 +467,7 @@ mod tests {
 
     fn extent(extent: Option<&Value>, forward: bool) -> Result<Map<String, Value>, String> {
         super::extent(
+            &Value::Null,
             extent,
             forward,
             &Context::new(&Value::Null),
