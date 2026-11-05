@@ -544,7 +544,7 @@ fn main() -> ExitCode {
             use dutchman::repro::synth;
             let seed = seed.unwrap_or_else(|| {
                 let mut bytes = [0u8; 8];
-                let _ = getrandom::getrandom(&mut bytes);
+                let _ = getrandom::fill(&mut bytes);
                 u64::from_le_bytes(bytes)
             });
             let options = synth::Options {
