@@ -99,6 +99,31 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Prototype: make a shareable synthetic reproduction of a failing SolidCraft script.
+    #[command(hide = true)]
+    ReproSynth {
+        /// The SolidCraft command script (JSON) that fails.
+        #[arg(long)]
+        script: PathBuf,
+        /// The step that fails, counting from 1 as SolidCraft reports it.
+        #[arg(long)]
+        fail_step: usize,
+        /// Folder that receives `synthetic/`.
+        #[arg(long)]
+        out: PathBuf,
+        /// Candidate dimension sets to try.
+        #[arg(long, default_value_t = dutchman::repro::synth::TRIALS)]
+        trials: usize,
+        /// Most steps a shareable case may keep.
+        #[arg(long, default_value_t = dutchman::repro::synth::MAX_STEPS)]
+        max_steps: usize,
+        /// Seed for the invented dimensions (default: random).
+        #[arg(long)]
+        seed: Option<u64>,
+        /// The solidcraft-cli to run (default: found as for conversion checks).
+        #[arg(long)]
+        solidcraft: Option<PathBuf>,
+    },
     /// Find which parts of a large design fail, run slowly or take the memory, on this machine,
     /// and write a ranked report that names parts by number only; nothing leaves the machine.
     Diagnose {
@@ -507,6 +532,42 @@ fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
+        Command::ReproSynth {
+            script,
+            fail_step,
+            out,
+            trials,
+            max_steps,
+            seed,
+            solidcraft,
+        } => {
+            use dutchman::repro::synth;
+            let seed = seed.unwrap_or_else(|| {
+                let mut bytes = [0u8; 8];
+                let _ = getrandom::getrandom(&mut bytes);
+                u64::from_le_bytes(bytes)
+            });
+            let options = synth::Options {
+                fail_step,
+                trials,
+                max_steps,
+                seed,
+            };
+            match synth::run_command(&script, &out, &options, solidcraft.as_deref()) {
+                Ok(synth::Outcome::Written(dir)) => {
+                    println!("Shareable case written to {}", dir.display());
+                    ExitCode::SUCCESS
+                }
+                Ok(synth::Outcome::NoFailure(why) | synth::Outcome::NoMatch(why)) => {
+                    println!("No shareable case: {why}");
+                    ExitCode::FAILURE
+                }
+                Err(error) => {
+                    eprintln!("dutchman: {error}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
         Command::Watch(command) => match dutchman::watch::run_with_progress(command, quiet) {
             Ok(true) => ExitCode::SUCCESS,
             Ok(false) => ExitCode::FAILURE,

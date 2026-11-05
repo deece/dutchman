@@ -12,6 +12,8 @@ use crate::diagnose::signature::Signature;
 use crate::diagnose::{self, FailingPart};
 use crate::{diagnostics, ConvertOptions};
 
+pub mod synth;
+
 pub const SCHEMA: &str = crate::json::REPRO;
 const MAX_TRIALS: usize = 256;
 
