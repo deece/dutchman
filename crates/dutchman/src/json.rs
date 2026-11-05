@@ -583,7 +583,12 @@ pub fn completeness_lines(report: &Value) -> Vec<String> {
 }
 
 /// A check as a verification status and its reason.
-fn check_fields(check: &Check) -> (&'static str, Option<&String>) {
+fn check_fields(check: &Check) -> (&'static str, Option<String>) {
+    let (status, reason) = check_raw(check);
+    (status, reason.map(|r| dutchman_core::clean_refusal(r)))
+}
+
+fn check_raw(check: &Check) -> (&'static str, Option<&String>) {
     match check {
         Check::Partial(reason) => ("partial", Some(reason)),
         Check::Verified => ("verified", None),
@@ -706,7 +711,7 @@ pub fn losses(report: &Report) -> Value {
                 },
                 "code": loss.code,
                 "subject": loss.subject,
-                "message": loss.detail,
+                "message": dutchman_core::clean_refusal(&loss.detail),
                 "stage": loss.stage.id(),
                 "upstream": loss.upstream(),
             })
@@ -1179,6 +1184,39 @@ mod tests {
         assert_eq!(
             fields.get("verification").and_then(|v| v.get("status")),
             Some(&json!("partial"))
+        );
+    }
+
+    #[test]
+    fn a_solidcraft_refusal_is_classified_and_cleaned_in_the_summary() {
+        let raw = "feature \"Fillet3\" failed: not supported yet: the blend is larger than the \
+                   neighbouring faces (site 387)";
+        let fields = outcome_fields(&Outcome {
+            mode: Mode::PartialHistory,
+            check: Check::Partial(format!("history stopped at {raw} (2 of 3 features kept)")),
+            features: vec![FeatureOutcome {
+                name: Some("Fillet3".to_owned()),
+                kind: "fillet".to_owned(),
+                status: FeatureStatus::Blocked,
+                reason: Some(raw.to_owned()),
+            }],
+        });
+        let fields = Value::Object(fields);
+        let clean = "SolidCraft refused feature \"Fillet3\": the blend is larger than the neighbouring faces";
+        assert_eq!(
+            fields.pointer("/verification/reason"),
+            Some(&json!(format!(
+                "history stopped at {clean} (2 of 3 features kept)"
+            )))
+        );
+        let row = fields.pointer("/history/features/0").unwrap();
+        assert_eq!(row["reason"], json!(clean));
+        assert_eq!(row["reason_raw"], json!(raw));
+        assert_eq!(row["source"], "solidcraft");
+        assert_eq!(row["category"], "fillet-overflows-neighbouring-face");
+        assert_eq!(
+            row["upstream"],
+            "https://github.com/tangency-labs/solidcraft/issues/4782"
         );
     }
 
