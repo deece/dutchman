@@ -117,7 +117,7 @@ Unreleased changes live in [changelog.d/](changelog.d/).
 
 ### cadmpeg
 
-- The cadmpeg pin moves from `65d6e87` to `478f1df`, now taken from cadmpeg's own repository
+- The cadmpeg pin moves from `65d6e87` to `f9e6f5d`, now taken from cadmpeg's own repository
   rather than a fork of it.
 - Fusion: extrude profiles are proven from their end caps and recipe operands are bound per
   counted operand, so extrudes no longer sweep the wrong sketch region where cadmpeg picked one
@@ -131,12 +131,15 @@ Unreleased changes live in [changelog.d/](changelog.d/).
   and a cylinder blend's edge by geometry. An unprofiled sketch curve that bounds a selected
   extrude region is reported at Info level, since nothing is lost.
 - Fusion assemblies read occurrences that reference a source design, leading-flag local
-  occurrences, version-4 and localized joint scopes, and joints of a standalone design bound by
-  their relations only.
+  occurrences (keeping unregistered ones and preferring registered frames), version-4 and
+  localized joint scopes, and joints of a standalone design bound by their relations only; a
+  projected joint's assumed activation is reported, and a same-component body copy and paste
+  reads as a move with one copy.
 - Inventor: polygon sketches close, parameters keep their values when the unit type is
   unrecognised, bodies are named from the feature that owns them, fillet and chamfer input
-  edges resolve on elliptical carriers and with secondary names, and attached plates in a
-  rotated frame are read.
+  edges resolve on elliptical, spline and bounded ellipse carriers, with secondary names and
+  through edge revisions, and attached plates in a rotated frame are read. Planar curve sketch
+  members and construction lines with a conflicting carrier are kept native instead of misread.
 - SolidWorks and NX parts read more of their node sequences (Deltas carriers and blends,
   patched points, terminated-stream nodes, attributes and NURBS lanes), and analytic and
   B-spline carriers are decoded once for both.

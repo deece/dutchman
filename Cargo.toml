@@ -23,12 +23,12 @@ dutchman-pilot = { git = "https://github.com/dutchman-cad/pilot", rev = "a91cade
 aho-corasick = "1.1"
 # cadmpeg at one tested commit of its main branch, the same for every cadmpeg crate. Move it
 # after a batch of cadmpeg merges (docs/releasing.md); the nightly build takes cadmpeg's main.
-cadmpeg-codec-f3d = { git = "https://github.com/cadmpeg/cadmpeg", rev = "478f1df021a70be3efd5706d3b19bfbe59babdd0" }
-cadmpeg-core = { git = "https://github.com/cadmpeg/cadmpeg", rev = "478f1df021a70be3efd5706d3b19bfbe59babdd0" }
-cadmpeg-ir = { git = "https://github.com/cadmpeg/cadmpeg", rev = "478f1df021a70be3efd5706d3b19bfbe59babdd0" }
+cadmpeg-codec-f3d = { git = "https://github.com/cadmpeg/cadmpeg", rev = "f9e6f5df1e0bb1fd4007f7bbb33e6eacf4b73040" }
+cadmpeg-core = { git = "https://github.com/cadmpeg/cadmpeg", rev = "f9e6f5df1e0bb1fd4007f7bbb33e6eacf4b73040" }
+cadmpeg-ir = { git = "https://github.com/cadmpeg/cadmpeg", rev = "f9e6f5df1e0bb1fd4007f7bbb33e6eacf4b73040" }
 # Each crate turns on the cadmpeg codecs it needs: dutchman-core per input format (its
 # `formats` feature for all of them), dutchman-solidcraft the STEP writer.
-cadmpeg-registry = { git = "https://github.com/cadmpeg/cadmpeg", rev = "478f1df021a70be3efd5706d3b19bfbe59babdd0", default-features = false }
+cadmpeg-registry = { git = "https://github.com/cadmpeg/cadmpeg", rev = "f9e6f5df1e0bb1fd4007f7bbb33e6eacf4b73040", default-features = false }
 getrandom = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
