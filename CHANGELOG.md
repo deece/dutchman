@@ -124,7 +124,7 @@ Unreleased changes live in [changelog.d/](changelog.d/).
 
 ### cadmpeg
 
-- The cadmpeg pin moves from `65d6e87` to `39afe63` (cadmpeg 0.6.9), now taken from cadmpeg's own repository
+- The cadmpeg pin moves from `65d6e87` to `0fae246` (cadmpeg 0.6.9), now taken from cadmpeg's own repository
   rather than a fork of it.
 - Fusion: extrude profiles are proven from their end caps and recipe operands are bound per
   counted operand, so extrudes no longer sweep the wrong sketch region where cadmpeg picked one
@@ -138,9 +138,10 @@ Unreleased changes live in [changelog.d/](changelog.d/).
   and a cylinder blend's edge by geometry. An unprofiled sketch curve that bounds a selected
   extrude region is reported at Info level, since nothing is lost.
 - A cut that selects several separate regions, stored as one self-crossing loop, is split into
-  those regions, so it maps instead of being refused. Renamed scopes and Boolean and re-tagged
-  Revolve forms are decoded, and a cylinder blend reads its best-ranked edge and reports that
-  inference.
+  those regions, and a through cut's regions are chosen from the faces it changed, so both map
+  instead of being refused or sweeping the wrong area. Renamed scopes and Boolean and re-tagged
+  Revolve forms are decoded, a cylinder blend reads its best-ranked edge and reports that
+  inference, and more sketch, loft, body-recipe and construction-group forms are read.
 - Fusion assemblies read occurrences that reference a source design, leading-flag local
   occurrences (keeping unregistered ones and preferring registered frames), version-4 and
   localized joint scopes, and joints of a standalone design bound by their relations only; a
