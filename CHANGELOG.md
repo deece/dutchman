@@ -44,6 +44,13 @@ Unreleased changes live in [changelog.d/](changelog.d/).
   continues past it.
 - An extrude stored as a join before any body exists makes the first body, as it does in the
   source, instead of leaving later features with no body to work on.
+- A sheet-metal attached plate and its paired bend now map to one SolidCraft edge flange when
+  the plate is a rectangle spanning the whole attachment edge, square to the sheet at 90
+  degrees, flush with the edge and of the sheet's thickness. Other plates report the specific
+  shape that is not supported yet, and the geometry is still converted.
+- A Move Face that moves planar faces along their normal is written as SolidCraft's offset-face
+  feature, with each face picked by a point inside it. Rotations, translations along another
+  direction, non-planar faces and unresolved selections are reported with their own reason.
 
 ### Desktop app
 
