@@ -8,6 +8,147 @@ Unreleased changes live in [changelog.d/](changelog.d/).
 
 [Semantic Versioning]: https://semver.org/spec/v2.0.0.html
 
+## 0.2.8 (2026-11-05)
+
+### History
+
+- An extrude that starts or ends at a face as it was earlier in the history (a face that later
+  features change) keeps its history: the face's plane is rebuilt from that earlier state.
+- A fillet with several radius groups keeps its history: each group becomes its own blend, in
+  the order the source applies them.
+- A hole placed at several sketch points keeps its history, drilled at each point, when its
+  placements are exactly the sketch's points and all drill the same way.
+- An extrude whose profile region does not match the source is no longer counted as kept. When
+  the design's only geometry-building feature is a blind one-sided extrude whose end face
+  survives in the stored model, the area of the swept region (outer loops minus holes) must
+  match that face's area to within 1 mm² or 3%. A mismatch blocks the extrude with the
+  swept and source areas in its reason, records the loss code
+  `history/profile-region-mismatch`, and stops the editable history there.
+- A kept extrude whose region could not be checked this way carries `profile_unverified: true`
+  in the JSON report's `history.features`, so counts do not claim more than was proven.
+- Counterbore and countersink holes with a drill point keep both when the design targets
+  SolidCraft 0.22.1 or newer; for older SolidCraft they are still refused, as before.
+- A feature whose profile is several selected regions merged into one self-crossing loop now
+  says so in the report, instead of blaming the sketch's other curves. Such a profile is still
+  not mapped.
+- An extrude that ends at the plane of a face, after earlier features, now keeps its history
+  in Fusion and Inventor files: it ends at the same plane in SolidCraft. Extrudes ending at a
+  work plane or point after earlier features are still left as stored geometry.
+- An extrude that starts at a plane parallel to its sketch now keeps its history, as a start
+  offset from the sketch.
+- An extrude that selects one region between sketch lines sweeps that region: the lines that
+  bound it stay solid instead of becoming construction lines, which merged the regions and
+  swept the wrong area.
+- A body the source file leaves unnamed (as Inventor parts do) is named "Body 1", "Body 2" and
+  so on, so a later feature such as a through-all cut can still target it and the history
+  continues past it.
+- An extrude stored as a join before any body exists makes the first body, as it does in the
+  source, instead of leaving later features with no body to work on.
+
+### Desktop app
+
+- Show the notice about a run that didn't finish as one line, at the top of the Results column in a wide window, so the main screen still fits without scrolling.
+- A failed file's card fits the window at its default size. **Review and send report** stays on
+  the card; Discord, the DM with Dutchy, the STEP export and **Report anonymously on GitHub**
+  are folded under **Help us fix it**.
+- The small text in the report step boxes is left-aligned instead of justified with wide gaps.
+- A converted result with any loss (history not kept or only partly kept, features flattened or
+  blocked, parts left unplaced, colours dropped) now has a visible **Report this file…** button
+  in its card. It opens the report section with **Review and send report**.
+- **Ask your AI about this file** now copies a short paragraph naming your file, the
+  converted design, its saved report, and the log of that run. The prompt also opens in a
+  box under the button, with Copy and Close, and stays there until you close it or convert
+  again.
+- **Ask your AI about this file** copies every time you click it. "Copied" shows for about
+  two seconds and then the button is back, instead of staying stuck after the first click.
+  A new conversion starts with a working button.
+- Failed files also offer **Ask your AI about this file**, using the saved failure report.
+- Every run keeps a local diagnostic log in the diagnostics folder, with no names or contents
+  from your files. The "Save a diagnostic log" checkbox is gone; **Open diagnostics folder**
+  stays.
+- A result card names its run log as "Run log: …" in small text, cut to fit with the whole
+  path on hover, instead of a bare path that read like stray text.
+- A design that carries no feature history says so once: "Geometry without history: the
+  design carries no feature history." The same reason is no longer repeated on the line under it.
+- The **Ask your AI about this file** prompt box shows about five lines and scrolls inside, so
+  the whole result card still fits the window with it open.
+- The desktop app now finds SolidCraft the way the command line does. A SolidCraft that was
+  slow to answer when the app opened (a first start after installing) is no longer treated as
+  missing for the whole session: opening the SolidCraft version window searches again. A
+  remembered `solidcraft-cli` that no longer answers is ignored in favour of the automatic
+  search, and the window lists the places that were searched when nothing is found.
+- The Update button now asks GitHub for the latest release each time you press it, so it never offers an older version than the newest one. It shows "Checking for updates…", then the new version, "Dutchman is up to date", or why the check failed with a Retry button.
+- Update checks read GitHub's releases feed instead of its rate-limited API.
+- Release notes in the update window show their headings, bold text, code and bullet lists properly.
+- On a Mac, the free memory shown for designs no longer reads about 0 GB when plenty of memory is available.
+
+### Command line and install
+
+- `convert-all` warns on stderr, before converting, when a missing positional argument looks
+  like an output path, and its help says every positional argument is an input (use
+  `--out-dir` for the output folder).
+- `convert --report-anon FILE` writes the anonymous report of one file, with `--report-salt`
+  and `--report-key`, as `convert-all` does.
+- Progress lines on stderr are off when stderr is not a terminal; `--verbose` brings them back.
+- `--write-replay` on `convert` and `convert-all` also writes `<design>.replay.json` beside a
+  `.sc` design: the command script that rebuilds its history step by step, for
+  `solidcraft-cli run`. The JSON report names the file as `replay_script`.
+
+### Reports
+
+- The anonymous report now lists each blocked feature's timeline ordinal and a short variant
+  (`extrude, to a plane`, `hole, counterbore, through all`, `fillet, 2 radius groups`), in
+  timeline order, with no names or sizes. The JSON report's history features carry the same
+  `ordinal` and `variant`.
+- A face, edge or body selection Dutchman cannot map now says which form it was, such as "a
+  face from an earlier history state is not supported yet" or "a native edge reference is not
+  supported yet", instead of "not resolved".
+- A feature SolidCraft refuses when it replays the history is now reported as
+  `SolidCraft refused feature "X": ...`, without SolidCraft's internal site number, instead of
+  reading like a Dutchman mapping limit. The JSON feature entry gains `source`, `category`,
+  `upstream` and `reason_raw`; a fillet larger than its neighbouring faces has its own category
+  with a link to the SolidCraft issue. The anonymous report carries the category and link.
+  The same wording is used in the history summary, the verification reason and per-part
+  reasons.
+- When no SolidCraft is found, the JSON report's `solidcraft.search` and the anonymous
+  report's `versions.solidcraft_search` say where Dutchman looked (`SOLIDCRAFT_CLI`, `PATH`,
+  Program Files and the other install folders) and what it found in each. The anonymous report
+  names the places only, never a path.
+
+### cadmpeg
+
+- The cadmpeg pin moves from `65d6e87` to `478f1df`, now taken from cadmpeg's own repository
+  rather than a fork of it.
+- Fusion: extrude profiles are proven from their end caps and recipe operands are bound per
+  counted operand, so extrudes no longer sweep the wrong sketch region where cadmpeg picked one
+  by heuristic. Fillet, chamfer and face selections match their recipe faces exactly, and
+  chamfer edges between faces of other features resolve.
+- Fusion also reads text parameters, Design parameters in their comment form, sketch scopes
+  that list deleted members, the 466-byte coil form, pipe groups, diagonal and frameless
+  dimension annotations, more selection and scope forms, lofts to a sketch point, and work
+  plane frames placed by their U direction. It resolves trimmed extrude regions, incomplete
+  fillet groups, replaced fillet and chamfer support faces, Move Face and Offset Faces members,
+  and a cylinder blend's edge by geometry. An unprofiled sketch curve that bounds a selected
+  extrude region is reported at Info level, since nothing is lost.
+- Fusion assemblies read occurrences that reference a source design, leading-flag local
+  occurrences, version-4 and localized joint scopes, and joints of a standalone design bound by
+  their relations only.
+- Inventor: polygon sketches close, parameters keep their values when the unit type is
+  unrecognised, bodies are named from the feature that owns them, fillet and chamfer input
+  edges resolve on elliptical carriers and with secondary names, and attached plates in a
+  rotated frame are read.
+- SolidWorks and NX parts read more of their node sequences (Deltas carriers and blends,
+  patched points, terminated-stream nodes, attributes and NURBS lanes), and analytic and
+  B-spline carriers are decoded once for both.
+
+### Docs
+
+- Troubleshooting explains how to replay a converted history by hand and what a `.sc` design
+  holds.
+- Contributing explains how to build against a local cadmpeg, how to build a fast optimised
+  profile for checking one file, and that tests for bugs found on private files use generic
+  dimensions and synthetic geometry.
+
 ## 0.2.7 (2026-11-04)
 
 ### Assemblies
