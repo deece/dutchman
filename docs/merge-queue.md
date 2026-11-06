@@ -65,28 +65,7 @@ gh api repos/dutchman-cad/dutchman/rulesets -X POST --input ruleset.json
         "strict_required_status_checks_policy": false,
         "required_status_checks": [
           {
-            "context": "fmt"
-          },
-          {
-            "context": "clippy"
-          },
-          {
-            "context": "msrv"
-          },
-          {
-            "context": "release-notes"
-          },
-          {
-            "context": "test (ubuntu-latest)"
-          },
-          {
-            "context": "test (ubuntu-24.04-arm)"
-          },
-          {
-            "context": "test (windows-latest)"
-          },
-          {
-            "context": "test (macos-latest)"
+            "context": "ci-result"
           }
         ]
       }
@@ -99,8 +78,11 @@ gh api repos/dutchman-cad/dutchman/rulesets -X POST --input ruleset.json
   after waiting 5 minutes for more pull requests to join. A group whose checks do not report
   within 120 minutes is removed.
 - Repository admins bypass the rule (role id 5), so an emergency fix can merge directly.
-- Required checks are only those that always report on a pull request and in the queue.
-  Skipped jobs (a docs-only change skips the build jobs) count as passing. Left out on purpose:
+- The one required check is `ci-result`, a job in `ci.yml` that always runs, needs every other
+  CI job, and fails only if one of them failed or was cancelled. Requiring the test jobs by
+  name doesn't work: a docs-only change skips the test matrix, and a skipped matrix job reports
+  once under its bare name (`test`), so `test (ubuntu-latest)` and the others never appear and
+  the pull request waits forever. Left out on purpose:
   `placements`, `docker` and `release-build` (path filters mean they do not report on every pull
   request, so requiring them would block it forever), `solidcraft-roundtrip` (informational),
   and the CodeQL checks (they do not run in the queue).

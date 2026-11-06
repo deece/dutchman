@@ -326,3 +326,24 @@ jobs:
         run: |
           export SOLIDCRAFT_CLI="$PWD/solidcraft-${SOLIDCRAFT_VERSION}-linux-x86_64/bin/solidcraft-cli"
           cargo test --locked -p dutchman-solidcraft --test history --test assembly
+
+  # One result for branch rules to require: it always runs, and fails only when a job it needs
+  # failed or was cancelled. Jobs a change skips (a docs-only change skips the builds and tests)
+  # count as passed, so a required check never waits for a job that never starts.
+  ci-result:
+    needs: [changes, fmt, release-notes, clippy, test, docs, test-macos, docker, msrv, solidcraft-roundtrip]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the results of every job
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          echo "$RESULTS" | python3 -c '
+          import json, sys
+          needs = json.load(sys.stdin)
+          bad = {job: need["result"] for job, need in needs.items() if need["result"] in ("failure", "cancelled")}
+          for job, need in sorted(needs.items()):
+              print(job + ": " + need["result"])
+          sys.exit(f"failed or cancelled: {bad}" if bad else 0)
+          '
