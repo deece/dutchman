@@ -469,6 +469,10 @@ fn geometry_only(ir: &mut cadmpeg_ir::CadIr) {
     for joint in &mut ir.model.assembly_joints {
         joint.driving_parameter = None;
     }
+    // The sketches are gone, so what a definition owned must not name them.
+    for definition in &mut ir.model.product_definitions {
+        definition.sketches.clear();
+    }
 }
 
 pub(crate) fn validate_decoded(
@@ -880,6 +884,25 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(failure, Error::Checks { .. }), "{failure:?}");
+    }
+
+    #[test]
+    fn geometry_alone_leaves_no_definition_naming_a_removed_sketch() {
+        let mut model = cube();
+        model.ir.model.product_definitions.push(
+            serde_json::from_value(serde_json::json!({
+                "id": "test:product:definition#0", "kind": "part",
+                "sketches": ["test:model:sketch#0"]
+            }))
+            .unwrap(),
+        );
+        geometry_only(&mut model.ir);
+        assert!(model
+            .ir
+            .model
+            .product_definitions
+            .iter()
+            .all(|definition| definition.sketches.is_empty()));
     }
 
     #[test]
