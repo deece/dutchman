@@ -140,6 +140,7 @@ pub(super) fn select(
     if mode == PartPositions::FirstPlaced || current.is_empty() {
         counts.first_placed = by_id.len() as u64;
         report.record_part_positions(mode, counts);
+        note_assumptions(document, mode, &BTreeSet::new(), &BTreeSet::new(), report);
         return Ok(BTreeSet::new());
     }
     let mut baseline = BTreeMap::new();
@@ -231,6 +232,7 @@ pub(super) fn select(
         }
     }
     report.record_part_positions(mode, counts);
+    note_assumptions(document, mode, &accepted, &display, report);
     // Pinned holders are placed where they were first placed, so joints check them too.
     display.extend(pinned);
     Ok(display)
@@ -519,6 +521,159 @@ fn native_transform(value: Option<&Value>) -> Result<Placement3x4, String> {
     Ok(pose)
 }
 
+/// Names the parts whose placement nothing in the file confirms (#512): a part the decoder put
+/// at identity, a part whose later pose was not used, and a part with only its stored pose that
+/// no joint holds. Holders are left out: the parts inside them say the same thing by name.
+fn note_assumptions(
+    document: &Value,
+    mode: crate::PartPositions,
+    accepted: &BTreeSet<String>,
+    display: &BTreeSet<String>,
+    report: &mut Report,
+) {
+    use crate::PlacementAssumption;
+    let Some(rows) = document
+        .pointer("/model/occurrences")
+        .and_then(Value::as_array)
+    else {
+        return;
+    };
+    let by_id: BTreeMap<&str, &Value> = rows
+        .iter()
+        .filter_map(|r| Some((r.get("id")?.as_str()?, r)))
+        .collect();
+    let mut holders = BTreeSet::<&str>::new();
+    for row in rows {
+        if let Some(parent) = row.pointer("/parent/occurrence").and_then(Value::as_str) {
+            holders.insert(parent);
+        }
+    }
+    let mut records = BTreeMap::<&str, (&Value, bool)>::new();
+    for (name, external) in [
+        ("design_component_occurrences", false),
+        ("xref_references", true),
+    ] {
+        for row in document
+            .pointer(&format!("/native/f3d/{name}"))
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            if let Some(id) = row.get("id").and_then(Value::as_str) {
+                records.insert(id, (row, external));
+            }
+        }
+    }
+    let mut jointed = BTreeSet::<&str>::new();
+    for joint in document
+        .pointer("/model/assembly_joints")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|joint| joint.get("suppressed").and_then(Value::as_bool) != Some(true))
+    {
+        for connector in joint
+            .pointer("/operands/connectors")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            if let Some(id) = connector
+                .pointer("/operand/container/occurrence")
+                .and_then(Value::as_str)
+            {
+                jointed.insert(id);
+            }
+        }
+    }
+    let held = |id: &str| {
+        let mut at = Some(id);
+        for _ in 0..=MAX_DEPTH {
+            let Some(id) = at else { break };
+            if jointed.contains(id) {
+                return true;
+            }
+            at = by_id
+                .get(id)
+                .and_then(|row| row.pointer("/parent/occurrence"))
+                .and_then(Value::as_str);
+        }
+        false
+    };
+    let definitions: BTreeMap<&str, &Value> = document
+        .pointer("/model/product_definitions")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|row| Some((row.get("id")?.as_str()?, row)))
+        .collect();
+    fn label<'v>(
+        document: &'v Value,
+        definitions: &BTreeMap<&str, &'v Value>,
+        row: &'v Value,
+    ) -> &'v str {
+        row.get("name")
+            .and_then(Value::as_str)
+            .or_else(|| inserted_design_name(document, row))
+            .or_else(|| {
+                row.pointer("/prototype/definition")
+                    .and_then(Value::as_str)
+                    .and_then(|id| definitions.get(id))
+                    .and_then(|definition| name_of(definition))
+            })
+            .or_else(|| {
+                row.pointer("/prototype/document/path")
+                    .and_then(Value::as_str)
+                    .map(file_name)
+            })
+            .unwrap_or("unnamed part")
+    }
+    let present = |row: &Value, key: &str| row.get(key).is_some_and(|value| !value.is_null());
+    for (id, row) in &by_id {
+        if holders.contains(id) || accepted.contains(*id) || display.contains(*id) {
+            continue;
+        }
+        let record = row
+            .get("native_ref")
+            .and_then(Value::as_str)
+            .and_then(|native| records.get(native));
+        let later = record.is_some_and(|(record, _)| present(record, "current_pose"));
+        let assumption = if record.is_some_and(|(record, external)| {
+            *external
+                && !later
+                && !present(record, "transform")
+                && !present(record, "placement_source")
+        }) {
+            PlacementAssumption::Identity
+        } else if mode == crate::PartPositions::FirstPlaced {
+            continue;
+        } else if later {
+            PlacementAssumption::LaterPoseUnused
+        } else if held(id) {
+            continue;
+        } else {
+            PlacementAssumption::OnlyStoredPose
+        };
+        // Outermost first, so copies of one part can be told apart by what holds them.
+        let mut path = vec![label(document, &definitions, row)];
+        let mut at = row.pointer("/parent/occurrence").and_then(Value::as_str);
+        for _ in 0..MAX_DEPTH {
+            let Some(outer) = at.and_then(|id| by_id.get(id)) else {
+                break;
+            };
+            let name = label(document, &definitions, outer);
+            if name != "unnamed part" {
+                path.insert(0, name);
+            }
+            at = outer.pointer("/parent/occurrence").and_then(Value::as_str);
+        }
+        for name in &path {
+            report.saw(name);
+        }
+        report.assume_placement(path.join(" / "), assumption);
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::indexing_slicing)]
 mod tests {
@@ -540,6 +695,101 @@ mod tests {
         let mut pose = IDENTITY;
         pose[0][3] = x;
         pose
+    }
+
+    fn assumed(document: &mut Value, mode: crate::PartPositions) -> Vec<(String, &'static str)> {
+        let mut report = Report::default();
+        select(&empty_model(), document, mode, &mut report).unwrap();
+        report.note_part_positions(mode);
+        report
+            .placement_assumptions()
+            .iter()
+            .map(|(part, why)| (part.clone(), why.id()))
+            .collect()
+    }
+
+    #[test]
+    fn a_reference_with_no_placement_is_named_as_identity_in_every_mode() {
+        for mode in [
+            crate::PartPositions::Smart,
+            crate::PartPositions::FirstPlaced,
+        ] {
+            let mut document = json!({"model":{"occurrences":[
+                {"id":"a","native_ref":"r","transform":at(0.0),"parent":{"kind":"root"},
+                 "prototype":{"scope":"external","document":{"path":"dir/Pin.f3d"}}}
+            ]},"native":{"f3d":{"xref_references":[{"id":"r"}]}}});
+            assert_eq!(
+                assumed(&mut document, mode),
+                [("Pin.f3d".to_owned(), "identity")]
+            );
+        }
+    }
+
+    #[test]
+    fn a_part_with_only_its_stored_pose_is_named_with_what_holds_it_unless_a_joint_holds_it() {
+        let rows = json!([
+            {"id":"holder","native_ref":"h","transform":at(0.0),"parent":{"kind":"root"},
+             "prototype":{"definition":"d1"}},
+            {"id":"loose","native_ref":"l","transform":at(5.0),
+             "parent":{"kind":"occurrence","occurrence":"holder"},"prototype":{"definition":"d2"}},
+            {"id":"joined","native_ref":"j","transform":at(9.0),"parent":{"kind":"root"},
+             "prototype":{"definition":"d2"}}
+        ]);
+        let mut document = json!({"model":{"occurrences":rows,
+            "product_definitions":[{"id":"d1","label":"Motor"},{"id":"d2","label":"Pulley"}],
+            "assembly_joints":[{"operands":{"connectors":[
+                {"operand":{"container":{"occurrence":"joined"}}}]}}]},
+            "native":{"f3d":{}}});
+        assert_eq!(
+            assumed(&mut document, crate::PartPositions::Smart),
+            [("Motor / Pulley".to_owned(), "only_stored_pose")]
+        );
+        assert!(assumed(&mut document, crate::PartPositions::FirstPlaced).is_empty());
+    }
+
+    #[test]
+    fn a_later_pose_that_was_not_used_is_named_and_a_used_one_is_not() {
+        let pose = |x: f64| json!({"transform": at(x)});
+        let mut document = json!({"model":{"occurrences":[
+            occurrence("near", None, "n", 0.0),
+            occurrence("far", None, "f", 1.0)
+        ]},"native":{"f3d":{"design_component_occurrences":[
+            {"id":"n","current_pose":pose(0.5)},
+            {"id":"f","current_pose":"not a pose"}
+        ]}}});
+        let got = assumed(&mut document, crate::PartPositions::LastShown);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].1, "later_pose_unused");
+    }
+
+    #[test]
+    fn identity_parts_warn_by_name_and_stored_poses_stay_a_note() {
+        let mut report = Report::default();
+        report.assume_placement("Pin".to_owned(), crate::PlacementAssumption::Identity);
+        for n in 0..25 {
+            report.assume_placement(
+                format!("Part {n:02}"),
+                crate::PlacementAssumption::OnlyStoredPose,
+            );
+        }
+        report.note_part_positions(crate::PartPositions::Smart);
+        let lines: Vec<_> = report
+            .losses()
+            .iter()
+            .filter(|l| l.subject == "part positions")
+            .collect();
+        let warning = lines
+            .iter()
+            .find(|l| l.severity == Severity::Degraded)
+            .unwrap();
+        assert!(warning.detail.contains("Pin"), "{}", warning.detail);
+        assert!(warning.detail.contains("issues/512"));
+        let note = lines
+            .iter()
+            .find(|l| l.severity == Severity::Info && l.detail.contains("Part 19"))
+            .unwrap();
+        assert!(note.detail.contains("and 5 more"), "{}", note.detail);
+        assert!(!note.detail.contains("Part 20"));
     }
 
     fn occurrence(id: &str, parent: Option<&str>, native: &str, x: f64) -> Value {

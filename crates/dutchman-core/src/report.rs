@@ -174,6 +174,7 @@ const MAX_NAMES: usize = 100_000;
 pub struct Report {
     threads: Option<(usize, usize)>,
     part_positions: Option<(crate::PartPositions, crate::PartPositionCounts)>,
+    placement_assumptions: Vec<(String, crate::PlacementAssumption)>,
     history_check_skipped: Option<(u64, u64)>,
     losses: Vec<Loss>,
     outcome: Option<Outcome>,
@@ -463,6 +464,14 @@ impl Report {
             None => self.part_positions = Some((mode, counts)),
         }
     }
+    /// Records a part placed by an assumption, by the names the design gives it.
+    pub(crate) fn assume_placement(&mut self, part: String, why: crate::PlacementAssumption) {
+        self.placement_assumptions.push((part, why));
+    }
+    /// The parts placed by an assumption, most doubtful reason first, then by name.
+    pub fn placement_assumptions(&self) -> &[(String, crate::PlacementAssumption)] {
+        &self.placement_assumptions
+    }
     /// Selected policy and disjoint placement counts, with fallback reasons.
     pub fn part_positions(&self) -> Option<(crate::PartPositions, crate::PartPositionCounts)> {
         self.part_positions
@@ -476,6 +485,46 @@ impl Report {
             "{} parts placed as last shown in the original program ({} directly bound, {} holders derived from displayed children), {} at current poses, {} as first placed ({mode}); first-placement reasons: {} without a current pose, {} ambiguous, {} unsupported, {} joint checks, {} bounds checks, {} inserted-design checks; {} holder conflicts",
             counts.displayed, counts.displayed.saturating_sub(counts.derived_holders), counts.derived_holders, counts.current, counts.first_placed, counts.no_current_pose, counts.ambiguous, counts.unsupported, counts.joints, counts.bounds, counts.instances, counts.holder_conflicts
         ));
+        self.placement_assumptions
+            .sort_by(|a, b| (a.1, &a.0).cmp(&(b.1, &b.0)));
+        self.note_placement_assumptions();
+    }
+
+    /// Names the parts placed by an assumption. A part the decoder put at the origin is a
+    /// warning; a stored pose is usually right, so it stays a note.
+    fn note_placement_assumptions(&mut self) {
+        const SHOWN: usize = 20;
+        const ISSUE: &str = "https://github.com/dutchman-cad/dutchman/issues/512";
+        let names = |parts: &[&str]| {
+            let shown = parts[..parts.len().min(SHOWN)].join("; ");
+            match parts.len().saturating_sub(SHOWN) {
+                0 => shown,
+                more => format!("{shown} and {more} more (all in the JSON report)"),
+            }
+        };
+        let of = |wanted: &dyn Fn(crate::PlacementAssumption) -> bool| {
+            self.placement_assumptions
+                .iter()
+                .filter(|(_, why)| wanted(*why))
+                .map(|(part, _)| part.clone())
+                .collect::<Vec<_>>()
+        };
+        let identity = of(&|why| why == crate::PlacementAssumption::Identity);
+        let stored = of(&|why| why != crate::PlacementAssumption::Identity);
+        if !identity.is_empty() {
+            let parts: Vec<&str> = identity.iter().map(String::as_str).collect();
+            self.push(Severity::Degraded, "part positions", format!(
+                "{} parts sit at their design's origin because their placement could not be read, so they may not be where the source has them: {}. See {ISSUE}",
+                parts.len(), names(&parts)
+            ));
+        }
+        if !stored.is_empty() {
+            let parts: Vec<&str> = stored.iter().map(String::as_str).collect();
+            self.push(Severity::Info, "part positions", format!(
+                "{} parts rest on a stored pose that no joint, saved view or usable later pose confirms. Most are right; check these if one looks misplaced: {}. See {ISSUE}",
+                parts.len(), names(&parts)
+            ));
+        }
     }
 
     /// Records every loss of `other`, after this report's own.
@@ -484,6 +533,8 @@ impl Report {
         if let Some((mode, counts)) = other.part_positions {
             self.record_part_positions(mode, counts);
         }
+        self.placement_assumptions
+            .extend(other.placement_assumptions);
         self.merge_history_check(other.history_check_skipped);
         self.losses.extend(other.losses);
         self.names.extend(other.names);
@@ -495,6 +546,8 @@ impl Report {
         if let Some((mode, counts)) = other.part_positions {
             self.record_part_positions(mode, counts);
         }
+        self.placement_assumptions
+            .extend(other.placement_assumptions);
         self.merge_history_check(other.history_check_skipped);
         self.losses
             .extend(other.losses.into_iter().map(|loss| Loss {

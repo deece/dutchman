@@ -453,7 +453,8 @@ pub fn success(schema: &str, input: Value, report: &Report) -> Map<String, Value
             "displayed":c.displayed, "current":c.current, "first_placed":c.first_placed,
             "derived_holders":c.derived_holders, "holder_conflicts":c.holder_conflicts,
             "bound_displayed":c.displayed.saturating_sub(c.derived_holders),
-            "fallbacks":{"no_current_pose":c.no_current_pose,"ambiguous":c.ambiguous,"unsupported":c.unsupported,"joints":c.joints,"bounds":c.bounds,"instances":c.instances}}));
+            "fallbacks":{"no_current_pose":c.no_current_pose,"ambiguous":c.ambiguous,"unsupported":c.unsupported,"joints":c.joints,"bounds":c.bounds,"instances":c.instances},
+            "assumed":report.placement_assumptions().iter().map(|(part, why)| json!({"part":part,"reason":why.id()})).collect::<Vec<_>>()}));
     }
     out.insert("losses".to_owned(), losses(report));
     if !report.names().is_empty() {

@@ -20,7 +20,7 @@ pub mod parts;
 pub mod placement;
 mod progress;
 mod refusal;
-pub use part_positions::{PartPositionCounts, PartPositions};
+pub use part_positions::{PartPositionCounts, PartPositions, PlacementAssumption};
 pub use refusal::{
     classify as classify_refusal, clean as clean_refusal, Refusal,
     GENERIC_CATEGORY as GENERIC_REFUSAL,
