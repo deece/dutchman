@@ -2397,7 +2397,7 @@ mod cli_tests {
         assert!(below_check_floor(Some(CHECK_MEMORY_FLOOR - 1)));
         assert!(!below_check_floor(Some(CHECK_MEMORY_FLOOR)));
         assert!(!below_check_floor(None));
-        assert!(CHECK_MEMORY_FLOOR > 1 << 30);
+        const { assert!(CHECK_MEMORY_FLOOR > 1 << 30) };
     }
 
     #[test]
