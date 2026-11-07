@@ -95,6 +95,8 @@ pub struct App {
     /// Where run logs go instead of the platform's diagnostics folder (tests only).
     diagnostics_folder: Option<PathBuf>,
     unfinished_diagnostic: Option<PathBuf>,
+    /// The log of the unfinished run last dismissed, so its notice does not come back.
+    dismissed_unfinished: Option<PathBuf>,
     rows: Vec<Row>,
     /// Rows before the run's first job: inputs that could not be planned.
     offset: usize,
@@ -345,6 +347,11 @@ impl App {
             .storage
             .and_then(|storage| storage.get_string(SETTINGS_KEY))
             .and_then(|text| serde_json::from_str::<Value>(&text).ok());
+        let dismissed_unfinished = stored
+            .as_ref()
+            .and_then(|settings| settings.get(DISMISSED_UNFINISHED_KEY))
+            .and_then(Value::as_str)
+            .map(PathBuf::from);
         // A chosen CLI that has since moved falls back to the automatic search.
         let chosen_cli = stored
             .as_ref()
@@ -393,7 +400,11 @@ impl App {
             row_logs: Default::default(),
             ai_prompts: Default::default(),
             diagnostics_folder: diagnostics_folder.clone(),
-            unfinished_diagnostic: unfinished_diagnostic(diagnostics_folder.as_deref()),
+            unfinished_diagnostic: undismissed(
+                unfinished_diagnostic(diagnostics_folder.as_deref()),
+                dismissed_unfinished.as_deref(),
+            ),
+            dismissed_unfinished,
             rows: Vec::new(),
             offset: 0,
             run: None,
@@ -1563,7 +1574,7 @@ impl App {
                     }
                 }
                 if ui.button("Dismiss").clicked() {
-                    self.unfinished_diagnostic = None;
+                    self.dismissed_unfinished = self.unfinished_diagnostic.take();
                 }
             });
             ui.add_space(theme::SPACE_4);
@@ -2429,6 +2440,12 @@ impl eframe::App for App {
             object.insert("report_ids".into(), serde_json::json!(self.consent.ids));
             object.insert("update".into(), self.updater.saved());
             object.insert("report_policy".into(), self.report_policy.saved());
+            if let Some(log) = &self.dismissed_unfinished {
+                object.insert(
+                    DISMISSED_UNFINISHED_KEY.into(),
+                    serde_json::json!(log.display().to_string()),
+                );
+            }
             if let Some(cli) = &self.options.solidcraft {
                 object.insert(
                     SOLIDCRAFT_CLI_KEY.into(),
@@ -2872,6 +2889,15 @@ pub fn set_diagnostics_folder(folder: PathBuf) {
 }
 
 /// The unfinished run log the launch notice offers, from this process's diagnostics folder.
+/// Where the log of the unfinished run last dismissed is remembered in the settings.
+const DISMISSED_UNFINISHED_KEY: &str = "dismissed_unfinished";
+
+/// The unfinished run's log, unless that is the one already dismissed: a later unfinished run
+/// has its own log, and shows its notice.
+fn undismissed(found: Option<PathBuf>, dismissed: Option<&Path>) -> Option<PathBuf> {
+    found.filter(|log| Some(log.as_path()) != dismissed)
+}
+
 fn unfinished_diagnostic(folder: Option<&Path>) -> Option<PathBuf> {
     match folder {
         Some(folder) => dutchman::diagnostics::unfinished_log_in(folder),
@@ -3392,6 +3418,18 @@ mod tests {
         assert!(harness.state().private_send.is_some());
         assert!(harness.state().consent.card.is_none());
         assert!(!folder.join("submission.json").exists());
+    }
+
+    #[test]
+    fn a_dismissed_unfinished_run_stays_dismissed_until_another_one() {
+        let (first, second) = (PathBuf::from("first.jsonl"), PathBuf::from("second.jsonl"));
+        assert_eq!(undismissed(Some(first.clone()), Some(&first)), None);
+        assert_eq!(
+            undismissed(Some(second.clone()), Some(&first)),
+            Some(second)
+        );
+        assert_eq!(undismissed(Some(first.clone()), None), Some(first));
+        assert_eq!(undismissed(None, None), None);
     }
 
     #[test]
