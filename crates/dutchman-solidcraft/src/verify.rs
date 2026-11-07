@@ -1013,16 +1013,17 @@ pub(crate) struct Placed {
 }
 
 /// What to say when a replayed partial history doesn't hold the bodies the source stores at
-/// the same point (`stored`, the centres of their boxes): another number of bodies, or a body
-/// whose box centre is further from every stored one than a tenth of its size (at least
-/// 0.5 mm). The source's boxes come from edges, so they can be a little off, never by that.
+/// the same point (`stored`, the centres of their boxes): fewer bodies, or a stored body with
+/// no replayed body whose box centre is within a tenth of its size (at least 0.5 mm). The
+/// source's boxes come from edges, so they can be a little off, never by that. The source's
+/// list can leave bodies out, so a replay with more bodies than it lists isn't a difference.
 pub(crate) fn bodies_differ(
     stored: Option<&[[f64; 3]]>,
     replayed: Option<&[Placed]>,
 ) -> Option<String> {
     let (stored, replayed) = (stored?, replayed?);
     let bodies = |count: usize| format!("{count} bod{}", if count == 1 { "y" } else { "ies" });
-    if stored.len() != replayed.len() {
+    if stored.len() > replayed.len() {
         return Some(format!(
             "the retained features give {} where the source has {} at the same point",
             bodies(replayed.len()),
@@ -1788,10 +1789,15 @@ mod tests {
         };
         let one = [[0.0, 12.2, 1.5]];
         assert_eq!(
-            bodies_differ(Some(&one), Some(&[at(0.0, 30.0), at(5.0, 6.0)])).as_deref(),
+            bodies_differ(Some(&[[0.0; 3], [50.0, 0.0, 0.0]]), Some(&[at(0.0, 30.0)])).as_deref(),
             Some(
-                "the retained features give 2 bodies where the source has 1 body at the same point"
+                "the retained features give 1 body where the source has 2 bodies at the same point"
             )
+        );
+        // The source's list can leave a body out: one more in the replay is no difference.
+        assert_eq!(
+            bodies_differ(Some(&[[0.0; 3]]), Some(&[at(0.0, 30.0), at(5.0, 6.0)])),
+            None
         );
         // One body each, but the replay's is the small piece the source no longer has.
         let piece = Placed {
