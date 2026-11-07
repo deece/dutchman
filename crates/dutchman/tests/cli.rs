@@ -2250,6 +2250,37 @@ fn an_estimate_above_free_memory_does_not_refuse() {
         .contains("needs about"));
 }
 
+#[cfg(all(debug_assertions, unix))]
+#[test]
+fn a_check_stopped_for_memory_keeps_the_design_unverified() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let cli = dir.path().join("solidcraft-cli");
+    std::fs::write(
+        &cli,
+        "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'solidcraft-cli 0.30.1'; exit 0; fi\nsleep 30\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let input = fixture("generated_unit_cube.f3d");
+    let output = dir.path().join("kept.sc");
+    let out = Command::new(env!("CARGO_BIN_EXE_dutchman"))
+        .args(["convert", &input, output.to_str().unwrap(), "--json"])
+        .args(["--solidcraft", cli.to_str().unwrap()])
+        .env("DUTCHMAN_TEST_CHECK_LOW_MEMORY", "1")
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(report["ok"], true);
+    assert_ne!(report["verification"]["status"], "verified", "{report}");
+    assert!(
+        report.to_string().contains("History check stopped"),
+        "{report}"
+    );
+    assert!(output.exists());
+}
+
 #[cfg(debug_assertions)]
 #[test]
 fn running_low_on_memory_stops_a_conversion_with_exit_two_or_a_failed_result() {

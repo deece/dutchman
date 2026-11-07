@@ -49,7 +49,7 @@ memory estimates. Estimates never stop a conversion or change what it keeps: an 
 from a file's size, which can't reveal the geometry, and can be far off in either direction.
 Memory is measured instead. A running conversion stops with a message when the computer has
 less than 1 GB free while the conversion holds at least 1 GB, including what it started.
-`--no-memory-check` turns that off.
+The SolidCraft check stops earlier, under 1.5 GB free, and the design is kept, marked unverified with the reason, so a built design isn't lost to its check. `--no-memory-check` turns that off.
 
 macOS compresses and swaps rather than running out, so on a Mac a large design can use far more than the computer's memory and convert slowly with heavy swapping: a 12.5 GB conversion finishes on an 8 GB Mac. A Mac also stops when the system reports critical memory pressure or the boot volume has under 2 GB free, again only when the conversion holds at least 1 GB. Once a design is read, Standard leaves history out if what
 the read really took leaves no room for it, and the other presets stop. Geometry-only conversion also checks its converted shape
