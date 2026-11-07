@@ -496,7 +496,12 @@ impl Report {
         const SHOWN: usize = 20;
         const ISSUE: &str = "https://github.com/dutchman-cad/dutchman/issues/512";
         let names = |parts: &[&str]| {
-            let shown = parts[..parts.len().min(SHOWN)].join("; ");
+            let shown = parts
+                .iter()
+                .take(SHOWN)
+                .copied()
+                .collect::<Vec<_>>()
+                .join("; ");
             match parts.len().saturating_sub(SHOWN) {
                 0 => shown,
                 more => format!("{shown} and {more} more (all in the JSON report)"),
