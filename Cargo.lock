@@ -1499,6 +1499,7 @@ dependencies = [
  "cadmpeg-ir",
  "cadmpeg-registry",
  "dutchman-core",
+ "serde",
  "serde_json",
  "sha2",
  "tempfile",

@@ -1416,9 +1416,10 @@ impl Builder<'_> {
         }
         let mut hidden = Vec::new();
         let (mut homed, mut homed_left_out) = (0, 0);
+        let wire = history::SketchWire::new();
         for (component, ids) in groups {
             let (mut kept, left_out) =
-                history::sketches_where(model, self.report, &|id| ids.contains(id));
+                history::sketches_where(model, &wire, self.report, &|id| ids.contains(id));
             let count = kept.features.len();
             if component == 0 {
                 if count > 0 || left_out > 0 {

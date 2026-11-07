@@ -118,6 +118,11 @@ targets, or represent them through an IR extension, before Dutchman can map them
 assignments absent from CADIR cannot be reconstructed; remaining grey bodies may therefore
 still need additional decoding in cadmpeg.
 
+## Assembly memory
+
+Reference sketches are mapped from the sketch, feature and parameter data alone, built once per
+conversion: on the Voron V1.8 that takes the peak from 11.0 GB to 8.7 GB, with the same output.
+
 ## Assembly placements
 
 **Part positions** defaults to **Smart**. For each occurrence, Smart prefers a displayed

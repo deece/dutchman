@@ -36,6 +36,7 @@ mod sketch;
 mod spatial;
 mod sweep;
 mod thread;
+mod wire;
 
 use std::cell::OnceCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -452,6 +453,9 @@ struct Context<'a> {
     source: Option<&'a Model>,
     /// The CADIR `model` object.
     model: &'a Value,
+    /// The arenas `model` holds when it is a subset of the whole; reading another is a bug,
+    /// which a debug build panics on.
+    reading_only: Option<&'static [&'static str]>,
     /// Borrowed rows, indexed once on the first lookup in each arena. Geometry walks
     /// otherwise scan whole arenas for every edge, vertex and point they visit.
     rows: BTreeMap<&'a str, RowIndex<'a>>,
@@ -505,6 +509,7 @@ impl<'a> Context<'a> {
         Context {
             source: None,
             model,
+            reading_only: None,
             rows: model
                 .as_object()
                 .into_iter()
@@ -630,6 +635,12 @@ impl<'a> Context<'a> {
 
     /// The rows of a CADIR arena.
     fn arena(&self, name: &str) -> &'a [Value] {
+        debug_assert!(
+            self.reading_only
+                .is_none_or(|arenas| arenas.contains(&name)),
+            "arena {name:?} is read from a model that holds only {:?}",
+            self.reading_only,
+        );
         self.model
             .get(name)
             .and_then(Value::as_array)
@@ -1032,12 +1043,18 @@ fn map_into(
 /// no feature history carries (an assembly's): every planar sketch that maps, with the
 /// parameters their dimensions use, and how many sketches did not map.
 pub(crate) fn sketches(model: &Model, report: &mut Report) -> (History, usize) {
-    sketches_where(model, report, &|_| true)
+    sketches_where(model, &OnceCell::new(), report, &|_| true)
 }
 
+/// The arenas the reference sketches read, in the wire form of the model. Built the first
+/// time it is asked for, so a conversion that maps several groups of sketches builds it once.
+pub(crate) type SketchWire = OnceCell<Option<Value>>;
+
 /// [`sketches`] for the sketches whose ids `wanted` accepts; the count left out is of those.
+/// `wire` is shared between calls on the same model.
 pub(crate) fn sketches_where(
     model: &Model,
+    wire: &SketchWire,
     report: &mut Report,
     wanted: &dyn Fn(&str) -> bool,
 ) -> (History, usize) {
@@ -1055,15 +1072,18 @@ pub(crate) fn sketches_where(
     if model.ir.check_decode_depth().is_err() || !IR_VERSIONS.contains(&model.ir.ir_version()) {
         return (kept, count);
     }
-    // Reference sketches read only neutral arenas. Keep one expanded model, without
-    // expanding native records or cloning the entire model a second time.
-    let wire = match serde_json::to_value(&model.ir.model) {
-        Ok(wire) => wire,
-        Err(_) => return (kept, count),
+    // Reference sketches read only the neutral arenas in `wire::SKETCH_ARENAS`. Keep those
+    // expanded once, without expanding native records or the rest of the model.
+    let Some(wire) = wire
+        .get_or_init(|| wire::only_arenas(&model.ir.model, wire::SKETCH_ARENAS).ok())
+        .as_ref()
+    else {
+        return (kept, count);
     };
     let mut param_notes = Report::default();
     let (params, param_names) = params::map(model, &mut param_notes);
-    let mut ctx = Context::new(&wire);
+    let mut ctx = Context::new(wire);
+    ctx.reading_only = Some(wire::SKETCH_ARENAS);
     ctx.params = param_names;
     let mut left_out = 0;
     for sketch in ctx.arena("sketches") {
@@ -1543,6 +1563,60 @@ mod tests {
 
     use super::*;
     use crate::testing::{cube, feature, with};
+
+    /// The reference sketches map the same from the arenas they read as from the whole
+    /// model, and read no other arena (a debug build panics on one).
+    #[test]
+    fn sketches_read_the_same_from_the_arenas_they_need() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../dutchman-core/tests/fixtures");
+        let mut mapped = 0;
+        for name in [
+            "design_sketch_constraints.f3d",
+            "design_copy_paste.f3d",
+            "generated_unit_cube.f3d",
+            "container_metadata_only.f3d",
+        ] {
+            let Ok(model) = dutchman_core::read(
+                dutchman_core::Format::FusionArchive,
+                &root.join(name),
+                &mut Report::default(),
+            ) else {
+                continue;
+            };
+            let whole = SketchWire::new();
+            whole
+                .set(Some(serde_json::to_value(&model.ir.model).unwrap()))
+                .unwrap();
+            let subset = SketchWire::new();
+            let (mut a_notes, mut b_notes) = (Report::default(), Report::default());
+            let a = sketches_where(&model, &whole, &mut a_notes, &|_| true);
+            let b = sketches_where(&model, &subset, &mut b_notes, &|_| true);
+            let keys = |wire: &SketchWire| -> Vec<String> {
+                wire.get()
+                    .and_then(Option::as_ref)
+                    .and_then(Value::as_object)
+                    .map(|rows| rows.keys().cloned().collect())
+                    .unwrap_or_default()
+            };
+            if let Some(held) = subset.get().and_then(Option::as_ref) {
+                assert!(keys(&subset)
+                    .iter()
+                    .all(|k| wire::SKETCH_ARENAS.contains(&k.as_str())));
+                let full = whole.get().and_then(Option::as_ref).unwrap();
+                for arena in wire::SKETCH_ARENAS {
+                    assert_eq!(held.get(arena), full.get(arena), "{name}: {arena}");
+                }
+            }
+            assert_eq!(a.1, b.1, "{name}");
+            assert_eq!(a.0.features, b.0.features, "{name}");
+            assert_eq!(a.0.params, b.0.params, "{name}");
+            assert_eq!(a.0.next_id, b.0.next_id, "{name}");
+            assert_eq!(format!("{a_notes:?}"), format!("{b_notes:?}"), "{name}");
+            mapped += a.0.features.len();
+        }
+        assert!(mapped > 0, "no fixture sketch mapped");
+    }
 
     #[test]
     fn unsupported_selections_name_their_form() {

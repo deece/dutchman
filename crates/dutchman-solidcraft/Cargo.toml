@@ -13,6 +13,7 @@ cadmpeg-ir.workspace = true
 # The STEP writer an Import keeps its geometry in.
 cadmpeg-registry = { workspace = true, features = ["step"] }
 dutchman-core.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 tempfile.workspace = true
