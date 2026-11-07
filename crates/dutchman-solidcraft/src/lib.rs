@@ -336,7 +336,11 @@ impl SolidCraftWriter {
     }
 
     fn history_summary(&self, history: &history::History) -> String {
-        let summary = format!("{} of {} features mapped", history.mapped, history.total);
+        let summary = format!(
+            "{} of {} features rebuilt",
+            history.rebuilt(),
+            history.needing()
+        );
         let uses_target = history.features.iter().any(|feature| {
             (feature.get("type").and_then(Value::as_str) == Some("coil")
                 && feature.get("sketch").is_some())
@@ -709,10 +713,10 @@ fn final_live(history: &history::History, model: &Model) -> Live {
 
 fn partial_summary(history: &history::History) -> String {
     format!(
-        "history stopped at {} ({} of {} features kept); the rest is the imported final shape",
+        "history stopped at {} ({} of {} features rebuilt); the rest is the imported final shape",
         history.stop.as_deref().unwrap_or("a replay difference"),
-        history.mapped,
-        history.total
+        history.rebuilt(),
+        history.needing()
     )
 }
 

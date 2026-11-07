@@ -282,6 +282,10 @@ pub struct PartHistory {
     /// not counted.
     pub mapped: usize,
     pub total: usize,
+    /// Of those, the ones that became SolidCraft features, and the ones that need one: all but
+    /// those that need none, such as a component insert or a joint.
+    pub rebuilt: usize,
+    pub needing: usize,
 }
 
 /// What became of one source feature.

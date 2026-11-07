@@ -75,6 +75,8 @@ pub(crate) struct History {
     pub(crate) pattern_replay_required: bool,
     /// Source features that became SolidCraft features or needed none.
     pub(crate) mapped: usize,
+    /// Of those, the ones that needed no feature: a component insert, a joint, a default plane.
+    pub(crate) not_needed: usize,
     /// Active source features.
     pub(crate) total: usize,
     /// Blends whose input edges wait for SolidCraft's replay of the history before them
@@ -82,6 +84,18 @@ pub(crate) struct History {
     pub(crate) blends: Vec<blend::Pending>,
     /// Ids of sketch features whose source sketch is hidden in the source.
     pub(crate) hidden: Vec<u64>,
+}
+
+impl History {
+    /// Source features that became SolidCraft features.
+    pub(crate) fn rebuilt(&self) -> usize {
+        self.mapped.saturating_sub(self.not_needed)
+    }
+
+    /// Source features that need one: all active ones but those that need no feature.
+    pub(crate) fn needing(&self) -> usize {
+        self.total.saturating_sub(self.not_needed)
+    }
 }
 
 /// Looks and explicit names for bodies carried by an Import, independent of feature history.
@@ -788,6 +802,11 @@ fn discard_reference_sketches(mapping: &mut Mapping) {
         .iter()
         .filter(|f| matches!(f.status, FeatureStatus::Mapped | FeatureStatus::NotNeeded))
         .count();
+    history.not_needed = mapping
+        .features
+        .iter()
+        .filter(|f| f.status == FeatureStatus::NotNeeded)
+        .count();
     history.total = mapping
         .features
         .iter()
@@ -885,10 +904,12 @@ fn map_into(
         match map_feature(feature, &mut ctx, report, &mut history.features) {
             Ok(Mapped::Nothing) => {
                 history.mapped += 1;
+                history.not_needed += 1;
                 out.push(outcome(FeatureStatus::NotNeeded, None));
             }
             Ok(Mapped::Consumed) => {
                 history.mapped += 1;
+                history.not_needed += 1;
                 out.push(outcome(
                     FeatureStatus::NotNeeded,
                     Some("mapped with its plate".to_owned()),
@@ -1292,6 +1313,11 @@ pub(crate) fn shorten(mapping: &mut Mapping, source: usize, reason: String) {
                 FeatureStatus::Mapped | FeatureStatus::NotNeeded
             )
         })
+        .count();
+    history.not_needed = mapping
+        .features
+        .iter()
+        .filter(|feature| feature.status == FeatureStatus::NotNeeded)
         .count();
     if first_blocker.is_none_or(|first| source <= first) {
         history.stop = Some(reason.clone());

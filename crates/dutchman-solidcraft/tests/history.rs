@@ -310,7 +310,7 @@ fn a_sweep_along_sketch_curves_becomes_a_solidcraft_sweep() {
     assert!(sweep.get("scale").is_none());
     assert!(sweep.get("orientation").is_none());
     assert!(
-        history_line(&report).contains("3 of 3 features mapped"),
+        history_line(&report).contains("3 of 3 features rebuilt"),
         "{}",
         history_line(&report)
     );
@@ -445,7 +445,7 @@ fn a_spatial_sketch_becomes_a_3d_sketch_and_a_sweep_follows_its_curves() {
     assert_eq!(sweep["path_sketch"], rail["id"]);
     assert_eq!(sweep["path"], json!(["w1", "w2", "w3"]));
     assert!(
-        history_line(&report).contains("3 of 3 features mapped"),
+        history_line(&report).contains("3 of 3 features rebuilt"),
         "{}",
         history_line(&report)
     );
@@ -630,7 +630,7 @@ fn sweep_options_keep_their_units_and_result_mode() {
             assert!(sweep["profiles"].is_object());
             assert_eq!(sweep["body_names"], json!(["unit cube"]));
             assert_eq!(sweep.get("operation").is_none(), surface);
-            assert!(history_line(&report).contains("3 of 3 features mapped"));
+            assert!(history_line(&report).contains("3 of 3 features rebuilt"));
         }
     }
 }
@@ -651,7 +651,7 @@ fn a_single_curve_whole_sketch_maps_as_a_sweep_path() {
     assert_eq!(sweep["path_sketch"], path["id"]);
     assert_eq!(sweep["path"].as_array().unwrap().len(), 1);
     assert_eq!(sweep["path"][0], path["sketch"]["curves"][0]["id"]);
-    assert!(history_line(&report).contains("3 of 3 features mapped"));
+    assert!(history_line(&report).contains("3 of 3 features rebuilt"));
 }
 
 #[test]
@@ -773,7 +773,7 @@ fn a_sweep_guide_rail_keeps_its_sketch_and_curve_selection() {
         for key in ["orientation", "twist", "scale"] {
             assert!(sweep.get(key).is_none());
         }
-        assert!(history_line(&report).contains("4 of 4 features mapped"));
+        assert!(history_line(&report).contains("4 of 4 features rebuilt"));
     }
 }
 
@@ -1040,7 +1040,7 @@ fn a_loft_between_sketch_profiles_becomes_a_solidcraft_loft() {
     assert_eq!(sections[1]["sketch"], id_of("Top sketch"));
     assert_eq!(sections[1]["profiles"]["type"], "curves");
     assert!(
-        history_line(&report).contains("3 of 3 features mapped"),
+        history_line(&report).contains("3 of 3 features rebuilt"),
         "{}",
         history_line(&report)
     );
@@ -1163,7 +1163,7 @@ fn resolved_loft_point_ends_become_sketch_points() {
             assert_eq!(sketch["plane"]["plane"]["origin"], json!([5.0, 5.0, 10.0]));
             assert_eq!(sketch["sketch"]["points"][0]["id"], "origin");
             assert!(sketch["id"].as_u64().unwrap() < loft["id"].as_u64().unwrap());
-            assert!(history_line(&report).contains("3 of 3 features mapped"));
+            assert!(history_line(&report).contains("3 of 3 features rebuilt"));
         }
     }
 }
@@ -1250,7 +1250,7 @@ fn loft_sections_in_one_sketch_keep_their_selected_regions() {
         .unwrap()
         .iter()
         .all(|id| !last.as_array().unwrap().contains(id)));
-    assert!(history_line(&report).contains("3 of 3 features mapped"));
+    assert!(history_line(&report).contains("3 of 3 features rebuilt"));
 }
 
 #[test]
@@ -1405,7 +1405,7 @@ fn a_whole_sketch_loft_rail_is_its_one_curve() {
         .unwrap();
     assert_eq!(loft["rails"][0]["sketch"], sketch["id"]);
     assert_eq!(loft["rails"][0]["curves"], json!([curve["id"]]));
-    assert!(history_line(&report).contains("4 of 4 features mapped"));
+    assert!(history_line(&report).contains("4 of 4 features rebuilt"));
 
     let (_, report) = convert(
         &whole_sketch_railed_loft(true),
@@ -1472,7 +1472,7 @@ fn a_loft_along_a_guide_rail_keeps_its_rail() {
     assert_eq!(rails[0]["sketch"], rail_sketch);
     assert_eq!(rails[0]["curves"].as_array().unwrap().len(), 1);
     assert!(
-        history_line(&report).contains("4 of 4 features mapped"),
+        history_line(&report).contains("4 of 4 features rebuilt"),
         "{}",
         history_line(&report)
     );
@@ -1537,7 +1537,7 @@ fn ruled_and_surface_lofts_map_to_what_solidcraft_builds() {
         assert_eq!(loft["sections"].as_array().unwrap().len(), 2);
         assert_eq!(loft.get("operation").is_none(), kind == "surface_loft");
         assert!(
-            history_line(&report).contains("3 of 3 features mapped"),
+            history_line(&report).contains("3 of 3 features rebuilt"),
             "{}",
             history_line(&report)
         );
@@ -1654,7 +1654,7 @@ fn a_sketch_and_extrude_history_is_written() {
 
     assert_eq!(
         history_line(&report),
-        "2 of 2 features mapped; unverified: verification turned off"
+        "2 of 2 features rebuilt; unverified: verification turned off"
     );
     assert_eq!(
         types(&document),
@@ -1890,7 +1890,7 @@ fn a_faithful_history_is_verified_in_solidcraft() {
     );
     assert_eq!(
         history_line(&report),
-        "2 of 2 features mapped; verified against the original in SolidCraft"
+        "2 of 2 features rebuilt; verified against the original in SolidCraft"
     );
     assert_eq!(types(&document).len(), 3);
 }
@@ -2249,7 +2249,7 @@ fn freecad_f13a_keeps_its_helix_and_replays_at_the_recipe_volume() {
             .target_version(Some(dutchman_solidcraft::SolidCraftVersion::V0_25_1)),
     );
     assert!(
-        history_line(&report).starts_with("4 of 4 features mapped"),
+        history_line(&report).starts_with("2 of 2 features rebuilt"),
         "{}",
         history_line(&report)
     );
@@ -2289,7 +2289,7 @@ fn full_and_symmetric_revolves_are_written() {
         &full,
         &SolidCraftWriter::new().verification(Verification::Off),
     );
-    assert!(history_line(&report).starts_with("2 of 2 features mapped"));
+    assert!(history_line(&report).starts_with("2 of 2 features rebuilt"));
     let revolve = &document["features"][1];
     assert_eq!(revolve["type"], "revolve");
     assert_eq!(revolve["angle"], "360 deg");
@@ -2337,7 +2337,7 @@ fn one_sided_revolves_follow_the_oriented_axis() {
                     model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
                     let (design, report) = written(&model);
                     assert!(
-                        history_line(&report).starts_with("2 of 2 features mapped"),
+                        history_line(&report).starts_with("2 of 2 features rebuilt"),
                         "{report:?}"
                     );
                     let (document, _) = convert(
@@ -2422,7 +2422,7 @@ fn one_sided_revolves_keep_selected_curves_and_a_sketch_axis() {
             &SolidCraftWriter::new().verification(Verification::Off),
         );
         assert!(
-            history_line(&report).starts_with("2 of 2 features mapped"),
+            history_line(&report).starts_with("2 of 2 features rebuilt"),
             "{report:?}"
         );
         assert_eq!(document["features"][1]["axis"]["type"], "sketch_line");
@@ -2463,7 +2463,7 @@ fn one_sided_revolves_bound_circular_profiles() {
             assert!(history_line(&report).contains("sweep side is not proven"));
         } else {
             assert!(
-                history_line(&report).starts_with("2 of 2 features mapped"),
+                history_line(&report).starts_with("2 of 2 features rebuilt"),
                 "{report:?}"
             );
             if let Some(cli) = solidcraft() {
@@ -2529,7 +2529,7 @@ fn unequal_two_sided_full_turns_map_without_an_angular_start() {
             &model,
             &SolidCraftWriter::new().verification(Verification::Off),
         );
-        assert!(history_line(&report).starts_with("2 of 2 features mapped"));
+        assert!(history_line(&report).starts_with("2 of 2 features rebuilt"));
         let revolve = &document["features"][1];
         assert_eq!(revolve["angle"], "360 deg");
         assert_eq!(revolve["convention"], "sketch_normal");
@@ -2634,7 +2634,7 @@ fn revolve_axis_sources_use_the_resolved_line_placement() {
             &model,
             &SolidCraftWriter::new().verification(Verification::Off),
         );
-        assert!(history_line(&report).starts_with("2 of 2 features mapped"));
+        assert!(history_line(&report).starts_with("2 of 2 features rebuilt"));
         assert_eq!(
             document["features"][1]["axis"],
             json!({
@@ -2656,7 +2656,7 @@ fn a_revolve_about_a_line_of_its_sketch_keeps_that_line() {
         &model,
         &SolidCraftWriter::new().verification(Verification::Off),
     );
-    assert!(history_line(&report).starts_with("2 of 2 features mapped"));
+    assert!(history_line(&report).starts_with("2 of 2 features rebuilt"));
     let axis = &document["features"][1]["axis"];
     assert_eq!(axis["type"], "sketch_line");
     let curve = axis["curve"].as_str().unwrap();
@@ -2690,7 +2690,7 @@ fn surface_revolves_short_of_a_full_turn_map() {
         &model,
         &SolidCraftWriter::new().verification(Verification::Off),
     );
-    assert!(history_line(&report).starts_with("2 of 2 features mapped"));
+    assert!(history_line(&report).starts_with("2 of 2 features rebuilt"));
     let revolve = &document["features"][1];
     assert_eq!(revolve["type"], "surface_revolve");
     assert_eq!(revolve["angle"], "90 deg");
@@ -2756,7 +2756,7 @@ fn revolve_construction_options_map_or_name_the_face_maker() {
             &SolidCraftWriter::new().verification(Verification::Off),
         );
         assert!(
-            history_line(&report).starts_with("2 of 2 features mapped"),
+            history_line(&report).starts_with("2 of 2 features rebuilt"),
             "{change}: {}",
             history_line(&report)
         );
@@ -2844,7 +2844,7 @@ fn a_simple_hole_at_a_sketch_circle_becomes_a_solidcraft_hole() {
         &SolidCraftWriter::new().verification(Verification::Off),
     );
     assert!(
-        history_line(&report).starts_with("4 of 4 features mapped"),
+        history_line(&report).starts_with("4 of 4 features rebuilt"),
         "{}",
         history_line(&report)
     );
@@ -2898,7 +2898,7 @@ fn counterbores_and_countersinks_keep_their_entry_dimensions() {
                         .target_version(Some(version.parse().unwrap())),
                 );
                 assert!(
-                    history_line(&report).starts_with("4 of 4 features mapped"),
+                    history_line(&report).starts_with("4 of 4 features rebuilt"),
                     "{}",
                     history_line(&report)
                 );
@@ -2973,7 +2973,7 @@ fn a_plain_drilled_form_keeps_its_angle_and_shoulder_depth() {
         &model,
         &SolidCraftWriter::new().verification(Verification::Off),
     );
-    assert!(history_line(&report).starts_with("4 of 4 features mapped"));
+    assert!(history_line(&report).starts_with("4 of 4 features rebuilt"));
     let hole = &document["features"][3];
     assert_eq!(hole["hole"], json!({"type": "drilled", "tip_angle": "90"}));
     assert_eq!(hole["diameter"], "4 mm");
@@ -3144,7 +3144,7 @@ fn spatial_holes_keep_their_entry_position_and_inward_direction() {
             &SolidCraftWriter::new().verification(Verification::Off),
         );
         assert!(
-            history_line(&report).starts_with("4 of 4 features mapped"),
+            history_line(&report).starts_with("4 of 4 features rebuilt"),
             "{}",
             history_line(&report)
         );
@@ -3168,7 +3168,7 @@ fn a_hole_to_an_earlier_cap_keeps_a_point_on_that_face() {
         &SolidCraftWriter::new().verification(Verification::Off),
     );
     assert!(
-        history_line(&report).starts_with("4 of 4 features mapped"),
+        history_line(&report).starts_with("4 of 4 features rebuilt"),
         "{}",
         history_line(&report)
     );
@@ -3209,7 +3209,7 @@ fn a_hole_can_select_sketch_points_or_circle_centres() {
             &SolidCraftWriter::new().verification(Verification::Off),
         );
         assert!(
-            history_line(&report).starts_with("4 of 4 features mapped"),
+            history_line(&report).starts_with("4 of 4 features rebuilt"),
             "{}",
             history_line(&report)
         );
@@ -3230,7 +3230,7 @@ fn a_drilled_form_keeps_its_included_angle_and_shoulder_depth() {
         &SolidCraftWriter::new().verification(Verification::Off),
     );
     assert!(
-        history_line(&report).starts_with("4 of 4 features mapped"),
+        history_line(&report).starts_with("4 of 4 features rebuilt"),
         "{}",
         history_line(&report)
     );
@@ -3260,7 +3260,7 @@ fn cosmetic_hole_threads_keep_the_designation_and_resolved_bore() {
             &SolidCraftWriter::new().verification(Verification::Off),
         );
         assert!(
-            history_line(&report).starts_with("4 of 4 features mapped"),
+            history_line(&report).starts_with("4 of 4 features rebuilt"),
             "{}",
             history_line(&report)
         );
@@ -3314,7 +3314,7 @@ fn hole_thread_details_solidcraft_lacks_are_reported_not_blocking() {
             &SolidCraftWriter::new().verification(Verification::Off),
         );
         assert!(
-            history_line(&report).starts_with("4 of 4 features mapped"),
+            history_line(&report).starts_with("4 of 4 features rebuilt"),
             "{change}: {}",
             history_line(&report)
         );
@@ -3759,7 +3759,7 @@ fn a_selected_crossed_loop_maps_to_its_atomic_regions() {
             &model,
             &SolidCraftWriter::new().verification(Verification::Off),
         );
-        assert!(history_line(&report).starts_with("2 of 2 features mapped"));
+        assert!(history_line(&report).starts_with("2 of 2 features rebuilt"));
         let selection = &document["features"][1]["profiles"];
         assert_eq!(selection["type"], "curves");
         let mut loops: Vec<Vec<String>> =
@@ -3840,7 +3840,7 @@ fn curves_outside_every_profile_loop_are_written_as_construction() {
         &stray_curve_history(|_| {}),
         &SolidCraftWriter::new().verification(Verification::Off),
     );
-    assert!(history_line(&report).starts_with("2 of 2 features mapped"));
+    assert!(history_line(&report).starts_with("2 of 2 features rebuilt"));
     let flags = construction_flags(&document);
     assert_eq!(flags.len(), 6);
     assert_eq!(
@@ -3950,7 +3950,7 @@ fn a_self_intersection_between_endpoints_splits_the_profile() {
         &bow_tie_profile(),
         &SolidCraftWriter::new().verification(Verification::Off),
     );
-    assert!(history_line(&report).starts_with("2 of 2 features mapped"));
+    assert!(history_line(&report).starts_with("2 of 2 features rebuilt"));
     let mut loops: Vec<Vec<String>> =
         serde_json::from_value(document["features"][1]["profiles"]["loops"].clone()).unwrap();
     loops.sort();
@@ -4001,7 +4001,7 @@ fn native_selections_resolve_one_even_odd_region() {
         &nested_native_profile(&[5.0, 3.0]),
         &SolidCraftWriter::new().verification(Verification::Off),
     );
-    assert!(history_line(&report).starts_with("2 of 2 features mapped"));
+    assert!(history_line(&report).starts_with("2 of 2 features rebuilt"));
     assert_eq!(
         document["features"][1]["profiles"],
         json!({"type": "whole_boundaries", "profiles": [{"outer": ["c1"], "holes": [["c2"]]}]})
@@ -4352,8 +4352,8 @@ fn parts_keep_their_histories_inside_an_assembly() {
     assert_eq!(
         lines,
         [
-            "First.ipt: 2 of 2 features mapped; unverified: verification turned off",
-            "Second.ipt: 2 of 2 features mapped; unverified: verification turned off"
+            "First.ipt: 2 of 2 features rebuilt; unverified: verification turned off",
+            "Second.ipt: 2 of 2 features rebuilt; unverified: verification turned off"
         ]
     );
     assert_eq!(report.outcome().unwrap().mode, dutchman_core::Mode::History);
@@ -4508,7 +4508,7 @@ fn body_patterns_use_names_assigned_by_earlier_features() {
             &model,
             &SolidCraftWriter::new().verification(Verification::Off),
         );
-        assert!(history_line(&report).starts_with("3 of 3 features mapped"));
+        assert!(history_line(&report).starts_with("3 of 3 features rebuilt"));
         assert_eq!(document["features"][2]["bodies"], json!(["unit cube"]));
         assert_eq!(document["features"][2]["features"], json!([]));
         if let Some(cli) = solidcraft() {
@@ -4540,7 +4540,7 @@ fn regular_explicit_pattern_locations_map_to_spacing_and_span() {
             &model,
             &SolidCraftWriter::new().verification(Verification::Off),
         );
-        assert!(history_line(&report).starts_with("3 of 3 features mapped"));
+        assert!(history_line(&report).starts_with("3 of 3 features rebuilt"));
         assert_eq!(document["features"][2]["pattern"][field], expected);
         if let Some(cli) = solidcraft() {
             assert!((volumes(&cli, &written(&model).0).iter().sum::<f64>() - 3000.0).abs() < 1e-6);
@@ -4574,7 +4574,7 @@ fn two_linear_stages_become_a_rectangular_pattern() {
         &model,
         &SolidCraftWriter::new().verification(Verification::Off),
     );
-    assert!(history_line(&report).starts_with("3 of 3 features mapped"));
+    assert!(history_line(&report).starts_with("3 of 3 features rebuilt"));
     assert_eq!(
         document["features"][2]["pattern"],
         json!({
@@ -4605,7 +4605,7 @@ fn full_turn_endpoints_keep_only_distinct_instances() {
             &model,
             &SolidCraftWriter::new().verification(Verification::Off),
         );
-        assert!(history_line(&report).starts_with("3 of 3 features mapped"));
+        assert!(history_line(&report).starts_with("3 of 3 features rebuilt"));
         assert_eq!(
             document["features"][2]["pattern"]["count"],
             count.to_string()
@@ -4638,7 +4638,7 @@ fn composite_mirrors_multiply_the_previous_instance_set_in_order() {
     ] {
         let model = patterned(json!({"kind": "composite", "stages": stages}));
         let (document, report) = convert(&model, &composite_writer());
-        assert!(history_line(&report).starts_with("3 of 3 features mapped"));
+        assert!(history_line(&report).starts_with("3 of 3 features rebuilt"));
         assert_eq!(document["features"][2]["features"], json!(["Block"]));
         assert_eq!(
             document["features"][3]["features"],
@@ -4769,7 +4769,7 @@ fn composite_mirrors_chain_multiple_reflections_and_circular_copies() {
     ] {
         let model = patterned(json!({"kind": "composite", "stages": stages}));
         let (_, report) = convert(&model, &composite_writer());
-        assert!(history_line(&report).starts_with("3 of 3 features mapped"));
+        assert!(history_line(&report).starts_with("3 of 3 features rebuilt"));
         if let Some(cli) = composite_cli() {
             let v = volumes(&cli, &written_with(&model, &composite_writer()).0);
             assert_eq!(v.len(), count);
@@ -4832,7 +4832,7 @@ fn later_patterns_can_select_a_whole_composite_mirror_result() {
         ..model
     };
     let (document, report) = convert(&model, &composite_writer());
-    assert!(history_line(&report).starts_with("4 of 4 features mapped"));
+    assert!(history_line(&report).starts_with("4 of 4 features rebuilt"));
     assert_eq!(document["features"][2]["name"], "Copies stage 1 (2)");
     assert_eq!(document["features"][4]["name"], "Copies (2)");
     assert_eq!(
@@ -4896,9 +4896,9 @@ fn unfinished_pattern_replays_keep_the_original_geometry() {
 #[test]
 fn cc0_freecad_mirror_and_full_turn_match_recipe_volumes() {
     for (file, count, volume) in [
-        ("S13c.FCStd", 10, 11660.70799341),
-        ("freecad-1.1.4/S13c.FCStd", 10, 11660.70799341),
-        ("P08b.FCStd", 6, 13006.19358586),
+        ("S13c.FCStd", 7, 11660.70799341),
+        ("freecad-1.1.4/S13c.FCStd", 7, 11660.70799341),
+        ("P08b.FCStd", 5, 13006.19358586),
     ] {
         let cli = if file == "P08b.FCStd" {
             solidcraft()
@@ -4916,7 +4916,7 @@ fn cc0_freecad_mirror_and_full_turn_match_recipe_volumes() {
         .unwrap();
         let (document, report) = convert(&model, &composite_writer());
         assert!(
-            history_line(&report).starts_with(&format!("{count} of {count} features mapped")),
+            history_line(&report).starts_with(&format!("{count} of {count} features rebuilt")),
             "{file}: {}",
             history_line(&report)
         );
@@ -5035,7 +5035,7 @@ fn path_patterns_use_mapped_sketch_curves_and_arc_length_spacing() {
             &model,
             &SolidCraftWriter::new().verification(Verification::Off),
         );
-        assert!(history_line(&report).starts_with("4 of 4 features mapped"));
+        assert!(history_line(&report).starts_with("4 of 4 features rebuilt"));
         let pattern = &document["features"][3]["pattern"];
         assert_eq!(pattern["type"], "path");
         assert_eq!(pattern["path_sketch"], document["features"][1]["id"]);
@@ -5191,7 +5191,7 @@ fn a_feature_pattern_names_its_seed() {
         &SolidCraftWriter::new().verification(Verification::Off),
     );
     assert!(
-        history_line(&report).starts_with("3 of 3 features mapped"),
+        history_line(&report).starts_with("3 of 3 features rebuilt"),
         "{}",
         history_line(&report)
     );
@@ -5237,7 +5237,7 @@ fn partial_circular_patterns_include_both_ends() {
         &model,
         &SolidCraftWriter::new().verification(Verification::Off),
     );
-    assert!(history_line(&report).starts_with("3 of 3 features mapped"));
+    assert!(history_line(&report).starts_with("3 of 3 features rebuilt"));
     assert_eq!(document["features"][2]["features"], json!(["Block"]));
     assert_eq!(
         document["features"][2]["pattern"],
@@ -5349,7 +5349,7 @@ fn freecad_periodic_spline_recipes_keep_their_history() {
             &SolidCraftWriter::new().verification(Verification::Off),
         );
         assert!(
-            history_line(&report).starts_with("3 of 3 features mapped"),
+            history_line(&report).starts_with("2 of 2 features rebuilt"),
             "{name}: {}",
             history_line(&report)
         );
@@ -5508,7 +5508,7 @@ fn a_mirror_of_features_becomes_a_solidcraft_mirror() {
         &SolidCraftWriter::new().verification(Verification::Off),
     );
     assert!(
-        history_line(&report).starts_with("3 of 3 features mapped"),
+        history_line(&report).starts_with("3 of 3 features rebuilt"),
         "{}",
         history_line(&report)
     );
@@ -5601,7 +5601,7 @@ fn spheres_and_tori_become_solidcraft_primitives() {
     assert_eq!(ball["operation"], "new_body");
     assert_eq!(ball["body_names"], json!(["unit cube"]));
     assert!(
-        history_line(&report).contains("1 of 1 features mapped"),
+        history_line(&report).contains("1 of 1 features rebuilt"),
         "{}",
         history_line(&report)
     );
@@ -5706,7 +5706,7 @@ fn coils_become_solidcraft_coils() {
     assert_eq!(spring.get("start_angle"), None);
     assert_eq!(spring.get("position"), None);
     assert!(
-        history_line(&report).contains("1 of 1 features mapped"),
+        history_line(&report).contains("1 of 1 features rebuilt"),
         "{}",
         history_line(&report)
     );
@@ -6101,7 +6101,7 @@ fn stored_geometry_keeps_the_features_after_it() {
     );
     assert!(document["features"][0]["step_blob"].as_str().is_some());
     assert_eq!(report.outcome().unwrap().mode, Mode::History);
-    assert!(history_line(&report).starts_with("3 of 3 features mapped"));
+    assert!(history_line(&report).starts_with("3 of 3 features rebuilt"));
     assert!(report
         .losses()
         .iter()
@@ -6119,7 +6119,7 @@ fn a_base_feature_is_imported_where_it_stands_in_the_timeline() {
         &SolidCraftWriter::new().verification(Verification::Off),
     );
     assert!(
-        history_line(&report).starts_with("3 of 3 features mapped"),
+        history_line(&report).starts_with("3 of 3 features rebuilt"),
         "{}",
         history_line(&report)
     );
@@ -6165,7 +6165,7 @@ fn a_base_feature_proven_to_hold_no_bodies_builds_nothing() {
         &SolidCraftWriter::new().verification(Verification::Off),
     );
     assert!(
-        history_line(&report).starts_with("4 of 4 features mapped"),
+        history_line(&report).starts_with("3 of 3 features rebuilt"),
         "{}",
         history_line(&report)
     );
@@ -6235,7 +6235,7 @@ fn a_base_feature_alone_is_verified_against_the_original() {
     );
     assert_eq!(
         history_line(&report),
-        "1 of 1 features mapped; verified against the original in SolidCraft"
+        "1 of 1 features rebuilt; verified against the original in SolidCraft"
     );
 }
 
@@ -6266,7 +6266,7 @@ fn a_base_flange_becomes_a_solidcraft_sheet_under_a_rule_of_its_thickness() {
         &SolidCraftWriter::new().verification(Verification::Off),
     );
     assert!(
-        history_line(&report).starts_with("2 of 2 features mapped"),
+        history_line(&report).starts_with("2 of 2 features rebuilt"),
         "{}",
         history_line(&report)
     );
@@ -6303,7 +6303,7 @@ fn solidcraft_builds_the_base_flange_as_the_original() {
     );
     assert_eq!(
         history_line(&report),
-        "2 of 2 features mapped; verified against the original in SolidCraft"
+        "2 of 2 features rebuilt; verified against the original in SolidCraft"
     );
 }
 
@@ -6401,7 +6401,7 @@ fn edge_flanges_pick_their_own_input_edges_and_keep_dimensions() {
                 &SolidCraftWriter::new().verification(Verification::Off),
             );
             assert!(
-                history_line(&report).starts_with("3 of 3 features mapped"),
+                history_line(&report).starts_with("3 of 3 features rebuilt"),
                 "{}",
                 history_line(&report)
             );
@@ -6587,7 +6587,7 @@ fn solidcraft_replays_input_edge_flanges_with_the_expected_shape() {
                 &model,
                 &SolidCraftWriter::new().verification(Verification::Off),
             );
-            assert!(history_line(&report).starts_with("3 of 3 features mapped"));
+            assert!(history_line(&report).starts_with("3 of 3 features rebuilt"));
             assert_eq!(document["features"][2]["edges"], json!(points));
         }
         let dir = tempfile::tempdir().unwrap();
@@ -6779,7 +6779,7 @@ fn an_attached_plate_and_its_bend_become_one_edge_flange() {
         &SolidCraftWriter::new().verification(Verification::Off),
     );
     assert!(
-        history_line(&report).starts_with("5 of 5 features mapped"),
+        history_line(&report).starts_with("4 of 4 features rebuilt"),
         "{}",
         history_line(&report)
     );
@@ -6993,7 +6993,7 @@ fn one_sided_extrude_draft_keeps_its_sign_in_both_directions() {
                 &model,
                 &SolidCraftWriter::new().verification(Verification::Off),
             );
-            assert!(history_line(&report).starts_with("2 of 2 features mapped"));
+            assert!(history_line(&report).starts_with("2 of 2 features rebuilt"));
             let extent = &document["features"][1]["extent"];
             assert_eq!(extent["taper"], format!("{degrees} deg"));
             let expected_direction = if direction == "profile_normal" {
@@ -7074,11 +7074,7 @@ fn parallel_plane_ended_extrudes_use_free_to_object_points() {
                 &SolidCraftWriter::new().verification(Verification::Off),
             );
             assert!(
-                history_line(&report).starts_with(if datum {
-                    "3 of 3 features mapped"
-                } else {
-                    "2 of 2 features mapped"
-                }),
+                history_line(&report).starts_with("2 of 2 features rebuilt"),
                 "{}",
                 history_line(&report)
             );
@@ -7115,7 +7111,7 @@ fn plane_ended_extrudes_follow_a_placed_sketch_normal() {
         &model,
         &SolidCraftWriter::new().verification(Verification::Off),
     );
-    assert!(history_line(&report).starts_with("2 of 2 features mapped"));
+    assert!(history_line(&report).starts_with("2 of 2 features rebuilt"));
     assert_eq!(
         document["features"][1]["extent"]["to"],
         json!([15.0, -23.0, 37.0])
@@ -7139,7 +7135,7 @@ fn plane_ended_extrudes_keep_start_offsets_and_two_sided_travel() {
         &model,
         &SolidCraftWriter::new().verification(Verification::Off),
     );
-    assert!(history_line(&report).starts_with("2 of 2 features mapped"));
+    assert!(history_line(&report).starts_with("2 of 2 features rebuilt"));
     assert_eq!(document["features"][1]["extent"]["start_offset"], "3 mm");
     assert_eq!(document["features"][1]["extent"]["distance2"], "2 mm");
     if let Some(cli) = solidcraft() {
@@ -7267,7 +7263,7 @@ fn plane_ended_extrudes_after_bodies_end_on_a_face_surface() {
         &SolidCraftWriter::new().verification(Verification::Off),
     );
     assert!(
-        history_line(&report).starts_with("3 of 3 features mapped"),
+        history_line(&report).starts_with("3 of 3 features rebuilt"),
         "{}",
         history_line(&report)
     );
@@ -7331,7 +7327,7 @@ fn resolved_face_ends_and_starts_use_solidcraft_picks() {
                 &SolidCraftWriter::new().verification(Verification::Off),
             );
             assert!(
-                history_line(&report).starts_with("3 of 3 features mapped"),
+                history_line(&report).starts_with("3 of 3 features rebuilt"),
                 "{}",
                 history_line(&report)
             );
@@ -7357,7 +7353,7 @@ fn solidcraft_rebuilds_face_ended_and_face_started_extrudes() {
     let Some(cli) = solidcraft() else { return };
     for (from, expected) in [(false, 150.0), (true, 200.0)] {
         let (bytes, report) = written(&face_ended_extrude(from, -0.5, false));
-        assert!(history_line(&report).starts_with("3 of 3 features mapped"));
+        assert!(history_line(&report).starts_with("3 of 3 features rebuilt"));
         let mut actual = volumes(&cli, &bytes);
         actual.sort_by(f64::total_cmp);
         assert_eq!(actual.len(), 2);
@@ -7379,7 +7375,7 @@ fn reverse_start_offsets_and_two_sided_distances_follow_the_normal() {
         &model,
         &SolidCraftWriter::new().verification(Verification::Off),
     );
-    assert!(history_line(&report).starts_with("2 of 2 features mapped"));
+    assert!(history_line(&report).starts_with("2 of 2 features rebuilt"));
     assert_eq!(
         document["features"][1]["extent"],
         json!({
@@ -7403,7 +7399,7 @@ fn equal_two_sided_revolves_become_symmetric() {
         &model,
         &SolidCraftWriter::new().verification(Verification::Off),
     );
-    assert!(history_line(&report).starts_with("2 of 2 features mapped"));
+    assert!(history_line(&report).starts_with("2 of 2 features rebuilt"));
     assert_eq!(document["features"][1]["symmetric"], true);
     assert_eq!(document["features"][1]["angle"], "180 deg");
     if let Some(cli) = solidcraft() {
@@ -7512,7 +7508,7 @@ fn a_two_sided_extrude_can_end_at_a_face_along_the_positive_normal() {
         &model,
         &SolidCraftWriter::new().verification(Verification::Off),
     );
-    assert!(history_line(&report).starts_with("3 of 3 features mapped"));
+    assert!(history_line(&report).starts_with("3 of 3 features rebuilt"));
     assert_eq!(document["features"][2]["extent"]["distance2"], "2 mm");
     assert_eq!(document["features"][2]["extent"]["to"][2], 10.0);
     if let Some(cli) = solidcraft() {
@@ -10447,7 +10443,7 @@ fn solidcraft_extrudes_a_historical_face_along_its_outward_normal() {
     let join = |model: Model| {
         let (bytes, report) = written_with(&model, &replaying(&cli));
         assert!(
-            history_line(&report).starts_with("3 of 3 features mapped"),
+            history_line(&report).starts_with("3 of 3 features rebuilt"),
             "{}",
             history_line(&report)
         );

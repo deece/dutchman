@@ -453,7 +453,7 @@ mod tests {
             "verification": {"status": "verified"}, "output": {"format": "solidcraft/23"}});
         assert_eq!(
             outcome(&report),
-            "Editable history, 3 of 3 features mapped; verified in SolidCraft."
+            "Editable history, 3 of 3 features rebuilt; verified in SolidCraft."
         );
     }
 }

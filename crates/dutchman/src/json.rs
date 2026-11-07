@@ -102,6 +102,7 @@ pub fn fixtures_pitch<'a>(reports: impl IntoIterator<Item = &'a Value>) -> Optio
                 .pointer("/history/mapped")
                 .and_then(Value::as_u64)
                 .zip(report.pointer("/history/total").and_then(Value::as_u64))
+                // Features that need none are mapped too, so this says the same of `rebuilt`.
                 .is_some_and(|(mapped, total)| mapped < total)
         {
             programs.insert(
@@ -612,6 +613,8 @@ fn part_fields(parts: &[dutchman_core::PartHistory]) -> Value {
                 "reason": reason,
                 "mapped": part.mapped,
                 "total": part.total,
+                "rebuilt": part.rebuilt,
+                "needing": part.needing,
             })
         })
         .collect()
@@ -659,6 +662,17 @@ fn outcome_fields(outcome: &Outcome) -> Map<String, Value> {
         .filter(|f| matches!(f.status, FeatureStatus::Mapped | FeatureStatus::NotNeeded))
         .count();
     let total = outcome.features.iter().filter(counted).count();
+    let rebuilt = outcome
+        .features
+        .iter()
+        .filter(|f| f.status == FeatureStatus::Mapped)
+        .count();
+    let needing = outcome
+        .features
+        .iter()
+        .filter(counted)
+        .filter(|f| f.status != FeatureStatus::NotNeeded)
+        .count();
     let mut out = Map::new();
     out.insert(
         "mode".to_owned(),
@@ -674,7 +688,7 @@ fn outcome_fields(outcome: &Outcome) -> Map<String, Value> {
     );
     out.insert(
         "history".to_owned(),
-        json!({"mapped": mapped, "total": total, "features": features}),
+        json!({"mapped": mapped, "total": total, "rebuilt": rebuilt, "needing": needing, "features": features}),
     );
     out
 }
@@ -1456,19 +1470,23 @@ mod tests {
             check: Check::Flattened("feature \"Extrude1\": not mapped yet".to_owned()),
             mapped: 1,
             total: 2,
+            rebuilt: 1,
+            needing: 2,
         });
         report.push_part(dutchman_core::PartHistory {
             name: "Rail".to_owned(),
             check: Check::NotApplicable("the design carries no feature history".to_owned()),
             mapped: 0,
             total: 0,
+            rebuilt: 0,
+            needing: 0,
         });
         let out = Value::Object(success(CONVERT, json!({}), &report));
         assert_eq!(
             out["history"]["parts"],
             json!([
-                {"name": "Bracket", "status": "flattened", "reason": "feature \"Extrude1\": not mapped yet", "mapped": 1, "total": 2},
-                {"name": "Rail", "status": "not_applicable", "reason": "the design carries no feature history", "mapped": 0, "total": 0},
+                {"name": "Bracket", "status": "flattened", "reason": "feature \"Extrude1\": not mapped yet", "mapped": 1, "total": 2, "rebuilt": 1, "needing": 2},
+                {"name": "Rail", "status": "not_applicable", "reason": "the design carries no feature history", "mapped": 0, "total": 0, "rebuilt": 0, "needing": 0},
             ])
         );
     }
@@ -1506,6 +1524,8 @@ mod tests {
         );
         assert_eq!(out["history"]["mapped"], 3);
         assert_eq!(out["history"]["total"], 3);
+        assert_eq!(out["history"]["rebuilt"], 2);
+        assert_eq!(out["history"]["needing"], 2);
         assert_eq!(out["history"]["features"][3]["status"], "left_out");
         assert_eq!(out["losses"], json!([]));
     }

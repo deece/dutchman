@@ -466,6 +466,14 @@ fn part_history(part: &Model, features: &[FeatureOutcome], check: Check) -> Part
             .clone()
             .filter(|f| matches!(f.status, FeatureStatus::Mapped | FeatureStatus::NotNeeded))
             .count(),
+        rebuilt: counted
+            .clone()
+            .filter(|f| f.status == FeatureStatus::Mapped)
+            .count(),
+        needing: counted
+            .clone()
+            .filter(|f| f.status != FeatureStatus::NotNeeded)
+            .count(),
         total: counted.count(),
     }
 }

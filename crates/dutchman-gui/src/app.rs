@@ -3818,7 +3818,7 @@ mod tests {
             });
         harness.run_steps(8);
         for label in [
-            "Editable history, 3 of 3 features mapped; verified in SolidCraft.",
+            "Editable history, 3 of 3 features rebuilt; verified in SolidCraft.",
             "Geometry without history (flattened: fillet is not mapped yet).",
             "Incomplete",
             "1 of 3 components placed; 1 placed empty, no joints",

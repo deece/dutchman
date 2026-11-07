@@ -572,7 +572,8 @@ pub fn outcome(report: &Value) -> String {
             text.push('.');
         }
         if report
-            .pointer("/history/mapped")
+            .pointer("/history/rebuilt")
+            .or_else(|| report.pointer("/history/mapped"))
             .and_then(Value::as_u64)
             .is_some_and(|count| count > 0)
             && !text.contains("unverified")
@@ -621,15 +622,22 @@ fn identity_note(report: &Value) -> Option<String> {
 
 fn outcome_without_memory_note(report: &Value) -> String {
     let field = |pointer: &str| report.pointer(pointer).and_then(Value::as_str);
-    let history = |mapped: u64, total: u64| format!("{mapped} of {total} features mapped");
+    let history = |rebuilt: u64, needing: u64| format!("{rebuilt} of {needing} features rebuilt");
+    // A report saved by an older version has only the counts with features that need none.
+    let count = |new: &str, old: &str| {
+        report
+            .pointer(new)
+            .or_else(|| report.pointer(old))
+            .and_then(Value::as_u64)
+    };
     let counts = (
-        report.pointer("/history/mapped").and_then(Value::as_u64),
-        report.pointer("/history/total").and_then(Value::as_u64),
+        count("/history/rebuilt", "/history/mapped"),
+        count("/history/needing", "/history/total"),
     );
     match field("/mode") {
         Some("partial_history") => match counts {
             (Some(m), Some(t)) => format!(
-                "Partial editable history, {m} of {t} features kept; imported final shape visible."
+                "Partial editable history, {m} of {t} features rebuilt; imported final shape visible."
             ),
             _ => "Partial editable history; imported final shape visible.".to_owned(),
         },
@@ -681,6 +689,20 @@ pub fn loss_counts(losses: &[&Value]) -> String {
 #[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_card_counts_features_rebuilt_and_an_older_report_still_reads() {
+        let now = serde_json::json!({"ok": true, "mode": "partial_history",
+            "history": {"mapped": 8, "total": 12, "rebuilt": 2, "needing": 6}});
+        assert!(
+            outcome(&now).contains("2 of 6 features rebuilt"),
+            "{}",
+            outcome(&now)
+        );
+        let older = serde_json::json!({"ok": true, "mode": "partial_history",
+            "history": {"mapped": 8, "total": 12}});
+        assert!(outcome(&older).contains("8 of 12 features rebuilt"));
+    }
 
     #[test]
     fn parts_at_identity_stay_in_the_sentence_always_shown() {
@@ -748,7 +770,7 @@ mod tests {
             (
                 json!({"ok": true, "mode": "history", "history": {"mapped": 2, "total": 3}, "verification": {"status": "verified"}}),
                 Status::Converted,
-                "Editable history, 2 of 3 features mapped; verified in SolidCraft.",
+                "Editable history, 2 of 3 features rebuilt; verified in SolidCraft.",
             ),
             (
                 json!({"ok": true, "mode": "history", "output": {"format": "freecad-document/1"}, "verification": {"status": "verified"}}),
