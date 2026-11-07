@@ -123,6 +123,14 @@ still need additional decoding in cadmpeg.
 Reference sketches are mapped from the sketch, feature and parameter data alone, built once per
 conversion: on the Voron V1.8 that takes the peak from 11.0 GB to 8.7 GB, with the same output.
 
+## Regions of crossing circles
+
+Two crossing circles bound several regions with the same curves, so naming the curves can't tell
+them apart. A profile region that uses part of a circle is selected by a point inside it, taken
+from its stored boundary: its uses' parameters must close into one ring. If they don't, or if the
+readings that close disagree on the shape, the region stays selected by its curves, and SolidCraft
+refuses what stays ambiguous.
+
 ## Assembly placements
 
 **Part positions** defaults to **Smart**. For each occurrence, Smart prefers a displayed

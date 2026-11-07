@@ -457,6 +457,238 @@ fn samples(entity: &Value) -> Option<Vec<P2>> {
     }
 }
 
+/// How close the ends of two boundary uses must be for a ring to close.
+const RING_CLOSES: f64 = 1e-3;
+
+/// A point must be at least this far inside a region to name it.
+const CLEARANCE: f64 = 1e-3;
+
+/// How a boundary use's parameter can run on a circle or arc against the sketch's own angle: the
+/// carrier may be mirrored or turned against the sketch. Only a reading whose uses meet end to
+/// end can be the one the source means.
+const READINGS: [fn(f64) -> f64; 4] = [
+    |t| t,
+    |t| -t,
+    |t| std::f64::consts::PI - t,
+    |t| std::f64::consts::PI + t,
+];
+
+/// Whether a region uses part of a whole circle. Several regions of two crossing closed curves
+/// have the same curves, so naming the curves can't tell them apart.
+pub(super) fn trims_a_closed_curve(uses: &[Value], entities: &[&Value]) -> bool {
+    uses.iter().any(|use_| {
+        let entity = use_
+            .get("entity")
+            .and_then(Value::as_str)
+            .and_then(|id| entity_named(entities, id));
+        let is_circle = entity
+            .and_then(|e| e.pointer("/geometry/kind"))
+            .and_then(Value::as_str)
+            == Some("circle");
+        let span = range(use_).map(|(from, to)| (to - from).abs());
+        is_circle
+            && span.is_some_and(|span| {
+                span < std::f64::consts::TAU - 1e-6
+                    && !complete_circle(uses, use_.get("entity").and_then(Value::as_str))
+            })
+    })
+}
+
+/// Whether the uses of one circle together cover all of it.
+fn complete_circle(uses: &[Value], entity: Option<&str>) -> bool {
+    let total: f64 = uses
+        .iter()
+        .filter(|use_| use_.get("entity").and_then(Value::as_str) == entity)
+        .filter_map(range)
+        .map(|(from, to)| (to - from).abs())
+        .sum();
+    (total - std::f64::consts::TAU).abs() < 1e-6
+}
+
+fn entity_named<'a>(entities: &[&'a Value], id: &str) -> Option<&'a Value> {
+    entities
+        .iter()
+        .find(|entity| entity.get("id").and_then(Value::as_str) == Some(id))
+        .copied()
+}
+
+fn range(use_: &Value) -> Option<(f64, f64)> {
+    let range = use_.get("parameter_range")?.as_array()?;
+    Some((range.first()?.as_f64()?, range.get(1)?.as_f64()?))
+}
+
+/// Points along one boundary use, under one reading of its parameter.
+fn use_samples(use_: &Value, entities: &[&Value], reading: fn(f64) -> f64) -> Option<Vec<P2>> {
+    let entity = entity_named(entities, use_.get("entity")?.as_str()?)?;
+    let geometry = entity.get("geometry")?;
+    let (from, to) = range(use_)?;
+    match geometry.get("kind")?.as_str()? {
+        "line" => {
+            let start = super::sketch::p2(geometry.get("start"))?;
+            let end = super::sketch::p2(geometry.get("end"))?;
+            let length = super::sketch::distance(start, end);
+            if length <= 0.0 || from < -RING_CLOSES || to > length + RING_CLOSES {
+                return None;
+            }
+            Some(vec![
+                along(start, end, from / length),
+                along(start, end, to / length),
+            ])
+        }
+        "arc" | "circle" => {
+            let center = super::sketch::p2(geometry.get("center"))?;
+            let radius = number(geometry.get("radius"))?;
+            let count = ((to - from).abs() / std::f64::consts::TAU * CIRCLE_SAMPLES as f64)
+                .ceil()
+                .max(2.0) as usize;
+            Some(
+                (0..=count)
+                    .map(|i| {
+                        let angle = reading(from + (to - from) * i as f64 / count as f64);
+                        [
+                            center[0] + radius * angle.cos(),
+                            center[1] + radius * angle.sin(),
+                        ]
+                    })
+                    .collect(),
+            )
+        }
+        _ => None,
+    }
+}
+
+/// One ring of boundary uses under one reading: each use continues from the end of the last,
+/// and the last meets the first. `None` when they don't: this isn't how the source means them.
+fn ring_under(uses: &[Value], entities: &[&Value], reading: fn(f64) -> f64) -> Option<Vec<P2>> {
+    if uses.is_empty() || uses.len() > MAX_LINES {
+        return None;
+    }
+    let mut pieces: Vec<Vec<P2>> = uses
+        .iter()
+        .map(|use_| use_samples(use_, entities, reading))
+        .collect::<Option<_>>()?;
+    // The first use's direction is settled by what it must meet next.
+    if let [first, second, ..] = pieces.as_mut_slice() {
+        let (start, end) = (*first.first()?, *first.last()?);
+        let (a, b) = (*second.first()?, *second.last()?);
+        let reach = |p: P2| super::sketch::distance(p, a).min(super::sketch::distance(p, b));
+        if reach(start) < reach(end) {
+            first.reverse();
+        }
+    }
+    let mut out: Vec<P2> = Vec::new();
+    for mut piece in pieces {
+        if let Some(&last) = out.last() {
+            if super::sketch::distance(last, *piece.last()?)
+                < super::sketch::distance(last, *piece.first()?)
+            {
+                piece.reverse();
+            }
+            if super::sketch::distance(last, *piece.first()?) > RING_CLOSES {
+                return None;
+            }
+        }
+        out.extend(piece);
+    }
+    let (&first, &last) = (out.first()?, out.last()?);
+    if super::sketch::distance(first, last) > RING_CLOSES {
+        return None;
+    }
+    out.dedup_by(|a, b| super::sketch::distance(*a, *b) <= RING_CLOSES / 10.0);
+    out.pop();
+    (out.len() >= 3 && !self_crossing(&out)).then_some(out)
+}
+
+fn area_and_centre(ring: &[P2]) -> (f64, P2) {
+    let (mut area, mut x, mut y) = (0.0, 0.0, 0.0);
+    for (a, b) in edges(ring) {
+        let cross = a[0] * b[1] - b[0] * a[1];
+        area += cross;
+        x += (a[0] + b[0]) * cross;
+        y += (a[1] + b[1]) * cross;
+    }
+    if area.abs() < f64::EPSILON {
+        return (0.0, [0.0, 0.0]);
+    }
+    ((area / 2.0).abs(), [x / (3.0 * area), y / (3.0 * area)])
+}
+
+/// The ring of a region's boundary uses. Every reading that closes must give the same shape;
+/// readings that close on different shapes can't be told apart, so there is no ring.
+pub(super) fn trimmed_ring(uses: &[Value], entities: &[&Value]) -> Option<Vec<P2>> {
+    let mut found: Option<Vec<P2>> = None;
+    for reading in READINGS {
+        let Some(ring) = ring_under(uses, entities, reading) else {
+            continue;
+        };
+        if let Some(known) = &found {
+            let (a, c) = area_and_centre(known);
+            let (b, d) = area_and_centre(&ring);
+            if (a - b).abs() > 1e-3 * a.max(b).max(1e-9)
+                || super::sketch::distance(c, d) > RING_CLOSES * 10.0
+            {
+                return None;
+            }
+        } else {
+            found = Some(ring);
+        }
+    }
+    found
+}
+
+/// The ring of a whole source loop, for the regions selected beside a trimmed one.
+pub(super) fn loop_ring(members: &[Value], entities: &[&Value]) -> Option<Vec<P2>> {
+    polygon(members, entities)
+}
+
+/// A point inside `ring`, outside each of `others`, as far from all their edges as the scan
+/// finds. `None` when no such point stands clear of them.
+pub(super) fn interior_point(ring: &[P2], others: &[&[P2]]) -> Option<P2> {
+    const ROWS: usize = 96;
+    let low = ring.iter().map(|p| p[1]).fold(f64::INFINITY, f64::min);
+    let high = ring.iter().map(|p| p[1]).fold(f64::NEG_INFINITY, f64::max);
+    let clearance = |p: P2| {
+        std::iter::once(ring)
+            .chain(others.iter().copied())
+            .flat_map(edges)
+            .map(|(a, b)| distance_to_edge(p, a, b))
+            .fold(f64::INFINITY, f64::min)
+    };
+    let mut best: Option<(f64, P2)> = None;
+    for row in 0..ROWS {
+        // Off the rows' round fractions, so a scan doesn't run along a horizontal edge.
+        let y = low + (high - low) * (row as f64 + 0.4871) / ROWS as f64;
+        let mut hits: Vec<f64> = edges(ring)
+            .filter(|(a, b)| (a[1] > y) != (b[1] > y))
+            .map(|(a, b)| a[0] + (y - a[1]) / (b[1] - a[1]) * (b[0] - a[0]))
+            .collect();
+        hits.sort_by(f64::total_cmp);
+        for (&left, &right) in hits.iter().step_by(2).zip(hits.iter().skip(1).step_by(2)) {
+            for part in 1..8 {
+                let p = [left + (right - left) * f64::from(part) / 8.0, y];
+                if others.iter().any(|other| inside(p, other)) || !inside(p, ring) {
+                    continue;
+                }
+                let room = clearance(p);
+                if room >= CLEARANCE && best.is_none_or(|(known, _)| room > known) {
+                    best = Some((room, p));
+                }
+            }
+        }
+    }
+    best.map(|(_, p)| p)
+}
+
+fn distance_to_edge(p: P2, a: P2, b: P2) -> f64 {
+    let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+    let length = dx * dx + dy * dy;
+    if length <= 0.0 {
+        return super::sketch::distance(p, a);
+    }
+    let t = (((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / length).clamp(0.0, 1.0);
+    super::sketch::distance(p, [a[0] + t * dx, a[1] + t * dy])
+}
+
 /// How near a point must be to a polygon's edge to be on it: a millionth of its size.
 fn tolerance(polygon: &[P2]) -> f64 {
     let (mut low, mut high) = ([f64::MAX; 2], [f64::MIN; 2]);

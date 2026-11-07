@@ -611,12 +611,141 @@ fn regions(
         }
     }
     if trimmed {
+        if let Some(points) = region_points(regions, ctx, sketch, mapped) {
+            return Ok(json!({"type": "points", "points": points}));
+        }
         curves(outers)
     } else {
         Ok(sorted_whole(
             json!({"type": "whole_boundaries", "profiles": whole}),
         ))
     }
+}
+
+/// Regions that use part of a whole circle, each named by a point inside it. Two crossing closed
+/// curves bound several profiles with the same curves, so curves can't tell them apart; a stored
+/// region's boundary can. `None` when no region trims a closed curve, or some region's boundary
+/// doesn't close into one shape, or leaves no point: those stay selected by their curves, where
+/// SolidCraft refuses what stays ambiguous.
+fn region_points(
+    regions: &[Value],
+    ctx: &Context,
+    sketch: &str,
+    mapped: &Mapped,
+) -> Option<Vec<P2>> {
+    let entities = sketch_entities(ctx, sketch);
+    fn boundary(region: &Value) -> Option<&[Value]> {
+        region
+            .get("outer_boundary")
+            .and_then(Value::as_array)
+            .map(Vec::as_slice)
+    }
+    if !regions.iter().any(|region| {
+        boundary(region).is_some_and(|uses| super::crossing::trims_a_closed_curve(uses, &entities))
+    }) {
+        return None;
+    }
+    let mut rings = Vec::with_capacity(regions.len());
+    let mut holes = Vec::with_capacity(regions.len());
+    for region in regions {
+        match region.get("region").and_then(Value::as_str) {
+            Some("trimmed") => {
+                rings.push(super::crossing::trimmed_ring(boundary(region)?, &entities)?);
+                holes.push(
+                    region
+                        .get("hole_boundaries")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .map(|hole| super::crossing::trimmed_ring(hole.as_array()?, &entities))
+                        .collect::<Option<Vec<_>>>()?,
+                );
+            }
+            Some("loops") => {
+                let members = source_members(ctx, sketch, region.get("outer")?).ok()?;
+                rings.push(super::crossing::loop_ring(members, &entities)?);
+                holes.push(
+                    region
+                        .get("holes")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .map(|hole| {
+                            let members = source_members(ctx, sketch, hole).ok()?;
+                            super::crossing::loop_ring(members, &entities)
+                        })
+                        .collect::<Option<Vec<_>>>()?,
+                );
+            }
+            _ => return None,
+        }
+    }
+    let frame = sketch_to_mapped(ctx.row("sketches", sketch)?, mapped)?;
+    let mut points = Vec::with_capacity(rings.len());
+    for (ring, holes) in rings.iter().zip(&holes) {
+        // Regions can overlap: one stored with no hole can cover a smaller one selected beside
+        // it. Its point stays out of the smaller one, which has its own.
+        let area = super::crossing::ring_area(ring);
+        let mut others: Vec<&[P2]> = holes.iter().map(Vec::as_slice).collect();
+        others.extend(
+            rings
+                .iter()
+                .filter(|other| super::crossing::ring_area(other) < area)
+                .map(Vec::as_slice),
+        );
+        let point = super::crossing::interior_point(ring, &others)?;
+        points.push(frame(point));
+    }
+    Some(points)
+}
+
+/// Sketch coordinates as the source stores them, in the written sketch's coordinates: the same,
+/// unless the written sketch's plane was turned or moved. Without a stored frame, the same.
+fn sketch_to_mapped<'a>(sketch: &Value, mapped: &'a Mapped) -> Option<impl Fn(P2) -> P2 + 'a> {
+    let frame = sketch.pointer("/placement/frame");
+    let v3 = |name: &str| {
+        let row = frame?.get(name)?;
+        Some([
+            row.get("x")?.as_f64()?,
+            row.get("y")?.as_f64()?,
+            row.get("z")?.as_f64()?,
+        ])
+    };
+    let dot = |a: [f64; 3], b: [f64; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    let source = match (v3("origin"), v3("normal"), v3("u_axis")) {
+        (Some(origin), Some(n), Some(u)) => {
+            let length = dot(u, u).sqrt();
+            let u = [u[0] / length, u[1] / length, u[2] / length];
+            let scale = dot(n, n).sqrt();
+            let n = [n[0] / scale, n[1] / scale, n[2] / scale];
+            let v = [
+                n[1] * u[2] - n[2] * u[1],
+                n[2] * u[0] - n[0] * u[2],
+                n[0] * u[1] - n[1] * u[0],
+            ];
+            Some((origin, u, v))
+        }
+        _ => None,
+    };
+    Some(move |point: P2| {
+        let Some((origin, u, v)) = source else {
+            return point;
+        };
+        let world = [
+            origin[0] + point[0] * u[0] + point[1] * v[0],
+            origin[1] + point[0] * u[1] + point[1] * v[1],
+            origin[2] + point[0] * u[2] + point[1] * v[2],
+        ];
+        let from = [
+            world[0] - mapped.origin[0],
+            world[1] - mapped.origin[1],
+            world[2] - mapped.origin[2],
+        ];
+        [
+            from[0] * mapped.x_dir[0] + from[1] * mapped.x_dir[1] + from[2] * mapped.x_dir[2],
+            from[0] * mapped.y_dir[0] + from[1] * mapped.y_dir[1] + from[2] * mapped.y_dir[2],
+        ]
+    })
 }
 
 /// Profiles bounded by the selected curves: each connected group of them is one loop.
@@ -740,6 +869,127 @@ mod tests {
                 {"outer": ["l1", "l2", "l3"], "holes": [["c1"]]}
             ]})
         );
+    }
+
+    const BIG: f64 = 20.0;
+    const SMALL: f64 = 1.0;
+    const PIN: f64 = 7.0;
+
+    /// A large circle and a small one crossing at its top. A stored parameter can run against
+    /// the sketch's angle, so taken at face value the small arc would lie outside the large
+    /// circle, a bump.
+    fn crossing_circles() -> (Value, Mapped) {
+        let circle = |id: &str, center: [f64; 2], radius: f64| {
+            json!({"id": id, "sketch": "s", "geometry": {"kind": "circle",
+                "center": {"u": center[0], "v": center[1]}, "radius": radius}})
+        };
+        let model = json!({
+            "sketches": [{"id": "s", "profiles": [], "placement": {"kind": "resolved", "frame": {
+                "origin": {"x": 0.0, "y": 0.0, "z": 0.0}, "normal": {"x": 0.0, "y": 0.0, "z": 1.0},
+                "u_axis": {"x": 1.0, "y": 0.0, "z": 0.0}}}}],
+            "sketch_entities": [circle("big", [0.0, 0.0], BIG), circle("small", [0.0, BIG], SMALL),
+                circle("pin", [0.0, 0.0], PIN)],
+        });
+        let mut shapes = BTreeMap::new();
+        for (index, (entity, id)) in [("big", "c1"), ("small", "c2"), ("pin", "c3")]
+            .into_iter()
+            .enumerate()
+        {
+            shapes.insert(
+                entity.to_owned(),
+                Shape::Curve(Curve {
+                    index,
+                    id: id.to_owned(),
+                    kind: "circle",
+                    start: None,
+                    end: None,
+                    center: None,
+                }),
+            );
+        }
+        let mut mapped = mapped();
+        mapped.shapes = shapes;
+        mapped.origin = [0.0, 0.0, 0.0];
+        mapped.x_dir = [1.0, 0.0, 0.0];
+        mapped.y_dir = [0.0, 1.0, 0.0];
+        (model, mapped)
+    }
+
+    fn notch_region() -> Value {
+        // Where the circles cross, by geometry: the big circle's top is cut away, closed by the
+        // small circle's lower half. The parameters are minus the sketch's angle.
+        let (big, small, centre) = (BIG, SMALL, BIG);
+        let along = (centre * centre + big * big - small * small) / (2.0 * centre);
+        let height = (big * big - along * along).sqrt();
+        let delta = height.atan2(along);
+        let epsilon = (centre - along).atan2(height);
+        let half_pi = std::f64::consts::FRAC_PI_2;
+        let pi = std::f64::consts::PI;
+        json!({"region": "trimmed", "outer_boundary": [
+            {"entity": "big", "parameter_range": [delta - half_pi, 3.0 * half_pi - delta]},
+            {"entity": "small", "parameter_range": [epsilon, pi - epsilon], "reversed": true}]})
+    }
+
+    fn selected(model: &Value, mapped: Mapped, regions: Value) -> Value {
+        let mut ctx = Context::new(model);
+        ctx.sketches.insert("s".to_owned(), mapped);
+        super::profile(
+            Some(&json!({"kind": "sketch_regions", "value": {"sketch": "s", "regions": regions}})),
+            &ctx,
+        )
+        .unwrap()
+        .1
+    }
+
+    #[test]
+    fn a_notch_is_named_by_a_point_in_the_notched_region_and_not_the_bump() {
+        let (model, mapped) = crossing_circles();
+        let selection = selected(&model, mapped, json!([notch_region()]));
+        assert_eq!(selection["type"], "points", "{selection}");
+        let point = &selection["points"][0];
+        let (x, y) = (point[0].as_f64().unwrap(), point[1].as_f64().unwrap());
+        assert!(x.hypot(y) < BIG, "inside the big circle: {selection}");
+        assert!(
+            x.hypot(y - BIG) > SMALL,
+            "outside the small one: {selection}"
+        );
+    }
+
+    #[test]
+    fn overlapping_regions_each_get_a_point_of_their_own() {
+        // A region stored with no hole covers the disc selected beside it.
+        let (model, mapped) = crossing_circles();
+        let half = |from: f64, to: f64| json!({"entity": "pin", "parameter_range": [from, to]});
+        let pi = std::f64::consts::PI;
+        let selection = selected(
+            &model,
+            mapped,
+            json!([notch_region(), {"region": "trimmed", "outer_boundary": [
+                half(0.0, pi), half(pi, 2.0 * pi)]}]),
+        );
+        let at = |n: usize| {
+            let p = &selection["points"][n];
+            (p[0].as_f64().unwrap(), p[1].as_f64().unwrap())
+        };
+        assert!(
+            at(0).0.hypot(at(0).1) > PIN,
+            "the ring, not the disc: {selection}"
+        );
+        assert!(at(1).0.hypot(at(1).1) < PIN, "the disc: {selection}");
+    }
+
+    #[test]
+    fn a_boundary_that_never_closes_stays_selected_by_its_curves() {
+        // The arcs don't meet under any reading, so nothing says which region this is.
+        let (model, mapped) = crossing_circles();
+        let selection = selected(
+            &model,
+            mapped,
+            json!([{"region": "trimmed", "outer_boundary": [
+                {"entity": "big", "parameter_range": [0.0, 1.0]},
+                {"entity": "small", "parameter_range": [0.0, 1.0]}]}]),
+        );
+        assert_eq!(selection["type"], "curves", "{selection}");
     }
 
     #[test]
