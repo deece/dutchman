@@ -2218,7 +2218,7 @@ fn neutral_view_curves_keep_placement_visibility_and_source_layers() {
 }
 
 #[test]
-fn memory_refusal_precedes_decode_and_returns_exit_two() {
+fn an_estimate_above_free_memory_does_not_refuse() {
     let Some(available) = dutchman::choices::available_memory() else {
         return;
     };
@@ -2230,52 +2230,12 @@ fn memory_refusal_precedes_decode_and_returns_exit_two() {
         .unwrap()
         .set_len(available.saturating_add(2_000_000_000))
         .unwrap();
-    for flags in [vec!["--yes"], vec!["--json"], vec![]] {
-        let mut args = vec![
-            "convert",
-            input.to_str().unwrap(),
-            output.to_str().unwrap(),
-            "--preset",
-            "full",
-        ];
-        args.extend(flags.iter().copied());
-        let out = dutchman(&args);
-        assert_eq!(out.status.code(), Some(2), "{out:?}");
-        if flags.contains(&"--json") {
-            let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-            assert_eq!(report["ok"], false);
-            assert!(report["error"]["message"]
-                .as_str()
-                .unwrap()
-                .starts_with("this conversion needs about "));
-            assert_eq!(report["choices"]["preset"], "full");
-            assert!(report["estimate"]["peak_bytes"].as_u64().unwrap() > available);
-        } else {
-            assert!(String::from_utf8_lossy(&out.stderr)
-                .contains("try --preset standard (or --no-memory-check to run anyway)"));
-        }
-        assert!(!output.exists());
-    }
-    let batch = dutchman(&[
-        "convert-all",
-        input.to_str().unwrap(),
-        "--out-dir",
-        dir.path().join("never-created").to_str().unwrap(),
-        "--preset",
-        "full",
-        "--json",
-    ]);
-    assert_eq!(batch.status.code(), Some(2));
-    let report: serde_json::Value = serde_json::from_slice(&batch.stdout).unwrap();
-    assert_eq!(report["schema"], "dutchman.convert-all/1");
-    assert!(!dir.path().join("never-created").exists());
     let out = dutchman(&[
         "convert",
         input.to_str().unwrap(),
         output.to_str().unwrap(),
         "--preset",
         "full",
-        "--no-memory-check",
         "--json",
     ]);
     assert_eq!(
@@ -2287,7 +2247,57 @@ fn memory_refusal_precedes_decode_and_returns_exit_two() {
     assert!(!report["error"]["message"]
         .as_str()
         .unwrap()
-        .contains("try --preset"));
+        .contains("needs about"));
+}
+
+#[cfg(debug_assertions)]
+#[test]
+fn running_low_on_memory_stops_a_conversion_with_exit_two_or_a_failed_result() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("synthetic.f3d");
+    std::fs::copy(fixture("generated_unit_cube.f3d"), &input).unwrap();
+    let low = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_dutchman"))
+            .args(args)
+            .env("DUTCHMAN_TEST_LOW_MEMORY", "1")
+            .output()
+            .unwrap()
+    };
+    let output = dir.path().join("out.sc");
+    let single = low(&[
+        "convert",
+        input.to_str().unwrap(),
+        output.to_str().unwrap(),
+        "--json",
+    ]);
+    assert_eq!(single.status.code(), Some(2), "{single:?}");
+    let report: serde_json::Value = serde_json::from_slice(&single.stdout).unwrap();
+    assert!(report["error"]["message"]
+        .as_str()
+        .unwrap()
+        .starts_with("stopped before this computer ran out of memory"));
+    let batch = low(&[
+        "convert-all",
+        input.to_str().unwrap(),
+        "--out-dir",
+        dir.path().join("batch").to_str().unwrap(),
+        "--json",
+    ]);
+    let report: serde_json::Value = serde_json::from_slice(&batch.stdout).unwrap();
+    assert_eq!(report["failed"], 1, "{report}");
+    assert!(report["results"][0]["error"]["message"]
+        .as_str()
+        .unwrap()
+        .starts_with("stopped before this computer ran out of memory"));
+    let off = low(&[
+        "convert",
+        input.to_str().unwrap(),
+        output.to_str().unwrap(),
+        "--no-memory-check",
+        "--no-verify",
+        "--json",
+    ]);
+    assert_eq!(off.status.code(), Some(0), "{off:?}");
 }
 
 #[test]
@@ -3235,6 +3245,8 @@ fn a_conversion_the_machine_cannot_finish_stops_early_naming_the_largest_parts()
         "-o",
         output.to_str().unwrap(),
         "--no-verify",
+        "--preset",
+        "full",
     ];
     // The design holds 12 GB once read and 2 GB are free.
     let env = [("DUTCHMAN_TEST_MEMORY", "12000000000,1000000000")];
@@ -3487,7 +3499,9 @@ fn low_memory_keeps_editable_history_unverified_and_the_original_shape_visible()
     );
     assert!(
         out.status.success(),
-        "{}",
+        "{:?}\n{}\n{}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
     let report = json_of(&out);

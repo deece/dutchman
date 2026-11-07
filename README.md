@@ -50,11 +50,6 @@ Every download holds the desktop app (`dutchman-gui`), the `dutchman` command, a
 
    <a href="https://dutchman-cad.github.io/view.html?src=https://raw.githubusercontent.com/dutchman-cad/dutchman/main/docs/images/readme-preset-day.png&alt=A%20CC0%20bracket%20queued%20with%20Standard%20selected%20and%20a%20live%20memory%20and%20time%20estimate"><img alt="A CC0 bracket queued with Standard selected and a live memory and time estimate" src="docs/images/readme-preset-day.png" width="100%"></a>
 
-   If memory looks tight, adjust what to keep in the memory box and see the total change
-   before converting. The same choices return to the main window.
-
-   ![Memory warning with separate reading, conversion and checking figures](docs/images/readme-memory-day.png)
-
 3. **Convert, then Open in SolidCraft.** The result card says what came across and what didn't. Your design is a `.sc` file.
 
    <a href="https://dutchman-cad.github.io/view.html?src=https://raw.githubusercontent.com/dutchman-cad/dutchman/main/docs/images/readme-result-day.png&alt=The%20CC0%20bracket%27s%20result%3A%20mapped%20feature%20history%20and%20Open%20in%20SolidCraft"><img alt="The CC0 bracket's result: mapped feature history and Open in SolidCraft" src="docs/images/readme-result-day.png" width="100%"></a>

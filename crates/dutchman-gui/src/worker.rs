@@ -8,7 +8,7 @@ use std::sync::mpsc::Sender;
 use std::sync::Arc;
 
 use dutchman::batch::{self, Event, Job};
-use dutchman::choices::{self, Estimate, MemoryCheck};
+use dutchman::choices::{self, Estimate};
 use dutchman::ConvertOptions;
 use dutchman_core::Writer;
 use eframe::egui;
@@ -32,13 +32,6 @@ pub enum Message {
         available: Option<u64>,
         sizes: Vec<(PathBuf, Option<choices::Sizes>)>,
     },
-    /// Metadata for a warning, including retries outside the current queue.
-    MemorySizes {
-        path: PathBuf,
-        sizes: Option<choices::Sizes>,
-    },
-    /// The first file that needs a memory decision, if any.
-    MemoryChecked(Option<(PathBuf, MemoryCheck)>),
     /// A run's plan: inputs that could not be planned (as failed reports), then its jobs.
     Planned {
         problems: Vec<Value>,
@@ -71,6 +64,24 @@ fn save_report(output: &Path, report: &Value, send: &impl Fn(Message)) {
 /// A run in progress.
 pub struct Run {
     stop: Arc<AtomicBool>,
+}
+
+/// Set by tests, whose own program is not a converter, so they convert here instead.
+static IN_PROCESS: AtomicBool = AtomicBool::new(cfg!(test));
+
+/// Converts in this process from now on, for tests.
+pub fn convert_in_process_for_tests() {
+    IN_PROCESS.store(true, Ordering::Relaxed);
+}
+
+/// The program each file converts in, so running low on memory or crashing ends that file and
+/// not the app.
+fn converter_program() -> Option<std::path::PathBuf> {
+    if IN_PROCESS.load(Ordering::Relaxed) {
+        None
+    } else {
+        std::env::current_exe().ok()
+    }
 }
 
 impl Run {
@@ -122,7 +133,7 @@ impl Run {
                 for input in &refused {
                     send(sized(input));
                 }
-                batch::run_each(&jobs, &writer, batch::workers(None), &flag, |event| {
+                let on_event = |event: Event| {
                     if let Event::Finished(index, report) = &event {
                         if let Some(job) = jobs.get(*index) {
                             save_report(&job.output, report, &send);
@@ -130,7 +141,18 @@ impl Run {
                         }
                     }
                     send(Message::Progress(event));
-                });
+                };
+                match converter_program() {
+                    Some(program) => batch::run_isolated(
+                        &jobs,
+                        &options,
+                        &program,
+                        batch::workers(None),
+                        &flag,
+                        on_event,
+                    ),
+                    None => batch::run_each(&jobs, &writer, batch::workers(None), &flag, on_event),
+                }
             }));
             send(Message::Done);
         });
@@ -147,6 +169,7 @@ impl Run {
     ) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
         let writer = options.writer();
+        let options = options.clone();
         let flag = Arc::clone(&stop);
         let input = job.input.clone();
         let output = job.output.clone();
@@ -156,7 +179,7 @@ impl Run {
                 ctx.request_repaint();
             };
             let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                batch::run_each(&[job], &writer, 1, &flag, |event| {
+                let on_event = |event: Event| {
                     if let Event::Finished(_, report) = &event {
                         save_report(&output, report, &send);
                     }
@@ -168,7 +191,13 @@ impl Run {
                         Event::Progress(_, event) => Event::Progress(index, event),
                         Event::Finished(_, report) => Event::Finished(index, report),
                     }));
-                });
+                };
+                match converter_program() {
+                    Some(program) => {
+                        batch::run_isolated(&[job], &options, &program, 1, &flag, on_event)
+                    }
+                    None => batch::run_each(&[job], &writer, 1, &flag, on_event),
+                }
             }));
             send(Message::Done);
         });
@@ -207,9 +236,8 @@ pub fn estimates(
             .into_iter()
             .map(|job| {
                 let size = choices::read_sizes(&job.input);
-                let estimate = size.and_then(|sizes| {
-                    choices::desktop_estimate(sizes, &options, checker_found, available).0
-                });
+                let estimate = size
+                    .and_then(|sizes| choices::desktop_estimate(sizes, &options, checker_found));
                 sizes.push((job.input.clone(), size));
                 (job.input, estimate)
             })
@@ -220,30 +248,6 @@ pub fn estimates(
             available,
             sizes,
         });
-        ctx.request_repaint();
-    });
-}
-
-/// Checks every file in a run, including files inside queued folders.
-pub fn check_memory(
-    inputs: Vec<PathBuf>,
-    options: ConvertOptions,
-    messages: Sender<Message>,
-    ctx: egui::Context,
-) {
-    std::thread::spawn(move || {
-        let plan = batch::plan(&inputs, std::path::Path::new(""));
-        let warning = plan.jobs.into_iter().find_map(|job| {
-            let check = choices::memory_check(&job.input, &options);
-            matches!(check, MemoryCheck::TooBig { .. }).then_some((job.input, check))
-        });
-        if let Some((path, _)) = &warning {
-            let _ = messages.send(Message::MemorySizes {
-                path: path.clone(),
-                sizes: choices::read_sizes(path),
-            });
-        }
-        let _ = messages.send(Message::MemoryChecked(warning));
         ctx.request_repaint();
     });
 }

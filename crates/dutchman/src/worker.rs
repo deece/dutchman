@@ -46,17 +46,144 @@ pub struct Limits {
     pub max_memory: Option<u64>,
 }
 
+/// Short helper programs have no window to show.
+#[cfg(windows)]
+trait HideConsoleWindow {
+    fn hide_console_window(&mut self) -> &mut Self;
+}
+
+#[cfg(windows)]
+impl HideConsoleWindow for Command {
+    fn hide_console_window(&mut self) -> &mut Self {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        self.creation_flags(CREATE_NO_WINDOW)
+    }
+}
+
+/// Stops every process this one started, so a conversion can end without leaving them running.
+pub(crate) fn stop_own_children() {
+    let own = std::process::id();
+    #[cfg(any(target_os = "linux", target_os = "macos", windows))]
+    for (pid, _) in process_tree(own).into_iter().flatten() {
+        if pid == own {
+            continue;
+        }
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        let _ = Command::new("kill")
+            .args(["-KILL", &pid.to_string()])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        #[cfg(windows)]
+        let _ = Command::new("taskkill")
+            .hide_console_window()
+            .args(["/PID", &pid.to_string(), "/F"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+    let _ = own;
+}
+
+/// How often free memory is read. It costs almost nothing, and a burst of allocation has to get
+/// through the whole floor between two looks to be missed.
+const LOW_MEMORY_POLL: Duration = Duration::from_millis(100);
+
+/// How long after one conversion stops the others wait for its memory to come back.
+const LOW_MEMORY_SETTLE: Duration = Duration::from_secs(2);
+
+/// What each conversion this process supervises held when last measured.
+static HOLDERS: Mutex<std::collections::BTreeMap<u32, u64>> =
+    Mutex::new(std::collections::BTreeMap::new());
+
+/// When a conversion last stopped for low memory.
+static LAST_STOP: Mutex<Option<Instant>> = Mutex::new(None);
+
+/// One supervised conversion's place among those sharing this computer's memory.
+struct Holder(u32);
+
+impl Holder {
+    fn new(pid: u32) -> Self {
+        if let Ok(mut holders) = HOLDERS.lock() {
+            holders.insert(pid, 0);
+        }
+        Holder(pid)
+    }
+
+    /// With free memory low: records what this conversion holds, and says whether it stops.
+    /// `confirmed` is false on the first low look, when the others may not have measured yet.
+    fn stop_message(&self, confirmed: bool) -> Option<String> {
+        let own = resident_tree_bytes(self.0).unwrap_or(0);
+        let mut holders = HOLDERS.lock().ok()?;
+        holders.insert(self.0, own);
+        if !confirmed {
+            return None;
+        }
+        let mut last = LAST_STOP.lock().ok()?;
+        if last.is_some_and(|at| at.elapsed() < LOW_MEMORY_SETTLE)
+            || !crate::stop::stops_first(&holders, self.0)
+        {
+            return None;
+        }
+        let total = holders
+            .values()
+            .fold(0u64, |all, held| all.saturating_add(*held));
+        let message = crate::stop::low_memory(total, own, crate::choices::available_memory())?;
+        *last = Some(Instant::now());
+        Some(message)
+    }
+}
+
+impl Drop for Holder {
+    fn drop(&mut self) {
+        if let Ok(mut holders) = HOLDERS.lock() {
+            holders.remove(&self.0);
+        }
+    }
+}
+
+/// Watches this process and what it started. When memory really runs low, stops them and
+/// calls `stopped`, which ends the program.
+pub fn watch_own_memory(stopped: impl FnOnce(String) + Send + 'static) {
+    let check = || {
+        let available = crate::choices::available_memory();
+        if !crate::stop::memory_is_low(available) {
+            return None;
+        }
+        let held = resident_tree_bytes(std::process::id())?;
+        crate::stop::low_memory(held, held, available)
+    };
+    let first = check();
+    std::thread::spawn(move || {
+        let mut message = first;
+        loop {
+            if let Some(message) = message.take() {
+                stop_own_children();
+                stopped(message);
+                return;
+            }
+            std::thread::sleep(LOW_MEMORY_POLL);
+            message = check();
+        }
+    });
+}
+
 /// The default time one file may take.
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(900);
 
-/// The default memory one file may hold, in megabytes.
-pub const DEFAULT_MAX_MEMORY_MB: u64 = 8192;
+/// The default memory one file may hold, in megabytes; `0` for no limit. A file may use what
+/// this computer has: a conversion stops when memory really runs low.
+pub const DEFAULT_MAX_MEMORY_MB: u64 = 0;
 
 impl Default for Limits {
     fn default() -> Self {
         Limits {
             timeout: DEFAULT_TIMEOUT,
-            max_memory: Some(DEFAULT_MAX_MEMORY_MB << 20),
+            max_memory: None,
         }
     }
 }
@@ -90,6 +217,7 @@ pub fn run_if_worker() -> Option<ExitCode> {
             return Some(ExitCode::from(2));
         }
     };
+    stop_when_parent_ends();
     let callback = |event| eprintln!("{}", json::progress(&parsed.input, event));
     let members: Option<Arc<dyn dutchman_core::MemberObserver>> =
         std::env::var_os("DUTCHMAN_MEMBER_PROGRESS")
@@ -105,6 +233,18 @@ pub fn run_if_worker() -> Option<ExitCode> {
     );
     println!("{report}");
     Some(ExitCode::SUCCESS)
+}
+
+/// Ends this child, and what it started, when the process that started it ends: nothing reads
+/// its report any more. Its parent holds the other end of stdin open until then.
+fn stop_when_parent_ends() {
+    std::thread::spawn(|| {
+        let mut sink = [0u8; 64];
+        let mut stdin = std::io::stdin();
+        while matches!(stdin.read(&mut sink), Ok(n) if n > 0) {}
+        stop_own_children();
+        std::process::exit(3);
+    });
 }
 
 /// Private worker protocol; names travel only to the supervising process's hashing sink.
@@ -322,7 +462,8 @@ fn convert_isolated_inner(
         .arg(&job.output)
         .args(options.to_args())
         .args(search_args(&job.search))
-        .stdin(Stdio::null())
+        // Kept open while this process lives: the child stops when it closes.
+        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn();
@@ -336,6 +477,8 @@ fn convert_isolated_inner(
             )
         }
     };
+    // Dropped when this conversion ends, or with this process if it ends first.
+    let _parent_alive = child.stdin.take();
     if let Some(log) = log {
         log.process(child.id());
     }
@@ -353,7 +496,7 @@ fn convert_isolated_inner(
             scope.spawn(move || follow_stages(err, &stage, on_progress, log))
         });
 
-        let stopped = supervise(&mut child, limits, shutdown);
+        let stopped = supervise(&mut child, limits, !options.no_memory_check, shutdown);
         let text = stdout
             .and_then(|reader| reader.join().ok())
             .unwrap_or_default();
@@ -398,6 +541,9 @@ fn convert_isolated_inner(
             limits.max_memory.unwrap_or(0) >> 20,
             at.id()
         )),
+            Stopped::LowMemory(message) => {
+                fail(format!("{message}, while at the {} stage", at.id()))
+            }
             Stopped::Lost(err) => fail(format!("lost track of the converter: {err}")),
         }
     })
@@ -508,6 +654,8 @@ enum Stopped {
     Shutdown,
     /// Stopped for holding this many bytes, over its limit.
     OverMemory(u64),
+    /// Stopped because this computer's memory really ran low, with what to say.
+    LowMemory(String),
     /// It could not be waited on.
     Lost(std::io::Error),
 }
@@ -516,11 +664,16 @@ enum Stopped {
 fn supervise(
     child: &mut Child,
     limits: &Limits,
+    watch_memory: bool,
     shutdown: Option<&std::sync::atomic::AtomicBool>,
 ) -> Stopped {
     let mut stopping = None;
     let started = Instant::now();
     let mut measured = started;
+    let mut looked = started;
+    let mut first_look = true;
+    let mut was_low = false;
+    let holder = Holder::new(child.id());
     loop {
         match child.try_wait() {
             Ok(Some(status)) => return Stopped::Exited(status),
@@ -550,6 +703,23 @@ fn supervise(
                 }
             }
         }
+        if watch_memory && (first_look || looked.elapsed() >= LOW_MEMORY_POLL) {
+            first_look = false;
+            looked = Instant::now();
+            if crate::stop::memory_is_low(crate::choices::available_memory()) {
+                #[cfg(debug_assertions)]
+                let test = std::env::var_os("DUTCHMAN_TEST_LOW_MEMORY").is_some();
+                #[cfg(not(debug_assertions))]
+                let test = false;
+                if let Some(message) = holder.stop_message(was_low || test) {
+                    stop(child);
+                    return Stopped::LowMemory(message);
+                }
+                was_low = true;
+            } else {
+                was_low = false;
+            }
+        }
         std::thread::sleep(POLL);
     }
 }
@@ -568,6 +738,7 @@ pub(crate) fn stop(child: &mut Child) {
     }
     #[cfg(windows)]
     let _ = Command::new("taskkill")
+        .hide_console_window()
         .args(["/PID", &child.id().to_string(), "/T", "/F"])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -622,7 +793,14 @@ fn process_tree(pid: u32) -> Option<Vec<(u32, u64)>> {
     let mut children = std::collections::BTreeMap::<Pid, Vec<Pid>>::new();
     for (id, process) in system.processes() {
         if let Some(parent) = process.parent() {
-            children.entry(parent).or_default().push(*id);
+            // Windows keeps a dead parent's id on its children, and reuses ids: only a process
+            // started after this parent can be its child.
+            if system
+                .process(parent)
+                .is_some_and(|parent| process.start_time() >= parent.start_time())
+            {
+                children.entry(parent).or_default().push(*id);
+            }
         }
     }
     let mut pending = vec![Pid::from_u32(pid)];
@@ -690,6 +868,7 @@ pub(crate) fn resident_bytes(pid: u32) -> Option<u64> {
 pub(crate) fn resident_bytes(pid: u32) -> Option<u64> {
     // `"name","pid","session","#","12,345 K"`
     let out = Command::new("tasklist")
+        .hide_console_window()
         .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
         .stdin(Stdio::null())
         .stderr(Stdio::null())

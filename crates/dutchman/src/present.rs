@@ -557,6 +557,11 @@ pub fn missing_summary(missing: &[String]) -> String {
 /// What was written, in a sentence.
 pub fn outcome(report: &Value) -> String {
     let mut text = outcome_without_memory_note(report);
+    if report.get("retried_after_low_memory") == Some(&Value::Bool(true))
+        && report.get("ok") == Some(&Value::Bool(true))
+    {
+        text.push_str(" Converted on its own after running out of memory alongside other files.");
+    }
     if let Some(reason) = report
         .pointer("/history_check_skipped/reason")
         .and_then(Value::as_str)
@@ -698,6 +703,15 @@ mod tests {
         assert!(many.contains(": A, B, C and 1 more."), "{many}");
         let stored = outcome(&report(serde_json::json!([part("E", "only_stored_pose")])));
         assert!(!stored.contains("may not be"), "{stored}");
+    }
+
+    #[test]
+    fn a_retried_file_says_so_where_the_card_always_shows() {
+        let report =
+            serde_json::json!({"ok": true, "mode": "import", "retried_after_low_memory": true});
+        assert!(outcome(&report).contains("Converted on its own"));
+        let first_try = serde_json::json!({"ok": true, "mode": "import"});
+        assert!(!outcome(&first_try).contains("Converted on its own"));
     }
 
     #[test]

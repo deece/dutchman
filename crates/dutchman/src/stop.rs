@@ -35,6 +35,138 @@ pub fn history_check_message(needed: u64, available: u64) -> String {
 /// A design holding less than this is never stopped: its extra work cannot matter.
 pub const MIN_HELD: u64 = 1 << 30;
 
+/// Free memory below which a running conversion that holds at least [`MIN_HELD`] stops. An
+/// estimate from a file's size can be far off in either direction, so this measures instead.
+pub const LOW_MEMORY_FLOOR: u64 = 1 << 30;
+
+/// Whether free memory has fallen below the floor. Cheap: it reads one system figure, so it can
+/// be asked often; measuring what a conversion holds is slower and waits for this to say yes.
+pub fn memory_is_low(available: Option<u64>) -> bool {
+    #[cfg(debug_assertions)]
+    if std::env::var_os("DUTCHMAN_TEST_LOW_MEMORY").is_some() {
+        return true;
+    }
+    available.is_some_and(|available| available < LOW_MEMORY_FLOOR) || os_says_critical()
+}
+
+/// What `kern.memorystatus_vm_pressure_level` reports at critical pressure.
+#[cfg(any(target_os = "macos", test))]
+const MACOS_CRITICAL_PRESSURE: u32 = 4;
+
+/// Free space on the boot volume below which a Mac has no room left to swap to.
+#[cfg(any(target_os = "macos", test))]
+const MACOS_LOW_DISK: u64 = 2 << 30;
+
+/// Whether a Mac's own figures say memory has run out: it compresses and swaps instead of
+/// reporting little free, so its free memory alone doesn't show it. `pressure` is the text of
+/// `sysctl -n kern.memorystatus_vm_pressure_level`.
+#[cfg(any(target_os = "macos", test))]
+fn macos_critical(pressure: Option<&str>, boot_volume_free: Option<u64>) -> bool {
+    pressure.and_then(|text| text.trim().parse::<u32>().ok()) == Some(MACOS_CRITICAL_PRESSURE)
+        || boot_volume_free.is_some_and(|free| free < MACOS_LOW_DISK)
+}
+
+/// [`macos_critical`], measured at most once a second, since it starts a program.
+#[cfg(target_os = "macos")]
+fn os_says_critical() -> bool {
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+    static LAST: Mutex<Option<(Instant, bool)>> = Mutex::new(None);
+    let Ok(mut last) = LAST.lock() else {
+        return false;
+    };
+    if let Some((at, critical)) = *last {
+        if at.elapsed() < Duration::from_secs(1) {
+            return critical;
+        }
+    }
+    let pressure = std::process::Command::new("/usr/sbin/sysctl")
+        .args(["-n", "kern.memorystatus_vm_pressure_level"])
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()
+        .and_then(|out| String::from_utf8(out.stdout).ok());
+    let disks = sysinfo::Disks::new_with_refreshed_list();
+    let boot_volume_free = disks
+        .iter()
+        .find(|disk| disk.mount_point() == std::path::Path::new("/"))
+        .map(sysinfo::Disk::available_space);
+    let critical = macos_critical(pressure.as_deref(), boot_volume_free);
+    *last = Some((Instant::now(), critical));
+    critical
+}
+
+#[cfg(not(target_os = "macos"))]
+fn os_says_critical() -> bool {
+    false
+}
+
+/// The message to stop a running conversion with, when what all running conversions hold
+/// together (`total`) means they are what is using the memory.
+pub fn low_memory(total: u64, own: u64, available: Option<u64>) -> Option<String> {
+    #[cfg(debug_assertions)]
+    if std::env::var_os("DUTCHMAN_TEST_LOW_MEMORY").is_some() {
+        return Some(low_memory_message(2_000_000_000, 500_000_000));
+    }
+    let available = available?;
+    (total >= MIN_HELD && (available < LOW_MEMORY_FLOOR || os_says_critical()))
+        .then(|| low_memory_message(own, available))
+}
+
+/// Which running conversion stops when memory runs low: the one holding the most, so the others
+/// can finish. Equal holdings stop the first, so exactly one is chosen.
+pub fn stops_first(holders: &std::collections::BTreeMap<u32, u64>, own: u32) -> bool {
+    holders
+        .iter()
+        .max_by_key(|(pid, held)| (**held, std::cmp::Reverse(**pid)))
+        .is_some_and(|(pid, _)| *pid == own)
+}
+
+/// How a report says a conversion stopped because memory ran low.
+const LOW_MEMORY_STOP: &str = "stopped before this computer ran out of memory";
+
+/// Whether this report is of a conversion stopped because memory ran low.
+pub fn stopped_for_memory(report: &serde_json::Value) -> bool {
+    report
+        .pointer("/error/message")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|message| message.starts_with(LOW_MEMORY_STOP))
+}
+
+/// Records on a report that its file was stopped for memory alongside others, and converted
+/// again alone.
+pub fn note_retried_alone(report: &mut serde_json::Value) {
+    let converted = report.get("ok") == Some(&serde_json::json!(true));
+    let Some(fields) = report.as_object_mut() else {
+        return;
+    };
+    fields.insert(
+        "retried_after_low_memory".to_owned(),
+        serde_json::json!(true),
+    );
+    if converted {
+        let note = serde_json::json!({
+            "level": "Info", "subject": "memory", "stage": "input", "code": null, "upstream": null,
+            "message": "ran out of memory alongside other files, then converted on its own",
+        });
+        if let Some(losses) = fields
+            .get_mut("losses")
+            .and_then(serde_json::Value::as_array_mut)
+        {
+            losses.push(note);
+        }
+    }
+}
+
+fn low_memory_message(held: u64, available: u64) -> String {
+    format!(
+        "{LOW_MEMORY_STOP}: {:.1} GB left free while this conversion held {:.1} GB. Close other programs and try again, or use --preset fast",
+        crate::choices::gb(available),
+        crate::choices::gb(held)
+    )
+}
+
 /// How many of the largest parts the message names.
 const NAMED: usize = 3;
 
@@ -109,6 +241,35 @@ fn join(items: &[String]) -> String {
 mod tests {
     use super::*;
 
+    #[test]
+    fn a_mac_is_critical_on_its_own_pressure_level_or_a_full_boot_volume() {
+        const GB: u64 = 1 << 30;
+        assert!(macos_critical(Some("4\n"), Some(100 * GB)));
+        for level in ["1\n", "2\n", "0", "", "not a number"] {
+            assert!(!macos_critical(Some(level), Some(100 * GB)), "{level:?}");
+        }
+        assert!(macos_critical(Some("1\n"), Some(2 * GB - 1)));
+        assert!(!macos_critical(Some("1\n"), Some(2 * GB)));
+        assert!(!macos_critical(None, None));
+    }
+
+    #[test]
+    fn workers_count_together_and_the_largest_stops_alone() {
+        const GB: u64 = 1 << 30;
+        // Four workers under the floor each still add up to a conversion's worth.
+        let small = GB * 9 / 10;
+        assert!(low_memory(small * 4, small, Some(GB / 2)).is_some());
+        assert!(low_memory(GB / 2, GB / 2, Some(GB / 2)).is_none());
+        assert!(low_memory(GB * 8, GB * 8, Some(GB)).is_none());
+        let holders = [(10, GB), (11, 3 * GB), (12, 2 * GB)].into_iter().collect();
+        assert_eq!(
+            [10, 11, 12].map(|pid| stops_first(&holders, pid)),
+            [false, true, false]
+        );
+        let equal = [(10, GB), (11, GB)].into_iter().collect();
+        assert_eq!([10, 11].map(|pid| stops_first(&equal, pid)), [true, false]);
+    }
+
     fn part(number: usize, entities: u64, assembly: bool) -> parts::PartInfo {
         parts::PartInfo {
             number,
@@ -131,7 +292,7 @@ mod tests {
         std::fs::write(&input, [0; 1024]).unwrap();
         let options = crate::ConvertOptions::default();
         let sizes = crate::choices::read_sizes(&input).unwrap();
-        let parts = crate::choices::desktop_estimate_parts(sizes, &options, true, None).unwrap();
+        let parts = crate::choices::desktop_estimate_parts(sizes, &options, true).unwrap();
         assert_eq!(
             history_check_bytes(&input, &options),
             parts.check.map(|e| e.peak_bytes)

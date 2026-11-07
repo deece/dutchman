@@ -4,7 +4,6 @@
 //! usage error or memory-budget refusal. See `docs/json.md` for the `--json` reports.
 
 use std::ffi::OsString;
-use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -730,10 +729,8 @@ fn main() -> ExitCode {
                     println!("{status}");
                 }
             }
-            if options.part.is_none()
-                && !memory_cli(&input, &mut options, json, quiet, yes, json::CONVERT)
-            {
-                return ExitCode::from(2);
+            if options.part.is_none() {
+                memory_cli(&input, &options, json, quiet);
             }
             convert(
                 &input,
@@ -774,9 +771,7 @@ fn main() -> ExitCode {
                 println!("{}", preview.description);
             }
             for job in preview.jobs {
-                if !memory_cli(&job.input, &mut options, json, quiet, yes, batch::SCHEMA) {
-                    return ExitCode::from(2);
-                }
+                memory_cli(&job.input, &options, json, quiet);
             }
             let anon = match anon_request(report_anon, report_salt, report_key, &mut options) {
                 Ok(anon) => anon,
@@ -1140,57 +1135,27 @@ fn diagnose(
     }
 }
 
-fn memory_cli(
-    input: &Path,
-    options: &mut ConvertOptions,
-    as_json: bool,
-    quiet: bool,
-    yes: bool,
-    schema: &str,
-) -> bool {
+/// Shows the estimate. It comes from the file's size and can be far off, so it never stops a
+/// conversion: memory is measured while the conversion runs.
+fn memory_cli(input: &Path, options: &ConvertOptions, as_json: bool, quiet: bool) {
     use dutchman::choices::{self, MemoryCheck};
-    loop {
-        let check = choices::memory_check(input, options);
-        match check {
-            MemoryCheck::Ok(estimate) => {
-                if !as_json && !quiet {
-                    if let Some(estimate) = estimate {
-                        println!("Estimate: {}", choices::estimate_text_with_bands(estimate));
-                    }
-                }
-                return true;
+    let check = choices::memory_check(input, options);
+    if as_json || quiet {
+        return;
+    }
+    match check {
+        MemoryCheck::Ok(estimate) => {
+            if let Some(estimate) = estimate {
+                println!("Estimate: {}", choices::estimate_text_with_bands(estimate));
             }
-            MemoryCheck::TooBig {
-                conversion,
-                lighter,
-                ..
-            } => {
-                let message = check.refusal().unwrap_or_default();
-                if !as_json && !yes && std::io::stdin().is_terminal() {
-                    if let Some(lighter) = lighter {
-                        if !quiet {
-                            println!(
-                                "Estimate: {}",
-                                choices::estimate_text_with_bands(conversion)
-                            );
-                        }
-                        eprint!("{message}\nSwitch to --preset {}? [y/N] ", lighter.name());
-                        let _ = std::io::stderr().flush();
-                        let mut answer = String::new();
-                        if std::io::stdin().read_line(&mut answer).is_ok()
-                            && matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes")
-                        {
-                            options.preset = lighter;
-                            continue;
-                        }
-                    }
-                }
-                if as_json {
-                    print_json(&json::memory_failure(schema, input, options, &message));
-                } else {
-                    eprintln!("dutchman: {message}");
-                }
-                return false;
+        }
+        MemoryCheck::TooBig { conversion, .. } => {
+            println!(
+                "Estimate: {}",
+                choices::estimate_text_with_bands(conversion)
+            );
+            if let Some(message) = check.warning() {
+                eprintln!("dutchman: {message}");
             }
         }
     }
@@ -1301,6 +1266,22 @@ fn convert(
         quiet,
     } = printing;
     let progress = dutchman::progress::StderrProgress::new(quiet, as_json, verbose);
+    if !options.no_memory_check {
+        let (failed_input, failed_options) = (input.to_owned(), options.clone());
+        dutchman::worker::watch_own_memory(move |message| {
+            if as_json {
+                print_json(&json::memory_failure(
+                    json::CONVERT,
+                    &failed_input,
+                    &failed_options,
+                    &message,
+                ));
+            } else {
+                eprintln!("dutchman: {message}");
+            }
+            std::process::exit(2);
+        });
+    }
     let report = dutchman::convert_options_with_progress(
         input,
         output,

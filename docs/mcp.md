@@ -150,12 +150,12 @@ are controlled by `sketches`; sketches needed by retained history stay. Disablin
 joints retains the selected placements and adds an Info report line. FreeCAD output honours
 history only; sketch and joint choices do not control that writer.
 
-A conversion that exceeds available memory refuses with the same message as the CLI:
-`this conversion needs about N GB and M GB are free; try --preset <lighter> (or
---no-memory-check to run anyway)`. Set a lighter `preset`, or explicitly set
-`no_memory_check: true` to bypass the guard and Standard's history budget. Existing
-input and batch worker limits still apply. Standard's automatic history decision is
-reported as one Info line under `history`, as described in the [guide](presets.md).
+An estimate above free memory doesn't stop a conversion; a dry run's `fits` reports it. `convert`
+runs in a child process, and if memory really runs low it stops with the same message as the CLI:
+`stopped before this computer ran out of memory: ...`. Set a lighter `preset` and try again, or set
+`no_memory_check: true` to turn that stop off. Existing input and batch worker limits still apply.
+Standard's decision to leave history out is reported as one Info line under `history`, as
+described in the [guide](presets.md).
 
 Requested SolidCraft checking is included in `estimate.peak_bytes`. Conversion-only
 preflight can allow a run whose check will not fit. After reading, checking compares the
@@ -383,7 +383,7 @@ The formats report includes each reader's status and cadmpeg's published headlin
 | `out_dir` | string | Absolute path of the folder for the designs, keeping each input folder's layout. Created if missing. |
 | `jobs` | integer, at least 1 | How many files to convert at once. Default: the machine's cores, at most 8. |
 | `timeout` | integer, at least 1 | Seconds one file may take before it is stopped and reported as failed. Default 900. |
-| `max_memory_mb` | integer | Megabytes one file may hold before it is stopped and reported as failed. Default 8192; 0 for no limit. |
+| `max_memory_mb` | integer | Megabytes one file may hold before it is stopped and reported as failed. Default 0, no limit; a file also stops if the computer really runs low on memory. |
 | `journal` | path | A file recording each file's result as it finishes; files it already records, unchanged since, are not converted again. |
 | `report_anon` | path | Also write the anonymous report ([`dutchman.report-anon/1`](report-anon.md)) there. The result then carries `report_anon: {"path", "salt"}`; the salt stays private. |
 | `report_salt` | 32 hex digits | The salt for the anonymous report's file ids, to get the same ids as an earlier run. |
@@ -665,11 +665,7 @@ or web. The MCP formats report includes the additive `drawings` capability list.
 The desktop app also offers Fast, Standard (default), and Full presets, with Advanced
 checkboxes that leave history, sketches, or joints out. Estimates below 0.1 GB show
 **under 0.1 GB**, and times below 60 seconds show **under a minute**, using the CLI’s text
-formatter. Its memory warning offers the same choices with live costs and a total matching
-the file row. Checking is counted only with a usable CLI and checking on. **Convert with
-these choices** checks queued files again when the conversion fits; if it still will not
-fit, proceeding bypasses memory checks for that run only. Choices and the checking preference
-return to the main window and are remembered. Calibrated formats split reading, extra
+formatter. The file row shows a live total, counting checking only with a usable CLI and checking on. Choices and the checking preference are remembered. Calibrated formats split reading, extra
 conversion work after decoding and extra checking in the desktop. MCP keeps the existing
 numeric estimate fields; the split is desktop presentation. History
 Info messages, including history left out by Standard, appear on its result cards.

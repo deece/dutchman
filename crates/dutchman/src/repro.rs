@@ -83,30 +83,19 @@ fn build(input: &Path, out: &Path, kit: &Path, include_local_key: bool) -> Resul
     });
     let callback = |event| log.progress(event);
     let progress = Progress::new(&callback).with_members(Some(capture.clone()));
-    let prepared = options.preflight(input, crate::choices::available_memory());
-    let fallback_writer;
-    let writer: &dyn Writer = match &prepared {
-        Ok(writer) => writer,
-        Err(_) => {
-            fallback_writer = options.writer();
-            &fallback_writer
-        }
-    };
-    let conversion = match &prepared {
-        Ok(_) => dutchman_core::convert_with_progress(
-            input,
-            &scratch
-                .path()
-                .join(format!("converted.{}", writer.extension())),
-            writer,
-            false,
-            &options.part_search(),
-            &progress,
-        )
-        .map(|report| crate::convert_success(input, Path::new("converted.sc"), &report))
-        .unwrap_or_else(|e| crate::json::error(crate::json::CONVERT, Value::Null, &e)),
-        Err(report) => report.clone(),
-    };
+    let writer = options.preflight(input, crate::choices::available_memory());
+    let conversion = dutchman_core::convert_with_progress(
+        input,
+        &scratch
+            .path()
+            .join(format!("converted.{}", writer.extension())),
+        &writer,
+        false,
+        &options.part_search(),
+        &progress,
+    )
+    .map(|report| crate::convert_success(input, Path::new("converted.sc"), &report))
+    .unwrap_or_else(|e| crate::json::error(crate::json::CONVERT, Value::Null, &e));
     drop(progress);
     log.end(&conversion)?;
     let failure = diagnostics::anonymous_failure(&conversion);
@@ -128,7 +117,7 @@ fn build(input: &Path, out: &Path, kit: &Path, include_local_key: bool) -> Resul
                 .push(json!({"ordinal": ordinal, "total": total, "name": name}));
             let (matches, status, trial_failure) = match candidate {
                 Ok(candidate) => {
-                    let trial = test_model(&candidate, &failure, writer);
+                    let trial = test_model(&candidate, &failure, &writer);
                     let matches = same(&failure, &trial);
                     if matches {
                         model = Some(candidate);
@@ -164,7 +153,7 @@ fn build(input: &Path, out: &Path, kit: &Path, include_local_key: bool) -> Resul
     }
     if !failure.is_null() {
         if let Some(retained) = model {
-            narrow(retained, &failure, writer, &mut narrowed, &mut trials)?;
+            narrow(retained, &failure, &writer, &mut narrowed, &mut trials)?;
         } else {
             narrowed.limit("No decoded model is available at this failure stage; component, body, feature and sketch checks are not possible.");
         }

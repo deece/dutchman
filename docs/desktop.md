@@ -23,6 +23,8 @@ local commands. The prompt says to ask before sending anything anywhere; pasting
 assistant is your choice, so check that assistant's privacy settings before sharing private
 paths or reports.
 
+Each file converts in its own process, so running low on memory or a crash ends that file and not the app, and closing the app ends what is still converting. A file stopped because it ran out of memory alongside others converts again on its own at the end of the run, and its card says so. On Windows these processes open no terminal windows.
+
 Every desktop run keeps a local diagnostic log in the diagnostics folder (**Open diagnostics
 folder** opens it), never beside your designs. It holds no names or contents from your file
 and stays on your computer. The folder keeps the newest 50 logs.
@@ -106,41 +108,17 @@ once when the machine's free memory can be read. On a Mac this counts memory the
 (not in use by apps, system or compression), not only the few pages it keeps empty. These are estimates, not limits or promises; an unavailable estimate
 leaves no label. Planning and estimation run in the background.
 
-Before a conversion or retry, Dutchman compares conversion memory, without the history
-check, against free memory. If a file is too large, **This conversion may need more memory**
-shows its file name and two parts. **Read the file** has no choices. **Convert to SolidCraft**
-holds the preset and **Feature history**, **Sketches** and **Joints** choices. No individual
-choice carries a figure. Fusion, Inventor parts and SolidWorks parts show a measured read
-peak and the extra memory needed after decoding, with time for each. Conversion includes
-validation, component extraction, mapping and writing. Formats without a calibrated split
-keep one combined reading-and-conversion figure.
-
-A small **Check in SolidCraft** row under conversion holds its checkbox and the
-check's extra memory and time. It checks the converted geometry even when feature history
-is off, using that mode's measured allowance. It is greyed out with a reason when no
-SolidCraft CLI was found. Preset descriptions appear on hover or keyboard focus in the menu
-and selector, here and in the main window.
-
-**Total time** adds the rounded durations displayed for reading, conversion and checking
-when checking is enabled and available. Sub-minute stages contribute an upper bound:
-**under a minute + roughly 2 min + roughly 2 min** shows **under 5 min**.
-The file row uses the same calculation. CLI/MCP totals continue to add fractional phase
-times before rounding. **Most memory at once** adds
-the read peak and the extra memory for conversion and checking. This total matches
-the file row. Free memory appears below it. If reading and converting alone will not fit,
-the warning points to the preset and checkboxes; otherwise it says the check is skipped
-when it cannot fit after reading. **Estimates can be off by a few GB either way.**
+Pressing Convert starts the conversion at once; there is no memory dialog. The estimate in the
+file row and box comes from the file's size and can be far off either way, so it never
+refuses or delays a conversion. Dutchman measures memory while it converts and stops with a
+clear message if the computer really runs out. When the estimate was above free memory, the
+result card's **memory** Info note says so. Preset descriptions appear on hover or keyboard
+focus in the preset selector. The **Convert and check history even if memory is low** control
+in Advanced stays.
 
 Archive sizes are read in the background once; changing choices updates the figures without
-reading the archive again. Standard leaves history out when doing so fits free memory,
-with a note saying so.
+reading the archive again.
 
-**Convert with these choices** and **Cancel** stay visible together, including in short
-windows where the contents scroll. The choices return to the main window and are remembered,
-including the history-check checkbox. If the conversion still will not fit, the box says so;
-converting skips memory checks for this run only. Otherwise the queued files are checked
-again. A requested history check that cannot fit after reading is skipped, and the box
-explains this when its estimate exceeds free memory. Conversion can still continue.
 When Standard leaves history out to fit in memory, its result card shows the
 history Info message even with the full loss log collapsed. The original geometry is kept.
 

@@ -171,13 +171,6 @@ fn convert_all_prepared(
         description: project_plan,
     } = plan(inputs, out_dir);
     prepare(&mut work, options);
-    for job in &work {
-        if let Some(message) = crate::choices::memory_check(&job.input, options).refusal() {
-            return Ok(report::memory_failure(
-                SCHEMA, &job.input, options, &message,
-            ));
-        }
-    }
     let mut journal = match &settings.journal {
         Some(path) => Some(Journal::open(path)?),
         None => None,
@@ -931,6 +924,32 @@ pub fn run_each(
     );
 }
 
+/// [`run_each`] with each file in its own process started from `program`, so a stop for low
+/// memory or a crash ends that file and not the program running the batch.
+pub fn run_isolated(
+    work: &[Job],
+    options: &ConvertOptions,
+    program: &Path,
+    workers: usize,
+    stop: &AtomicBool,
+    on_event: impl Fn(Event) + Sync,
+) {
+    let limits = Limits {
+        timeout: std::time::Duration::from_secs(u64::MAX / 4),
+        max_memory: None,
+    };
+    run_with(
+        work,
+        workers,
+        stop,
+        |job, index| {
+            let callback = |event| on_event(Event::Progress(index, event));
+            convert_isolated_job_with_progress(program, job, options, &limits, None, &callback)
+        },
+        &on_event,
+    );
+}
+
 /// Runs `convert` on every job with `workers` threads, as [`run_each`] does, adding each
 /// file's time to its report as `elapsed_ms`.
 pub(crate) fn run_with(
@@ -941,8 +960,20 @@ pub(crate) fn run_with(
     on_event: impl Fn(Event) + Sync,
 ) {
     let next = AtomicUsize::new(0);
+    let workers = workers.min(work.len()).max(1);
+    let run = |job: &Job, index: usize| {
+        let started = Instant::now();
+        let mut report = convert(job, index);
+        if let Some(fields) = report.as_object_mut() {
+            let elapsed = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+            fields.insert("elapsed_ms".to_owned(), json!(elapsed));
+        }
+        report
+    };
+    // Files stopped because they ran out of memory alongside others wait to run alone.
+    let stopped = Mutex::new(Vec::new());
     std::thread::scope(|scope| {
-        for _ in 0..workers.min(work.len()).max(1) {
+        for _ in 0..workers {
             scope.spawn(|| loop {
                 if stop.load(Ordering::Relaxed) {
                     break;
@@ -950,16 +981,28 @@ pub(crate) fn run_with(
                 let index = next.fetch_add(1, Ordering::Relaxed);
                 let Some(job) = work.get(index) else { break };
                 on_event(Event::Started(index));
-                let started = Instant::now();
-                let mut report = convert(job, index);
-                if let Some(fields) = report.as_object_mut() {
-                    let elapsed = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-                    fields.insert("elapsed_ms".to_owned(), json!(elapsed));
+                let report = run(job, index);
+                if workers > 1 && crate::stop::stopped_for_memory(&report) {
+                    if let Ok(mut stopped) = stopped.lock() {
+                        stopped.push((index, report));
+                        continue;
+                    }
                 }
                 on_event(Event::Finished(index, report));
             });
         }
     });
+    let mut stopped = stopped.into_inner().unwrap_or_default();
+    stopped.sort_by_key(|(index, _)| *index);
+    for (index, first) in stopped {
+        let Some(job) = work.get(index).filter(|_| !stop.load(Ordering::Relaxed)) else {
+            on_event(Event::Finished(index, first));
+            continue;
+        };
+        let mut report = run(job, index);
+        crate::stop::note_retried_alone(&mut report);
+        on_event(Event::Finished(index, report));
+    }
 }
 
 /// The record of a batch's finished files, one JSON line each, kept as they finish so a run
@@ -1063,9 +1106,6 @@ fn convert_options_job_with_progress(
     options: &ConvertOptions,
     on_progress: &(dyn Fn(dutchman_core::ProgressEvent) + Send + Sync),
 ) -> Value {
-    if let Some(message) = crate::choices::memory_check(&job.input, options).refusal() {
-        return report::memory_failure(report::CONVERT, &job.input, options, &message);
-    }
     let result = match make_folder(job) {
         Some(failure) => failure,
         None => crate::convert_options_with_progress(
@@ -1146,9 +1186,6 @@ pub fn convert_isolated_job_with_progress(
     on_progress: &(dyn Fn(dutchman_core::ProgressEvent) + Send + Sync),
 ) -> Value {
     let started = Instant::now();
-    if let Some(message) = crate::choices::memory_check(&job.input, options).refusal() {
-        return report::memory_failure(report::CONVERT, &job.input, options, &message);
-    }
     let mut report = make_folder(job).unwrap_or_else(|| {
         worker::convert_isolated_with_progress(program, job, options, limits, stop, on_progress)
     });

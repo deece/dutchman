@@ -145,12 +145,8 @@ Desktop Advanced has the matching **Convert and check history even if memory is 
 control. Automatic assembly preparation uses at most two workers and reduces that count
 for detailed parts or large retained preparations. See [presets](presets.md).
 
-The [desktop memory warning](desktop.md) lets you adjust the preset, retained content and
-history checking with live memory and time figures matching the file row. Calibrated
-formats show reading, extra conversion work after decoding and the extra history check
-separately; their memory and time add to that shared total. Choices are
-remembered. **Convert with these choices** checks queued files again when the conversion
-fits; proceeding when it still will not fit bypasses memory checks for that run only.
+The desktop shows the same estimate in the file row and starts converting when you press
+Convert; see [the desktop guide](desktop.md).
 
 ## Reading the loss report
 

@@ -23,6 +23,7 @@ use dutchman_gui::App;
 /// An app whose run logs, and the unfinished-run notice, use a folder of this test process,
 /// never the real diagnostics folder (CI runs these tests without the test-support feature).
 fn test_app(cc: &eframe::CreationContext<'_>) -> App {
+    dutchman_gui::worker::convert_in_process_for_tests();
     static FOLDER: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
     let folder = FOLDER.get_or_init(|| {
         std::env::temp_dir().join(format!(
@@ -469,7 +470,7 @@ fn screenshots() {
             panic!("diagnostics isolation uses XDG_STATE_HOME on Linux");
         }
         if !cfg!(feature = "test-support") {
-            panic!("enable --features test-support for the memory dialog");
+            panic!("enable --features test-support for the screenshot run");
         }
         let status = std::process::Command::new(std::env::current_exe().unwrap())
             .args(["--ignored", "--exact", "screenshots", "--nocapture"])
@@ -736,56 +737,13 @@ fn screenshots() {
         // Collapse before conversion so the ordinary 800-pixel window shows more results.
         harness.get_by_label("Advanced").click_accesskit();
         harness.run_steps(8);
-        let memory_input = work.path().join("Synthetic assembly.ipt");
-        std::fs::File::create(&memory_input)
-            .unwrap()
-            .set_len(180_000_000)
-            .unwrap();
-        #[cfg(feature = "test-support")]
-        harness.state_mut().show_memory_check_for_test(
-            memory_input.clone(),
-            dutchman::choices::MemoryCheck::TooBig {
-                estimate: dutchman::choices::Estimate {
-                    peak_bytes: 8_000_000_000,
-                    seconds: 120,
-                    seconds_exact: 120.0,
-                    band: 0.3,
-                    memory_band: 0.3,
-                    time_band: None,
-                },
-                conversion: dutchman::choices::Estimate {
-                    peak_bytes: 8_000_000_000,
-                    seconds: 120,
-                    seconds_exact: 120.0,
-                    band: 0.3,
-                    memory_band: 0.3,
-                    time_band: None,
-                },
-                available: 4_000_000_000,
-                lighter: Some(dutchman::choices::Preset::Fast),
-            },
-            dutchman::choices::read_sizes(&memory_input).unwrap(),
-        );
-        harness.run_steps(8);
-        harness.get_by_label("This conversion may need more memory");
-        shot(
-            &mut harness,
-            &dir,
-            &mut index,
-            "07-memory-dialog",
-            name,
-            "Memory choices with live estimates and Convert with these choices / Cancel.",
-        );
-        harness.get_by_label("Cancel").click_accesskit();
-        harness.run_steps(8);
-
         harness.get_by_label("Convert").click_accesskit();
         // Do not settle frames here: the tiny cube may finish before the next frame.
         harness.step();
         // The click takes effect after the action bar is drawn. Paint its updated state.
         harness.step();
         let running = if harness.query_by_label("Stop").is_some() {
-            "First frame after Convert for a real cube conversion; memory preflight / Stop is visible. The tiny fixture completes too quickly for a reliable mid-run progress frame."
+            "First frame after Convert for a real cube conversion; Stop is visible. The tiny fixture completes too quickly for a reliable mid-run progress frame."
         } else {
             "First frame after Convert for a real cube conversion; the tiny fixture completed before a running frame could be rendered."
         };
@@ -876,7 +834,7 @@ fn screenshots() {
             "Formats menu open with reader status and capability levels.",
         );
     }
-    index.push_str("\nMemory dialog uses the opt-in `test-support` hook; no oversized CAD file is allocated. All conversions use repository fixtures copied into a temporary folder. Native file/folder pickers and external folder/app launches are not invoked. Diagnostics are read from a temporary XDG_STATE_HOME in a child test process.\n");
+    index.push_str("\nAll conversions use repository fixtures copied into a temporary folder. Native file/folder pickers and external folder/app launches are not invoked. Diagnostics are read from a temporary XDG_STATE_HOME in a child test process.\n");
     std::fs::write(dir.join("INDEX.md"), index).unwrap();
 }
 
@@ -2000,179 +1958,49 @@ mod consent_e2e {
     }
 }
 
+/// A synthetic design whose estimate is far above the free memory given.
 #[cfg(feature = "test-support")]
-fn memory_harness(
-    width: f32,
-    height: f32,
-    free: u64,
-) -> (Harness<'static, App>, PathBuf, tempfile::TempDir) {
+fn memory_harness(free: u64) -> (Harness<'static, App>, PathBuf, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
-    use std::io::Write;
     let input = dir.path().join("Synthetic assembly.f3d");
-    let mut archive = zip::ZipWriter::new(std::fs::File::create(&input).unwrap());
-    let content = vec![0; 450_000];
-    for member in 0..400 {
-        archive
-            .start_file(
-                format!("Design/stream-{member}"),
-                zip::write::SimpleFileOptions::default()
-                    .compression_method(zip::CompressionMethod::Deflated),
-            )
-            .unwrap();
-        archive.write_all(&content).unwrap();
-    }
-    archive.finish().unwrap();
+    std::fs::copy(fixture("generated_unit_cube.f3d"), &input).unwrap();
     let sizes = dutchman::choices::read_sizes(&input).unwrap();
-    let options = dutchman::ConvertOptions::default();
-    let estimate =
-        dutchman::choices::estimate_from_sizes(sizes, &options.choices(), &options).unwrap();
-    let check = dutchman::choices::MemoryCheck::TooBig {
-        estimate,
-        conversion: estimate,
-        available: free,
-        lighter: Some(dutchman::choices::Preset::Fast),
-    };
     let mut harness = Harness::builder()
-        .with_size(egui::vec2(width, height))
+        .with_size(egui::vec2(760.0, 900.0))
         .build_eframe(|cc| test_app(cc));
     harness.state_mut().add_inputs([input.clone()]);
     harness.state_mut().set_out_dir(dir.path().join("out"));
-    harness.state_mut().set_checker_for_test(true);
-    harness.state_mut().preview_solidcraft(Some("0.30.0"));
+    harness.state_mut().set_verify(false);
     harness
         .state_mut()
-        .show_memory_check_for_test(input.clone(), check, sizes);
-    std::fs::remove_file(&input).unwrap(); // All subsequent UI changes must use cached sizes.
+        .set_sizes_for_test(input.clone(), sizes, free);
     harness.run_steps(8);
-    assert!(
-        harness
-            .query_all_by_label(
-                &harness
-                    .state()
-                    .memory_estimate_text_for_test(&input)
-                    .unwrap()
-            )
-            .count()
-            > 0
-    );
     (harness, input, dir)
 }
 
-#[cfg(feature = "test-support")]
-fn memory_total_label(text: &str) -> String {
-    let (memory, time) = text.split_once(", ").unwrap();
-    format!("Total time: {time} · Most memory at once: {memory}")
-}
-
-#[cfg(feature = "test-support")]
-fn click_memory(h: &mut Harness<'static, App>, label: &str) {
-    use egui_kittest::kittest::NodeT;
-    h.query_all_by_label(label)
-        .find(|node| !node.accesskit_node().is_disabled())
-        .unwrap_or_else(|| {
-            panic!(
-                "No active {label}: {:?}",
-                h.query_all_by_label(label).collect::<Vec<_>>()
-            )
-        })
-        .click_accesskit();
-}
-
 #[test]
 #[cfg(feature = "test-support")]
-fn memory_choices_share_the_row_total_and_update_without_rereading() {
-    use egui_kittest::kittest::NodeT;
-    let (mut h, input, _dir) = memory_harness(760.0, 900.0, 1);
-    for label in [
-        "Check in SolidCraft",
-        "Sketches",
-        "Joints",
-        "Feature history",
-    ] {
-        let before = h.state().memory_estimate_for_test(&input).unwrap();
-        click_memory(&mut h, label);
-        h.run_steps(8);
-        let total = h.state().memory_estimate_for_test(&input).unwrap();
-        assert!(h
-            .query_by_label(&memory_total_label(
-                &h.state().memory_estimate_text_for_test(&input).unwrap()
-            ))
-            .is_some());
-        assert!(
-            h.query_all_by_label(&h.state().memory_estimate_text_for_test(&input).unwrap())
-                .count()
-                > 0
-        );
-        if label == "Check in SolidCraft" {
-            assert!(total.peak_bytes < before.peak_bytes);
-        } else if label == "Feature history" {
-            // Retaining history never costs less than the same geometry-only choices.
-            assert!(total.peak_bytes <= before.peak_bytes);
-        } else {
-            assert_eq!(total, before);
-        }
-    }
-    assert_eq!(h.query_all_by_label("no separate estimate").count(), 0);
-    assert_eq!(
-        h.query_all_by_label_contains("not estimated separately")
-            .count(),
-        0
-    );
-    // Stored geometry is still checked when feature history is off.
-    assert!(!h
-        .get_by_label("Check in SolidCraft")
-        .accesskit_node()
-        .is_disabled());
-    h.get_by_label("Estimates can be off by a few GB either way.");
-}
-
-#[test]
-#[cfg(feature = "test-support")]
-fn memory_dialog_shows_the_calibrated_split_from_cached_sizes() {
-    let (h, input, _dir) = memory_harness(520.0, 800.0, 20_000_000_000);
-    h.get_by_label("Read the file");
-    h.get_by_label("Convert to SolidCraft");
-    let parts = h.state().memory_parts_for_test(&input).unwrap();
-    let dutchman::choices::ReadConvertSplit { read, convert } = parts.split.unwrap();
-    h.get_by_label(&format!(
-        "Reading: {}",
-        dutchman::choices::estimate_text(read)
-    ));
-    h.get_by_label(&format!(
-        "Converting: {}",
-        dutchman::choices::estimate_text(convert)
-    ));
+fn an_estimate_above_free_memory_starts_converting_at_once() {
+    let (mut h, _input, dir) = memory_harness(1);
+    h.run_steps(8);
+    h.get_by_label("Convert").click_accesskit();
+    h.step();
+    assert!(h.state().running());
     assert!(h
-        .query_by_label_contains("Reading and converting together:")
+        .query_by_label("This conversion may need more memory")
         .is_none());
-    let total = h.state().memory_estimate_for_test(&input).unwrap();
-    let check = parts.check.unwrap();
-    // Under a minute + roughly 2 min + roughly 2 min must not become 3 min.
-    assert!(h
-        .state()
-        .memory_estimate_text_for_test(&input)
-        .unwrap()
-        .ends_with("under 5 min"));
-    assert_eq!(
-        total.peak_bytes,
-        read.peak_bytes + convert.peak_bytes + check.peak_bytes
-    );
-    assert_eq!(
-        total.seconds_exact,
-        read.seconds_exact + convert.seconds_exact + check.seconds_exact
-    );
-    h.get_by_label(&memory_total_label(
-        &h.state().memory_estimate_text_for_test(&input).unwrap(),
-    ));
-    h.get_by_label(&h.state().memory_estimate_text_for_test(&input).unwrap());
-    h.get_by_label("Estimates can be off by a few GB either way.");
+    assert!(h.query_by_label("Convert with these choices").is_none());
+    wait_for_conversion(&mut h);
+    assert_eq!(h.state().rows().len(), 1);
+    assert_eq!(h.state().rows()[0].status, Status::Converted);
+    assert!(dir.path().join("out").exists());
 }
 
 #[test]
 #[cfg(feature = "test-support")]
 fn memory_presets_expose_help_to_focus_and_accessibility() {
     use egui_kittest::kittest::NodeT;
-    let (mut h, _, _dir) = memory_harness(520.0, 800.0, 1);
+    let (mut h, _, _dir) = memory_harness(1);
     let selector = h
         .query_all_by_value("Standard")
         .find(|node| !node.accesskit_node().is_disabled())
@@ -2203,106 +2031,22 @@ fn memory_presets_expose_help_to_focus_and_accessibility() {
 
 #[test]
 #[cfg(feature = "test-support")]
-fn memory_choices_count_check_only_with_cli_and_warning_clears() {
-    let (mut h, input, _dir) = memory_harness(760.0, 900.0, 20_000_000_000);
-    let checked = h.state().memory_estimate_for_test(&input).unwrap();
-    h.state_mut().set_checker_for_test(false);
+fn choices_reach_the_conversion() {
+    let (mut h, input, dir) = memory_harness(1);
+    h.get_by_label("Advanced").click_accesskit();
     h.run_steps(8);
-    let no_cli = h.state().memory_estimate_for_test(&input).unwrap();
-    assert!(no_cli.peak_bytes < checked.peak_bytes);
-    assert!(h
-        .get_by_label("Check in SolidCraft")
-        .accesskit_node()
-        .is_disabled());
-    h.get_by_label("SolidCraft CLI not found.");
-    assert_eq!(h.state().memory_estimate_for_test(&input), Some(no_cli));
-
-    // The fitted Fusion conversion fits 7 GB; its requested check does not.
-    let (h, _, _dir) = memory_harness(760.0, 900.0, 7_000_000_000);
-    assert!(h
-        .query_by_label(
-            "The check is skipped when it cannot fit after reading; conversion still continues."
-        )
-        .is_some());
-
-    let (mut h, _, _dir) = memory_harness(760.0, 900.0, 4_800_000_000);
-    assert!(
-        h.query_all_by_label("Standard leaves feature history out to fit in free memory.")
-            .count()
-            >= 1
-    );
-    // Geometry checking is still requested after Standard omits history.
-    assert!(h
-        .query_by_label(
-            "The check is skipped when it cannot fit after reading; conversion still continues."
-        )
-        .is_some());
-    // Full keeps history even when it cannot fit; Fast fits this budget.
-    use egui_kittest::kittest::NodeT;
-    h.query_all_by_value("Standard")
-        .find(|node| !node.accesskit_node().is_disabled())
-        .unwrap()
-        .click_accesskit();
-    h.run_steps(4);
-    click_memory(&mut h, "Full");
-    h.run_steps(20);
-    assert!(
-        h.query_all_by_label_contains(
-            "Change the preset or checkboxes: reading and converting alone will not fit"
-        )
-        .count()
-            > 0
-    );
-    h.query_all_by_value("Full")
-        .find(|node| !node.accesskit_node().is_disabled())
-        .unwrap()
-        .click_accesskit();
-    for _ in 0..60 {
-        h.step();
-        if h.query_all_by_label("Fast")
-            .any(|node| !node.accesskit_node().is_disabled())
-        {
-            break;
-        }
+    for label in ["Sketches", "Joints", "Feature history"] {
+        h.get_by_label(label).click_accesskit();
+        h.run_steps(4);
     }
-    click_memory(&mut h, "Fast");
-    h.run_steps(8);
-    assert_eq!(
-        h.query_all_by_label_contains(
-            "Change the preset or checkboxes: reading and converting alone will not fit"
-        )
-        .count(),
-        0
-    );
-}
-
-#[test]
-#[cfg(feature = "test-support")]
-fn memory_choices_reach_the_conversion() {
-    let (mut h, input, dir) = memory_harness(760.0, 900.0, 1);
-    std::fs::copy(fixture("generated_unit_cube.f3d"), &input).unwrap();
-    click_memory(&mut h, "Check in SolidCraft");
-    h.run_steps(8);
-    click_memory(&mut h, "Sketches");
-    click_memory(&mut h, "Joints");
-    click_memory(&mut h, "Feature history");
-    h.run_steps(8);
-    click_memory(&mut h, "Convert with these choices");
-    h.step();
-    wait_for_conversion(&mut h);
+    convert(&mut h);
     let report = h.state().rows().first().unwrap().report.as_ref().unwrap();
-    assert_eq!(
-        report.pointer("/choices/history"),
-        Some(&serde_json::json!(false))
-    );
-    assert_eq!(
-        report.pointer("/choices/sketches"),
-        Some(&serde_json::json!(false))
-    );
-    assert_eq!(
-        report.pointer("/choices/joints"),
-        Some(&serde_json::json!(false))
-    );
+    for choice in ["history", "sketches", "joints"] {
+        assert_eq!(
+            report.pointer(&format!("/choices/{choice}")),
+            Some(&serde_json::json!(false))
+        );
+    }
     let choices = dutchman::choices::Choices {
         history: false,
         sketches: false,
@@ -2315,77 +2059,6 @@ fn memory_choices_reach_the_conversion() {
         Some(&serde_json::json!(unchecked.peak_bytes))
     );
     assert!(dir.path().join("out").exists());
-}
-
-#[test]
-#[ignore = "renders real GPU screenshots"]
-#[cfg(feature = "test-support")]
-fn memory_dialog_screenshots() {
-    let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
-    std::fs::create_dir_all(&dir).unwrap();
-    let mut index = String::from(
-        "# Memory choices\n\nSynthetic file, Day and Night, wide and minimum width.\n\n",
-    );
-    for (theme, name) in [
-        (ThemePreference::Light, "day"),
-        (ThemePreference::Dark, "night"),
-    ] {
-        for (width, height, state) in [
-            (1100.0, 800.0, "07-memory-dialog-wide"),
-            (520.0, 800.0, "07-memory-dialog-520"),
-            (520.0, 420.0, "07-memory-dialog-short"),
-        ] {
-            let (mut h, _, _dir) = memory_harness(width, height, 4_000_000_000);
-            h.ctx.set_theme(theme);
-            h.run_steps(8);
-            if height >= 500.0 {
-                let reading = h.get_by_label_contains("Reading: ").rect();
-                let conversion = h.get_by_label_contains("Converting: ").rect();
-                let check = h.get_by_label_contains("Extra for check: ").rect();
-                let total = h.get_by_label_contains("Total time:").rect();
-                let read = h.get_by_label("Read the file").rect();
-                let convert = h.get_by_label("Convert to SolidCraft").rect();
-                assert!(read.bottom() < reading.top() && reading.bottom() < convert.top());
-                assert!(convert.bottom() < conversion.top());
-                assert!(conversion.bottom() < check.top() && check.bottom() < total.top());
-                for rect in [reading, conversion, check, total] {
-                    assert!(rect.left() >= 16.0 && rect.right() <= width - 16.0);
-                }
-                for label in ["Feature history", "Sketches", "Joints"] {
-                    assert!(h.get_by_label(label).rect().top() > reading.bottom());
-                }
-            }
-            let convert = h.get_by_label("Convert with these choices").rect();
-            let cancel = h.get_by_label("Cancel").rect();
-            assert!(convert.left() >= 0.0 && cancel.right() <= width && convert.bottom() <= height);
-            assert_eq!(convert.center().y, cancel.center().y);
-            shot(
-                &mut h,
-                &dir,
-                &mut index,
-                state,
-                name,
-                "Live memory choices; buttons remain visible.",
-            );
-            if height < 500.0 {
-                h.get_by_label_contains(
-                    "Change the preset or checkboxes: reading and converting alone will not fit",
-                )
-                .scroll_to_me();
-                h.run_steps(8);
-                assert!(h.get_by_label("Convert with these choices").rect().bottom() <= height);
-                shot(
-                    &mut h,
-                    &dir,
-                    &mut index,
-                    "07-memory-dialog-short-scrolled",
-                    name,
-                    "Short window scrolled to the total; buttons stay visible.",
-                );
-            }
-        }
-    }
-    std::fs::write(dir.join("index.md"), index).unwrap();
 }
 
 #[test]

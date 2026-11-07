@@ -313,7 +313,7 @@ fn dry_run_estimates_without_decoding_or_writing_and_narrows_presets() {
 }
 
 #[test]
-fn memory_refusals_and_dry_run_share_the_estimate_without_writing() {
+fn a_dry_run_reports_the_estimate_and_conversion_does_not_refuse_on_it() {
     let Some(available) = dutchman::choices::available_memory() else {
         return;
     };
@@ -324,7 +324,6 @@ fn memory_refusals_and_dry_run_share_the_estimate_without_writing() {
         .set_len(available.saturating_add(2_000_000_000))
         .unwrap();
     let output = dir.path().join("never-written.solidcraft");
-    let out_dir = dir.path().join("never-created");
     let mut client = Client::start();
     let preview = client.call(
         "convert",
@@ -332,29 +331,17 @@ fn memory_refusals_and_dry_run_share_the_estimate_without_writing() {
     );
     assert_eq!(preview["isError"], false);
     assert_eq!(preview["structuredContent"]["fits"], false);
+    // An estimate doesn't refuse; the decoder's own file-size guard answers here.
     let converted = client.call(
         "convert",
         json!({"input": input, "output": output, "preset": "full"}),
     );
-    let batch = client.call(
-        "convert_all",
-        json!({"inputs": [input], "out_dir": out_dir, "preset": "full"}),
-    );
-    for reply in [&converted, &batch] {
-        assert_eq!(reply["isError"], true, "{reply}");
-        let report = &reply["structuredContent"];
-        assert!(report["error"]["message"]
-            .as_str()
-            .unwrap()
-            .starts_with("this conversion needs about "));
-        assert_eq!(report["estimate"], preview["structuredContent"]["estimate"]);
-        assert_eq!(report["choices"], preview["structuredContent"]["choices"]);
-    }
-    assert_eq!(
-        batch["structuredContent"]["results"][0]["error"],
-        batch["structuredContent"]["error"]
-    );
-    assert!(!output.exists() && !out_dir.exists());
+    assert_eq!(converted["isError"], true, "{converted}");
+    assert!(!converted["structuredContent"]["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("needs about"));
+    assert!(!output.exists());
     client.finish();
 }
 

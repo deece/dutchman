@@ -5,7 +5,7 @@
 | Preset | SolidCraft output |
 |---|---|
 | `fast` | Geometry at the stored placements; no history, reference sketches, or joints. No memory refusal. |
-| `standard` (default) | History, sketches, and joints. History is left out when its estimate exceeds free memory and the history-free estimate fits. |
+| `standard` (default) | History, sketches, and joints. History is left out when what the read really took leaves no room for it. |
 | `full` | History, sketches, and joints whenever they map; history is never left out to fit memory. |
 
 Parameters that map are retained with history or reference sketches; Fast leaves them out.
@@ -45,8 +45,14 @@ History on/off have independent conversion and checking fits. For each stage, hi
 memory and time use the greater of the history-on and history-off fits: retaining history
 cannot reduce either estimate. Combined models for other formats enforce the same minimum,
 including platform-specific timing. Tiny parts can consequently have equal history-on/off
-memory estimates; Standard only omits history when the history estimate exceeds free memory
-and the history-free estimate fits. Geometry-only conversion also checks its converted shape
+memory estimates. Estimates never stop a conversion or change what it keeps: an estimate comes
+from a file's size, which can't reveal the geometry, and can be far off in either direction.
+Memory is measured instead. A running conversion stops with a message when the computer has
+less than 1 GB free while the conversion holds at least 1 GB, including what it started.
+`--no-memory-check` turns that off.
+
+macOS compresses and swaps rather than running out, so on a Mac a large design can use far more than the computer's memory and convert slowly with heavy swapping: a 12.5 GB conversion finishes on an 8 GB Mac. A Mac also stops when the system reports critical memory pressure or the boot volume has under 2 GB free, again only when the conversion holds at least 1 GB. Once a design is read, Standard leaves history out if what
+the read really took leaves no room for it, and the other presets stop. Geometry-only conversion also checks its converted shape
 unless `--no-verify` is selected.
 
 Memory is `fixed MB + content bytes × B/B + member count × MB/member` after converting
@@ -151,42 +157,32 @@ The memory check runs before decoding, using only the pre-read estimate. Standar
 leaves history out for any design whose history estimate exceeds free memory when
 its history-free estimate fits. That retention decision stays fixed through conversion.
 After reading, a conversion can also stop when the resident design leaves too little
-memory for mapping and writing. Full refuses before decode when its estimate
-exceeds free memory. When Standard removes history, one Info line under `history` says:
+memory for mapping and writing. When Standard leaves history out, one Info line under `history`
+says so, and the other presets stop with a message saying what was measured. An estimate above
+free memory never stops a conversion: an Info line under `memory` records it, the command line
+prints it, and the desktop shows it before starting.
+
+If memory really runs low, the conversion stops with exit 2 and this message:
 
 ```text
-feature history left out: this conversion needs about N GB with history and M GB are free; use the full preset to keep it
+stopped before this computer ran out of memory: N GB left free while this conversion held M GB. Close other programs and try again, or use --preset fast
 ```
 
-If the selected choices exceed free memory, an interactive terminal offers the next
-lighter preset and asks `y/N`; only `y` or `yes` switches. Without a terminal, with
-`--yes`, or with `--json`, the conversion refuses with exit 2 and this message:
-
-```text
-this conversion needs about N GB and M GB are free; try --preset <lighter> (or --no-memory-check to run anyway)
-```
-
-`--yes` means no interactive preset switch. It does not bypass the memory guard.
-`--no-memory-check` bypasses the refusal, Standard's automatic history budget, and
+`--no-memory-check` turns off that stop, Standard's automatic history budget, and
 history-check skipping.
 Existing decoder input limits and batch worker memory limits still apply. Batch
 conversion checks each input; changing presets or narrowing switches also prevents a
 journal from reusing a result made with different choices.
 
-The desktop memory dialog uses the same preset descriptions as its main selector and lets
-you narrow these choices before proceeding. Its total and the file row include checking only
-when a SolidCraft CLI was found and checking is on. They show Standard's reduced estimate
-when history is left out to fit. Checkbox costs come from the estimator; choices without a
-separate model show **no separate estimate**. See [the desktop guide](desktop.md).
+The desktop preset selector uses the same preset descriptions. See [the desktop guide](desktop.md).
 
 ## Checking after reading
 
 The presets, narrowing switches, and memory guard are described above; `dutchman convert --help` lists them too.
 
 Checking stays enabled by default, independently of retention. It checks imported geometry
-when feature history is off. The peak estimate includes the requested check. Conversion
-preflight and Standard’s history budget compare conversion-only memory with free memory;
-selecting one part compares the calibrated read figure because the whole file must be read.
+when feature history is off. The peak estimate includes the requested check. The note about an
+estimate above free memory compares conversion-only memory with free memory.
 
 The runtime guard uses the same calibrated extra check figure shown by the desktop. It
 does not multiply the memory already held by the decoded model. Free memory is measured

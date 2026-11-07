@@ -1520,6 +1520,23 @@ fn run_script(
 }
 
 /// Starts the CLI, retrying while the system says it is busy being written.
+/// Keeps a console program this one starts from opening a window of its own, as it does when
+/// this one has no console: the desktop app, and the children it converts in. Attached to a
+/// terminal it shares that one, where Ctrl+C reaches it.
+pub fn hide_console(command: &mut Command) {
+    #[cfg(windows)]
+    {
+        use std::io::IsTerminal;
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        if !std::io::stderr().is_terminal() {
+            command.creation_flags(CREATE_NO_WINDOW);
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = command;
+}
+
 pub(crate) fn spawn(
     cli: &Path,
     configure: impl Fn(&mut Command),
@@ -1527,6 +1544,7 @@ pub(crate) fn spawn(
     let mut tries = 0;
     loop {
         let mut command = Command::new(cli);
+        hide_console(&mut command);
         configure(&mut command);
         match command.spawn() {
             Err(err)

@@ -349,7 +349,9 @@ impl ConvertOptions {
 #[derive(Clone, Debug)]
 pub struct PreparedWriter {
     writer: OutputWriter,
-    history_note: Option<String>,
+    /// Geometry only, for Standard when what the read really took leaves no room for history.
+    without_history: Option<OutputWriter>,
+    memory_note: Option<String>,
     solidcraft: Option<Value>,
     /// Whether to stop, once the design is read, when the machine cannot finish converting it.
     memory_stop: bool,
@@ -379,11 +381,19 @@ impl Writer for PreparedWriter {
         };
         if self.memory_stop {
             if let Some(message) = stop::check(model, held, available) {
-                return Err(Error::MemoryBudget(message));
+                let Some(writer) = &self.without_history else {
+                    return Err(Error::MemoryBudget(message));
+                };
+                report.push(
+                    dutchman_core::Severity::Info,
+                    "history",
+                    format!("feature history left out: {message}; use the full preset to keep it"),
+                );
+                return writer.write(model, out, report);
             }
         }
-        if let Some(note) = &self.history_note {
-            report.push(dutchman_core::Severity::Info, "history", note.clone());
+        if let Some(note) = &self.memory_note {
+            report.push(dutchman_core::Severity::Info, "memory", note.clone());
         }
         if self.check_history_memory {
             if let (OutputWriter::SolidCraft(writer), Some(needed)) =
@@ -437,26 +447,11 @@ fn measured_memory() -> (Option<u64>, Option<u64>) {
 impl ConvertOptions {
     /// Prepare the history choice from the pre-read estimate, without decoding.
     pub fn writer_for_input(&self, input: &Path) -> PreparedWriter {
-        self.prepare_writer(input, choices::available_memory())
+        self.prepare_writer(input, None)
     }
 
-    fn prepare_writer(&self, input: &Path, available: Option<u64>) -> PreparedWriter {
+    fn prepare_writer(&self, input: &Path, memory_note: Option<String>) -> PreparedWriter {
         let mut options = self.clone();
-        let mut history_note = None;
-        if !self.no_memory_check && self.choices().history_within_budget && self.choices().history {
-            if let (Some(estimate), Some(available)) = (
-                choices::conversion_estimate(input, &self.choices(), self),
-                available,
-            ) {
-                if estimate.peak_bytes > available {
-                    options.import_only = true;
-                    history_note = Some(format!(
-                        "feature history left out: this conversion needs about {:.1} GB with history and {:.1} GB are free; use the full preset to keep it",
-                        choices::gb(estimate.peak_bytes), choices::gb(available)
-                    ));
-                }
-            }
-        }
         let solidcraft = json::solidcraft_info(self);
         if let Some(target) = solidcraft
             .as_ref()
@@ -465,9 +460,25 @@ impl ConvertOptions {
         {
             options.solidcraft_version = target.parse().ok();
         }
+        let memory_stop = !self.no_memory_check
+            && self.preset != choices::Preset::Fast
+            && self.part.is_none()
+            && self.diagnostics_threads <= 1
+            && self.to == OutputFormat::Solidcraft;
+        let without_history = (memory_stop
+            && self.choices().history
+            && self.choices().history_within_budget)
+            .then(|| {
+                ConvertOptions {
+                    import_only: true,
+                    ..options.clone()
+                }
+                .output_writer()
+            });
         PreparedWriter {
             writer: options.output_writer(),
-            history_note,
+            without_history,
+            memory_note,
             solidcraft,
             history_check_bytes: (!self.no_memory_check
                 && !self.no_verify
@@ -477,25 +488,17 @@ impl ConvertOptions {
             check_history_memory: !self.no_memory_check
                 && !self.no_verify
                 && self.to == OutputFormat::Solidcraft,
-            memory_stop: !self.no_memory_check
-                && self.preset != choices::Preset::Fast
-                && self.part.is_none()
-                && self.diagnostics_threads <= 1
-                && self.to == OutputFormat::Solidcraft,
+            memory_stop,
         }
     }
 
-    fn preflight(&self, input: &Path, available: Option<u64>) -> Result<PreparedWriter, Value> {
-        if self.part.is_some() {
-            if let Some(message) = choices::part_memory_refusal(input, self, available) {
-                return Err(json::memory_failure(json::CONVERT, input, self, &message));
-            }
-            return Ok(self.prepare_writer(input, available));
-        }
-        if let Some(message) = choices::memory_check_with(input, self, available).refusal() {
-            return Err(json::memory_failure(json::CONVERT, input, self, &message));
-        }
-        Ok(self.prepare_writer(input, available))
+    fn preflight(&self, input: &Path, available: Option<u64>) -> PreparedWriter {
+        let note = if self.part.is_some() {
+            None
+        } else {
+            choices::memory_check_with(input, self, available).warning()
+        };
+        self.prepare_writer(input, note)
     }
 }
 
@@ -553,12 +556,8 @@ fn convert_prepared(
     replace: bool,
     search: &PartSearch,
     progress: &dutchman_core::Progress<'_>,
-    prepared: Result<PreparedWriter, Value>,
+    writer: PreparedWriter,
 ) -> Value {
-    let writer = match prepared {
-        Ok(writer) => writer,
-        Err(report) => return report,
-    };
     let converted = match options.part {
         Some(part) => dutchman_core::convert_part_with_progress(
             input, output, &writer, replace, search, part, progress,
@@ -812,186 +811,22 @@ mod option_tests {
     }
 
     #[test]
-    fn configured_batch_writers_apply_the_memory_guard_before_creating_output() {
-        let Some(available) = choices::available_memory() else {
-            return;
-        };
-        let dir = tempfile::tempdir().unwrap();
-        let input = dir.path().join("synthetic.step");
-        // Just large enough that the estimate exceeds free memory by 2 GB. A file as large as
-        // free memory fills a Windows runner's disk: NTFS allocates what set_len extends.
-        let estimate_at = |len: u64| {
-            std::fs::File::create(&input).unwrap().set_len(len).unwrap();
-            choices::estimate(&input, &choices::Choices::of(choices::Preset::Full))
-                .unwrap()
-                .peak_bytes
-        };
-        let (small, large) = (estimate_at(1 << 20), estimate_at(2 << 20));
-        let per_mib = large.saturating_sub(small).max(1);
-        let needed = available
-            .saturating_add(2_000_000_000)
-            .saturating_sub(small);
-        let len = (needed / per_mib + 2) << 20;
-        estimate_at(len);
-        let folder = dir.path().join("never-created");
-        let job = batch::Job {
-            project_files: None,
-            fallback: None,
-            input,
-            output: folder.join("synthetic.solidcraft"),
-            replace: true,
-            search: PartSearch::default(),
-        };
-        let options = ConvertOptions {
-            preset: choices::Preset::Full,
-            ..Default::default()
-        };
-        let result = std::sync::Mutex::new(None);
-        batch::run_each(
-            &[job],
-            &options.writer(),
-            1,
-            &std::sync::atomic::AtomicBool::new(false),
-            |event| {
-                if let batch::Event::Finished(_, report) = event {
-                    *result.lock().unwrap() = Some(report);
-                }
-            },
-        );
-        let report = result.into_inner().unwrap().unwrap();
-        assert_eq!(report["ok"], false);
-        assert_eq!(report["choices"]["preset"], "full");
-        assert!(report["error"]["message"]
-            .as_str()
-            .unwrap()
-            .starts_with("this conversion needs about "));
-        assert!(!folder.exists());
-    }
-
-    #[test]
-    fn standard_leaves_history_out_for_single_parts_before_decode() {
-        let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../dutchman-core/tests/fixtures/synthetic_cube.ipt");
-        let dir = tempfile::tempdir().unwrap();
-        let input = dir.path().join("cube.ipt");
-        std::fs::copy(&fixture, &input).unwrap();
-        // The 5 KiB cube has equal history-on/off memory estimates after flooring.
-        // Unused trailing sectors raise its metadata size above the 40,000-byte
-        // crossover while preserving the synthetic part for the writer below.
-        std::fs::OpenOptions::new()
-            .write(true)
-            .open(&input)
-            .unwrap()
-            .set_len(64 << 10)
-            .unwrap();
-        let options = ConvertOptions {
-            no_verify: true,
-            ..Default::default()
-        };
-        let mut reduced = options.choices();
-        reduced.history = false;
-        let tiny = choices::estimate(&fixture, &reduced).unwrap().peak_bytes;
-        assert_eq!(
-            choices::estimate(&fixture, &options.choices())
-                .unwrap()
-                .peak_bytes,
-            tiny
-        );
-        assert!(options
-            .preflight(&fixture, Some(tiny))
-            .unwrap()
-            .history_note
-            .is_none());
-        let without = choices::estimate(&input, &reduced).unwrap().peak_bytes;
-        let with = choices::estimate(&input, &options.choices())
-            .unwrap()
-            .peak_bytes;
-        assert!(with > without);
-        let available = without + (with - without) / 2;
-        let writer = options.preflight(&input, Some(available)).unwrap();
-        assert!(writer.history_note.is_some());
-        let fusion_fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../dutchman-core/tests/fixtures/generated_unit_cube.f3d");
-        let fusion = dir.path().join("cube.f3d");
-        std::fs::copy(&fusion_fixture, &fusion).unwrap();
-        // The tiny Fusion cube is also below the conversion-cost crossover.
-        // A synthetic unused member makes the history budget distinguishable.
-        let file = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(&fusion)
-            .unwrap();
-        let mut archive = zip::ZipWriter::new_append(file).unwrap();
-        archive
-            .start_file(
-                "memory-budget.bin",
-                zip::write::SimpleFileOptions::default(),
-            )
-            .unwrap();
-        std::io::Write::write_all(&mut archive, &vec![0; 1 << 20]).unwrap();
-        archive.finish().unwrap();
-        let fusion_without = choices::estimate(&fusion, &reduced).unwrap().peak_bytes;
-        let fusion_with = choices::estimate(&fusion, &options.choices())
-            .unwrap()
-            .peak_bytes;
-        assert!(fusion_with > fusion_without);
-        let fusion_available = fusion_without + (fusion_with - fusion_without) / 2;
-        assert!(options
-            .preflight(&fusion, Some(fusion_available))
-            .unwrap()
-            .history_note
-            .is_some());
-        let part =
-            dutchman_core::read(Format::InventorPart, &input, &mut Report::default()).unwrap();
-        assert!(part.assembly.is_none());
-        let mut report = Report::default();
-        writer.write(&part, &mut Vec::new(), &mut report).unwrap();
-        let reasons: Vec<_> = report
-            .losses()
-            .iter()
-            .filter(|loss| {
-                loss.subject == "history" && loss.detail.starts_with("feature history left out:")
-            })
-            .collect();
-        assert_eq!(reasons.len(), 1);
-        assert_eq!(reasons[0].severity, dutchman_core::Severity::Info);
-        let mut json = convert_success(&input, Path::new("test.solidcraft"), &report);
-        json::conversion_choices(&mut json, &input, &options);
-        assert_eq!(json["choices"]["history"], false);
-    }
-
-    #[test]
-    fn memory_refusal_never_decodes_or_progresses_past_input() {
+    fn standard_can_fall_back_to_geometry_and_the_others_cannot() {
         let dir = tempfile::tempdir().unwrap();
         let input = dir.path().join("synthetic.ipt");
-        // Deliberately not a CAD file: reaching decode would give a different error.
         std::fs::write(&input, b"synthetic").unwrap();
-        for preset in [choices::Preset::Standard, choices::Preset::Full] {
-            let options = ConvertOptions {
+        let writer = |preset| {
+            ConvertOptions {
                 preset,
                 ..Default::default()
-            };
-            let events = std::sync::Mutex::new(Vec::new());
-            let callback = |event| events.lock().unwrap().push(event);
-            let progress = dutchman_core::Progress::new(&callback);
-            let output = dir.path().join("never-written.solidcraft");
-            let report = convert_prepared(
-                &input,
-                &output,
-                &options,
-                false,
-                &PartSearch::default(),
-                &progress,
-                options.preflight(&input, Some(0)),
-            );
-            assert_eq!(report["ok"], false);
-            assert_eq!(report["error"]["stage"], "input");
-            assert!(report["error"]["message"]
-                .as_str()
-                .unwrap()
-                .starts_with("this conversion needs about "));
-            assert!(events.lock().unwrap().is_empty());
-            assert!(!output.exists());
-        }
+            }
+            .preflight(&input, None)
+        };
+        let standard = writer(choices::Preset::Standard);
+        assert!(standard.memory_stop && standard.without_history.is_some());
+        let full = writer(choices::Preset::Full);
+        assert!(full.memory_stop && full.without_history.is_none());
+        let fast = writer(choices::Preset::Fast);
+        assert!(!fast.memory_stop && fast.without_history.is_none());
     }
 }

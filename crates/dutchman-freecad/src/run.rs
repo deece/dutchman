@@ -30,6 +30,7 @@ impl FreeCadCommand {
     /// sees them. A Flatpak sandbox is given `share` (the macro's folder) and nothing else new.
     pub(crate) fn process(&self, share: &Path) -> Command {
         let mut process = Command::new(&self.program);
+        dutchman_solidcraft::hide_console(&mut process);
         process.args(&self.args);
         if let Some(app) = &self.flatpak {
             let mut option = OsString::from("--filesystem=");
@@ -359,7 +360,10 @@ fn stop(child: &mut std::process::Child) {
     }
     #[cfg(windows)]
     {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         let _ = Command::new("taskkill")
+            .creation_flags(CREATE_NO_WINDOW)
             .args(["/F", "/T", "/PID", &child.id().to_string()])
             .stdin(Stdio::null())
             .stdout(Stdio::null())

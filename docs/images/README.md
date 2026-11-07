@@ -14,13 +14,3 @@ real SolidCraft CLI to check history. PNGs use the image crate's best compressio
 To regenerate on Linux with a GPU, set `SOLIDCRAFT_CLI` to a released CLI and
 `DUTCHMAN_GUI_SCREENSHOTS` to an absolute output folder, then run the ignored
 `readme_screenshots` test with the `test-support` feature.
-
-`readme-memory-day.png` shows the real memory choices dialog with a synthetic file name.
-It is rendered by the ignored `memory_dialog_screenshots` test in the same harness, which
-also writes Day and Night views at 1100 and 520 pixels wide, plus short-window views.
-Read the file has no choices. Convert to SolidCraft holds the choices and the combined
-reading-and-converting figure, since no measured split is available yet. A small history-check
-row shows its extra cost. The total adds all time and memory held across stages, followed by
-free memory and guidance. Preset help appears on hover or keyboard focus, and buttons remain
-visible in short windows.
-The sizes come from a synthetic sparse Inventor file; no CAD design is used for this image.

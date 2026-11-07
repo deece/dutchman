@@ -171,13 +171,14 @@ pub enum MemoryCheck {
 }
 
 impl MemoryCheck {
-    /// The same refusal text for every front end.
-    pub fn refusal(self) -> Option<String> {
+    /// The same note for every front end. An estimate from a file's size does not stop a
+    /// conversion: memory is measured while it runs.
+    pub fn warning(self) -> Option<String> {
         match self {
             Self::Ok(_) => None,
-            Self::TooBig { conversion, available, lighter, .. } => Some(format!(
-                "this conversion needs about {:.1} GB and {:.1} GB are free; try --preset {} (or --no-memory-check to run anyway)",
-                gb(conversion.peak_bytes), gb(available), lighter.map_or("fast", Preset::name)
+            Self::TooBig { conversion, available, .. } => Some(format!(
+                "the estimate of about {:.1} GB is above the {:.1} GB free. Estimates from a file's size can be far off, so the conversion ran, watching memory",
+                gb(conversion.peak_bytes), gb(available)
             )),
         }
     }
@@ -203,7 +204,7 @@ pub(crate) fn memory_check_with(
     options: &crate::ConvertOptions,
     available: Option<u64>,
 ) -> MemoryCheck {
-    let mut choices = options.choices();
+    let choices = options.choices();
     let estimate = estimate_with_options(input, &choices, options);
     if options.no_memory_check || options.preset == Preset::Fast {
         return MemoryCheck::Ok(estimate);
@@ -220,53 +221,12 @@ pub(crate) fn memory_check_with(
     if conversion.peak_bytes <= available {
         return MemoryCheck::Ok(estimate);
     }
-    if choices.history && choices.history_within_budget {
-        let reduced = estimate_without_history(input, choices, options);
-        if reduced.is_some_and(|e| e.peak_bytes <= available) {
-            choices.history = false;
-            return MemoryCheck::Ok(estimate_with_options(input, &choices, options));
-        }
-    }
     MemoryCheck::TooBig {
         estimate: full,
         conversion,
         available,
         lighter: options.preset.lighter(),
     }
-}
-
-/// The refusal for converting one part of a design, if this machine cannot even read the
-/// whole design: only the memory the read itself needs is checked, since only the part is
-/// then mapped and written.
-pub(crate) fn part_memory_refusal(
-    input: &Path,
-    options: &crate::ConvertOptions,
-    available: Option<u64>,
-) -> Option<String> {
-    if options.no_memory_check || options.preset == Preset::Fast {
-        return None;
-    }
-    let available = available?;
-    let read = read_sizes(input)
-        .and_then(|sizes| read_convert_split(sizes, &options.choices()))
-        .map(|split| split.read)
-        .or_else(|| estimate_without_history(input, options.choices(), options))?;
-    (read.peak_bytes > available).then(|| {
-        format!(
-            "this conversion needs about {:.1} GB just to read the whole design and {:.1} GB are free; free some memory, or pass --no-memory-check to try anyway",
-            gb(read.peak_bytes),
-            gb(available)
-        )
-    })
-}
-
-fn estimate_without_history(
-    input: &Path,
-    mut choices: Choices,
-    options: &crate::ConvertOptions,
-) -> Option<Estimate> {
-    choices.history = false;
-    conversion_estimate(input, &choices, options)
 }
 
 /// Conversion-only preflight. A history check that cannot fit is skipped after reading;
@@ -1143,7 +1103,6 @@ pub struct DesktopEstimate {
     /// Extra memory and time caused by checking, when enabled and available.
     pub check: Option<Estimate>,
     pub total: Estimate,
-    pub history_omitted: bool,
 }
 
 /// Desktop totals add the durations as displayed for each stage. A sub-minute
@@ -1193,18 +1152,13 @@ fn read_convert_split(sizes: Sizes, choices: &Choices) -> Option<ReadConvertSpli
     }
 }
 
-/// Desktop estimate and automatic retention note, using conversion-only memory for Standard.
+/// Desktop estimate, including checking when a CLI was found.
 pub fn desktop_estimate(
     sizes: Sizes,
     options: &crate::ConvertOptions,
     checker_found: bool,
-    available: Option<u64>,
-) -> (Option<Estimate>, bool) {
-    let parts = desktop_estimate_parts(sizes, options, checker_found, available);
-    (
-        parts.map(|parts| parts.total),
-        parts.is_some_and(|parts| parts.history_omitted),
-    )
+) -> Option<Estimate> {
+    desktop_estimate_parts(sizes, options, checker_found).map(|parts| parts.total)
 }
 
 /// Split the same total into conversion and extra checking costs. Checking is
@@ -1214,35 +1168,14 @@ pub fn desktop_estimate_parts(
     sizes: Sizes,
     options: &crate::ConvertOptions,
     checker_found: bool,
-    available: Option<u64>,
 ) -> Option<DesktopEstimate> {
     let mut options = options.clone();
     options.no_verify |= !checker_found;
-    let mut choices = options.choices();
+    let choices = options.choices();
     let mut conversion_options = options.clone();
     conversion_options.no_verify = true;
     let conversion = estimate_from_sizes(sizes, &choices, &conversion_options);
-    let mut reduced = false;
-    if !options.no_memory_check && choices.history && choices.history_within_budget {
-        if let (Some(full), Some(free)) = (conversion, available) {
-            if full.peak_bytes > free {
-                let mut without = choices;
-                without.history = false;
-                if estimate_from_sizes(sizes, &without, &conversion_options)
-                    .is_some_and(|e| e.peak_bytes <= free)
-                {
-                    choices = without;
-                    reduced = true;
-                }
-            }
-        }
-    }
-    // Recalculate the measured split too when Standard removes history.
-    let conversion = if reduced {
-        estimate_from_sizes(sizes, &choices, &conversion_options)?
-    } else {
-        conversion?
-    };
+    let conversion = conversion?;
     let split = read_convert_split(sizes, &choices);
     let check = (!options.no_verify && options.to == crate::OutputFormat::Solidcraft)
         .then(|| check_cost(sizes, &choices, conversion));
@@ -1252,7 +1185,6 @@ pub fn desktop_estimate_parts(
         conversion,
         check,
         total,
-        history_omitted: reduced,
     })
 }
 
@@ -1324,14 +1256,13 @@ mod tests {
                             no_verify,
                             ..Default::default()
                         };
-                        let history_parts =
-                            desktop_estimate_parts(sizes, &options, true, None).unwrap();
+                        let history_parts = desktop_estimate_parts(sizes, &options, true).unwrap();
                         let geometry_options = ConvertOptions {
                             import_only: true,
                             ..options.clone()
                         };
                         let geometry_parts =
-                            desktop_estimate_parts(sizes, &geometry_options, true, None).unwrap();
+                            desktop_estimate_parts(sizes, &geometry_options, true).unwrap();
                         assert_at_least(history_parts.total, geometry_parts.total, &context);
                         assert_eq!(
                             Some(history_parts.total),
@@ -1391,7 +1322,7 @@ mod tests {
                     threads: 4,
                     ..Default::default()
                 };
-                let parts = desktop_estimate_parts(sizes, &options, true, None).unwrap();
+                let parts = desktop_estimate_parts(sizes, &options, true).unwrap();
                 let split = parts.split.unwrap();
                 let check = parts.check.unwrap();
                 assert_eq!(split.read.peak_bytes, read_bytes);
@@ -1434,7 +1365,7 @@ mod tests {
                     bytes,
                     members: 20,
                 };
-                let parts = desktop_estimate_parts(sizes, &options, true, None).unwrap();
+                let parts = desktop_estimate_parts(sizes, &options, true).unwrap();
                 assert_eq!(parts.check.unwrap().peak_bytes, expected);
             }
         }
@@ -1445,49 +1376,12 @@ mod tests {
             members: u64::MAX,
         };
         assert_eq!(
-            desktop_estimate_parts(sizes, &options, true, None)
+            desktop_estimate_parts(sizes, &options, true)
                 .unwrap()
                 .total
                 .peak_bytes,
             u64::MAX
         );
-    }
-
-    #[test]
-    fn standard_recalculates_the_conversion_and_geometry_check_after_omitting_history() {
-        let sizes = Sizes {
-            format: Format::FusionArchive,
-            bytes: 100 << 20,
-            members: 100,
-        };
-        let parts =
-            desktop_estimate_parts(sizes, &ConvertOptions::default(), true, Some(3_000_000_000))
-                .unwrap();
-        assert!(parts.history_omitted);
-        assert_eq!(parts.split.unwrap().read.peak_bytes, 782_688_320);
-        assert_eq!(parts.split.unwrap().convert.peak_bytes, 1_584_864_000);
-        assert_eq!(parts.check.unwrap().peak_bytes, 765_000_000);
-        assert_eq!(parts.total.peak_bytes, 3_132_552_320);
-        assert!(parts.conversion.peak_bytes < 3_000_000_000);
-    }
-
-    #[test]
-    fn selecting_one_part_budgets_only_the_calibrated_read() {
-        let dir = tempfile::tempdir().unwrap();
-        let input = dir.path().join("synthetic.ipt");
-        std::fs::File::create(&input)
-            .unwrap()
-            .set_len(1 << 20)
-            .unwrap();
-        let options = ConvertOptions {
-            preset: Preset::Full,
-            ..Default::default()
-        };
-        // Conversion work after decode must not be described as "just to read".
-        assert!(part_memory_refusal(&input, &options, Some(35_971_520)).is_none());
-        assert!(part_memory_refusal(&input, &options, Some(35_971_519))
-            .unwrap()
-            .contains("just to read the whole design"));
     }
 
     #[test]
@@ -1504,8 +1398,8 @@ mod tests {
             no_verify: true,
             ..options.clone()
         };
-        let checked = desktop_estimate_parts(sizes, &options, true, None).unwrap();
-        let unchecked = desktop_estimate_parts(sizes, &unchecked, true, None).unwrap();
+        let checked = desktop_estimate_parts(sizes, &options, true).unwrap();
+        let unchecked = desktop_estimate_parts(sizes, &unchecked, true).unwrap();
         assert!(checked.check.is_some());
         assert!(unchecked.check.is_none());
         assert!(checked.total.peak_bytes > unchecked.total.peak_bytes);
@@ -1698,8 +1592,8 @@ mod tests {
             memory_check_with(&input, &options, Some(conversion.peak_bytes)),
             MemoryCheck::Ok(Some(checked))
         );
-        let prepared = options.prepare_writer(&input, Some(conversion.peak_bytes));
-        assert!(prepared.history_note.is_none());
+        let prepared = options.preflight(&input, Some(conversion.peak_bytes));
+        assert!(prepared.memory_note.is_none());
         assert!(prepared.check_history_memory);
     }
 
@@ -1855,82 +1749,41 @@ mod tests {
     }
 
     #[test]
-    fn memory_policy_keeps_full_budgets_standard_and_skips_fast() {
+    fn an_estimate_above_free_memory_warns_except_where_memory_is_not_checked() {
         let dir = tempfile::tempdir().unwrap();
         let assembly = dir.path().join("synthetic.iam");
-        let part = dir.path().join("synthetic.ipt");
         std::fs::write(&assembly, b"synthetic").unwrap();
-        std::fs::write(&part, b"synthetic").unwrap();
         let mut options = ConvertOptions {
             no_verify: true,
             ..Default::default()
         };
         let full = estimate(&assembly, &options.choices()).unwrap();
-        let reduced = estimate_without_history(&assembly, options.choices(), &options).unwrap();
         assert_eq!(
             memory_check_with(&assembly, &options, Some(full.peak_bytes)),
             MemoryCheck::Ok(Some(full))
         );
-        assert_eq!(
-            memory_check_with(&assembly, &options, Some(reduced.peak_bytes)),
-            MemoryCheck::Ok(Some(reduced))
-        );
+        let over = memory_check_with(&assembly, &options, Some(full.peak_bytes - 1));
+        assert!(matches!(over, MemoryCheck::TooBig { .. }));
+        assert!(over.warning().unwrap().contains("the conversion ran"));
+        assert!(options
+            .preflight(&assembly, Some(full.peak_bytes - 1))
+            .memory_note
+            .is_some());
+        options.no_memory_check = true;
         assert!(matches!(
-            memory_check_with(&assembly, &options, Some(reduced.peak_bytes - 1)),
-            MemoryCheck::TooBig {
-                lighter: Some(Preset::Fast),
-                ..
-            }
-        ));
-        assert!(matches!(
-            memory_check_with(
-                &part,
-                &options,
-                Some(
-                    estimate_without_history(&part, options.choices(), &options)
-                        .unwrap()
-                        .peak_bytes
-                )
-            ),
+            memory_check_with(&assembly, &options, Some(0)),
             MemoryCheck::Ok(_)
         ));
-        options.preset = Preset::Full;
-        assert!(matches!(
-            memory_check_with(&assembly, &options, Some(reduced.peak_bytes)),
-            MemoryCheck::TooBig {
-                lighter: Some(Preset::Standard),
-                ..
-            }
-        ));
-        options.no_memory_check = true;
-        assert_eq!(
-            memory_check_with(&assembly, &options, Some(0)),
-            MemoryCheck::Ok(Some(full))
-        );
         options.no_memory_check = false;
         options.preset = Preset::Fast;
-        assert_eq!(
-            memory_check_with(&assembly, &options, Some(0)),
-            MemoryCheck::Ok(Some(reduced))
-        );
-        options.preset = Preset::Standard;
-        options.import_only = true;
         assert!(matches!(
             memory_check_with(&assembly, &options, Some(0)),
-            MemoryCheck::TooBig { .. }
+            MemoryCheck::Ok(_)
         ));
-        assert_eq!(
-            memory_check_with(&assembly, &options, None),
-            MemoryCheck::Ok(Some(reduced))
-        );
-        assert_eq!(
-            memory_check_with(&dir.path().join("missing.ipt"), &options, Some(0)),
-            MemoryCheck::Ok(None)
-        );
     }
 
     #[test]
-    fn refusal_is_shared_and_uses_decimal_gigabytes() {
+    fn the_warning_is_shared_and_uses_decimal_gigabytes() {
         let estimate = Estimate {
             peak_bytes: 2_500_000_000,
             seconds: 60,
@@ -1948,7 +1801,7 @@ mod tests {
             available: 1_000_000_000,
             lighter: Some(Preset::Fast),
         };
-        assert_eq!(check.refusal().unwrap(), "this conversion needs about 2.5 GB and 1.0 GB are free; try --preset fast (or --no-memory-check to run anyway)");
+        assert_eq!(check.warning().unwrap(), "the estimate of about 2.5 GB is above the 1.0 GB free. Estimates from a file's size can be far off, so the conversion ran, watching memory");
     }
 
     #[test]
@@ -2091,7 +1944,6 @@ mod cached_estimate_tests {
                 split: Some(ReadConvertSplit { read, convert }),
                 check,
                 total,
-                history_omitted: false,
             };
             assert_eq!(desktop_estimate_text(parts), expected);
             // Presentation must leave the raw memory and fractional timing intact.
@@ -2115,42 +1967,36 @@ mod cached_estimate_tests {
         for preset in [Preset::Fast, Preset::Standard, Preset::Full] {
             for no_verify in [false, true] {
                 for checker in [false, true] {
-                    for free in [1, 4_800_000_000, 10_000_000_000, u64::MAX] {
-                        let options = crate::ConvertOptions {
-                            preset,
-                            no_verify,
-                            ..Default::default()
-                        };
-                        let parts =
-                            desktop_estimate_parts(sizes, &options, checker, Some(free)).unwrap();
-                        let effective = Choices {
-                            history: options.choices().history && !parts.history_omitted,
-                            ..options.choices()
-                        };
+                    let options = crate::ConvertOptions {
+                        preset,
+                        no_verify,
+                        ..Default::default()
+                    };
+                    let parts = desktop_estimate_parts(sizes, &options, checker).unwrap();
+                    let effective = Choices {
+                        history: options.choices().history,
+                        ..options.choices()
+                    };
+                    assert_eq!(
+                        desktop_estimate(sizes, &options, checker),
+                        Some(parts.total)
+                    );
+                    if let Some(check) = parts.check {
                         assert_eq!(
-                            desktop_estimate(sizes, &options, checker, Some(free)),
-                            (Some(parts.total), parts.history_omitted)
+                            parts.total.peak_bytes,
+                            parts.conversion.peak_bytes + check.peak_bytes
                         );
-                        if let Some(check) = parts.check {
-                            assert_eq!(
-                                parts.total.peak_bytes,
-                                parts.conversion.peak_bytes + check.peak_bytes
-                            );
-                            assert_eq!(
-                                parts.total.seconds_exact,
-                                parts.conversion.seconds_exact + check.seconds_exact
-                            );
-                            assert_eq!(
-                                parts.total.seconds,
-                                parts.total.seconds_exact.ceil() as u64
-                            );
-                            assert_eq!(
-                                Some(parts.total),
-                                estimate_from_sizes(sizes, &effective, &options)
-                            );
-                        } else {
-                            assert_eq!(parts.total, parts.conversion);
-                        }
+                        assert_eq!(
+                            parts.total.seconds_exact,
+                            parts.conversion.seconds_exact + check.seconds_exact
+                        );
+                        assert_eq!(parts.total.seconds, parts.total.seconds_exact.ceil() as u64);
+                        assert_eq!(
+                            Some(parts.total),
+                            estimate_from_sizes(sizes, &effective, &options)
+                        );
+                    } else {
+                        assert_eq!(parts.total, parts.conversion);
                     }
                 }
             }
@@ -2181,22 +2027,13 @@ mod cached_estimate_tests {
         }
         std::fs::remove_file(&input).unwrap();
         let options = crate::ConvertOptions::default();
-        let checked = desktop_estimate(sizes, &options, true, None).0.unwrap();
-        let unchecked = desktop_estimate(sizes, &options, false, None).0.unwrap();
+        let checked = desktop_estimate(sizes, &options, true).unwrap();
+        let unchecked = desktop_estimate(sizes, &options, false).unwrap();
         assert!(checked.peak_bytes > unchecked.peak_bytes);
         let off = crate::ConvertOptions {
             no_verify: true,
             ..options.clone()
         };
-        assert_eq!(desktop_estimate(sizes, &off, true, None).0, Some(unchecked));
-        let reduced_choices = Choices {
-            history: false,
-            ..options.choices()
-        };
-        let reduced = estimate_from_sizes(sizes, &reduced_choices, &off).unwrap();
-        let free = (reduced.peak_bytes + unchecked.peak_bytes) / 2;
-        let (total, omitted) = desktop_estimate(sizes, &off, true, Some(free));
-        assert!(omitted);
-        assert_eq!(total, Some(reduced));
+        assert_eq!(desktop_estimate(sizes, &off, true), Some(unchecked));
     }
 }

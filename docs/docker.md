@@ -72,9 +72,9 @@ prints the same reports ([json.md](json.md)).
 An Inventor assembly needs its part files: mount the whole project folder, not just the
 assembly's own folder, or the parts it cannot find are reported as left out.
 
-`convert-all` stops a file that runs past `--timeout` or holds more than `--max-memory`
-(8192 MB by default). Give the container at least that much memory, or lower `--max-memory`,
-so the container is not stopped first.
+`convert-all` stops a file that runs past `--timeout` or holds more than `--max-memory` (no
+limit by default). A file also stops when the container's own memory limit is nearly reached, so
+the container isn't stopped first.
 
 ## In a browser
 

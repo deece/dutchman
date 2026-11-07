@@ -55,7 +55,11 @@ fn linux_available_memory(
                         .ok()
                 };
                 if let (Some(max), Some(current)) = (read("memory.max"), read("memory.current")) {
-                    let remaining = max.saturating_sub(current);
+                    // File cache counts in `memory.current` and is given back when needed; a
+                    // conversion reads large files, so it would look like memory running out.
+                    let cache = std::fs::read_to_string(path.join("memory.stat"))
+                        .map_or(0, |stat| reclaimable_file_cache(&stat));
+                    let remaining = max.saturating_sub(current.saturating_sub(cache));
                     available = Some(available.map_or(remaining, |host| host.min(remaining)));
                 }
                 if !path.pop() {
@@ -65,6 +69,16 @@ fn linux_available_memory(
         }
     }
     available
+}
+
+/// The file cache a cgroup's `memory.stat` reports.
+#[cfg(target_os = "linux")]
+fn reclaimable_file_cache(stat: &str) -> u64 {
+    stat.lines()
+        .filter_map(|line| line.split_once(' '))
+        .filter(|(name, _)| matches!(*name, "active_file" | "inactive_file"))
+        .filter_map(|(_, bytes)| bytes.trim().parse::<u64>().ok())
+        .fold(0, u64::saturating_add)
 }
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -118,6 +132,36 @@ mod tests {
         // Nothing measurable falls back to free pages, then to unknown.
         assert_eq!(super::choose_available(8 * gb, 8 * gb, 0, gb), Some(gb));
         assert_eq!(super::choose_available(0, 0, 0, 0), None);
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn linux_cgroup_headroom_gives_back_file_cache() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let child = root.join("scope");
+        std::fs::create_dir_all(&child).unwrap();
+        let meminfo = root.join("meminfo");
+        std::fs::write(&meminfo, "MemAvailable: 1000000 kB\n").unwrap();
+        let groups = root.join("cgroup");
+        std::fs::write(&groups, "0::/scope\n").unwrap();
+        std::fs::write(child.join("memory.max"), "1000000").unwrap();
+        std::fs::write(child.join("memory.current"), "900000").unwrap();
+        std::fs::write(
+            child.join("memory.stat"),
+            "anon 100000\nfile 800000\nactive_file 300000\ninactive_file 500000\n",
+        )
+        .unwrap();
+        assert_eq!(
+            super::linux_available_memory(&meminfo, &groups, root),
+            Some(900_000)
+        );
+        // More cache than `memory.current` shows, in a race between the two reads, is no room.
+        std::fs::write(child.join("memory.current"), "100").unwrap();
+        assert_eq!(
+            super::linux_available_memory(&meminfo, &groups, root),
+            Some(1_000_000)
+        );
     }
 
     #[test]

@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, Sender};
 
 use dutchman::batch::{Event, Job};
-use dutchman::choices::{estimate_text, Choices, Estimate, MemoryCheck, Preset};
+use dutchman::choices::{estimate_text, Choices, Estimate, Preset};
 use dutchman::present::FileView;
 use dutchman::report_policy::{MessageFacts, ReportPolicy};
 use dutchman::{json, present, ConvertOptions};
@@ -82,8 +82,6 @@ pub struct App {
     estimates: Vec<(PathBuf, Option<Estimate>)>,
     available: Option<u64>,
     pending: Option<PendingRun>,
-    checking_memory: bool,
-    memory_warning: Option<(PathBuf, MemoryCheck)>,
     out_dir: Option<PathBuf>,
     options: ConvertOptions,
     diagnostic_path: Option<PathBuf>,
@@ -159,20 +157,6 @@ enum RunKind {
         job: Box<Job>,
         index: usize,
     },
-}
-
-enum MemoryAction {
-    Convert,
-    Cancel,
-}
-
-impl PendingRun {
-    fn inputs(&self) -> Vec<PathBuf> {
-        match &self.kind {
-            RunKind::Batch { inputs, .. } => inputs.clone(),
-            RunKind::Retry { job, .. } => vec![job.input.clone()],
-        }
-    }
 }
 
 const SETTINGS_KEY: &str = "settings";
@@ -389,8 +373,6 @@ impl App {
             estimates: Vec::new(),
             available: None,
             pending: None,
-            checking_memory: false,
-            memory_warning: None,
             out_dir: None,
             options,
             diagnosis: None,
@@ -544,57 +526,21 @@ impl App {
         self.consent.test_transport = Some((endpoint, signature));
     }
 
-    /// Injects a memory decision for headless UI review without allocating a huge design.
+    /// Supplies a design's read sizes and the free memory, so that its estimate is shown
+    /// without allocating a huge design.
     #[cfg(feature = "test-support")]
     #[doc(hidden)]
-    pub fn show_memory_check_for_test(
+    pub fn set_sizes_for_test(
         &mut self,
         input: PathBuf,
-        check: MemoryCheck,
         sizes: dutchman::choices::Sizes,
+        available: u64,
     ) {
         self.sizes.retain(|(path, _)| *path != input);
-        self.sizes.push((input.clone(), Some(sizes)));
+        self.sizes.push((input, Some(sizes)));
         self.size_inputs = Some(self.inputs.clone());
-        if let MemoryCheck::TooBig { available, .. } = check {
-            self.available = Some(available);
-        }
+        self.available = Some(available);
         self.estimate_key = None;
-        if let Some(out_dir) = self.out_dir.clone() {
-            self.pending = Some(PendingRun {
-                options: self.options.clone(),
-                kind: RunKind::Batch {
-                    inputs: self.inputs.clone(),
-                    out_dir,
-                },
-            });
-            self.estimate_generation = self.estimate_generation.wrapping_add(1);
-            self.memory_warning = Some((input, check));
-        }
-    }
-
-    /// Shared row/dialog estimate for deterministic UI review.
-    #[cfg(feature = "test-support")]
-    pub fn memory_estimate_for_test(&self, input: &Path) -> Option<Estimate> {
-        self.memory_parts_for_test(input).map(|parts| parts.total)
-    }
-
-    #[cfg(feature = "test-support")]
-    pub fn memory_estimate_text_for_test(&self, input: &Path) -> Option<String> {
-        self.memory_parts_for_test(input)
-            .map(dutchman::choices::desktop_estimate_text)
-    }
-
-    #[cfg(feature = "test-support")]
-    pub fn memory_parts_for_test(
-        &self,
-        input: &Path,
-    ) -> Option<dutchman::choices::DesktopEstimate> {
-        self.sizes
-            .iter()
-            .find(|(path, _)| path == input)
-            .and_then(|(_, sizes)| *sizes)
-            .and_then(|sizes| self.desktop_parts(sizes, self.estimate_available()))
     }
 
     #[cfg(feature = "test-support")]
@@ -654,7 +600,7 @@ impl App {
                 index: job_index,
             },
         });
-        self.check_memory(ctx);
+        self.start_checked(ctx);
     }
 
     /// The anonymous report of the file of the row at `index`, its id in it, and its convert
@@ -935,19 +881,7 @@ impl App {
                 out_dir,
             },
         });
-        self.check_memory(ctx);
-    }
-
-    fn check_memory(&mut self, ctx: &egui::Context) {
-        if let Some(pending) = &self.pending {
-            self.checking_memory = true;
-            worker::check_memory(
-                pending.inputs(),
-                pending.options.clone(),
-                self.sender.clone(),
-                ctx.clone(),
-            );
-        }
+        self.start_checked(ctx);
     }
 
     fn start_checked(&mut self, ctx: &egui::Context) {
@@ -1035,10 +969,7 @@ impl App {
     }
 
     fn estimate_available(&self) -> Option<u64> {
-        match &self.memory_warning {
-            Some((_, MemoryCheck::TooBig { available, .. })) => Some(*available),
-            _ => self.available,
-        }
+        self.available
     }
 
     fn current_estimate_key(&self) -> EstimateKey {
@@ -1078,10 +1009,7 @@ impl App {
                 .map(|(path, sizes)| {
                     (
                         path.clone(),
-                        sizes.and_then(|sizes| {
-                            self.desktop_parts(sizes, self.estimate_available())
-                                .map(|parts| parts.total)
-                        }),
+                        sizes.and_then(|sizes| self.desktop_parts(sizes).map(|parts| parts.total)),
                     )
                 })
                 .collect();
@@ -1092,14 +1020,8 @@ impl App {
     fn desktop_parts(
         &self,
         sizes: dutchman::choices::Sizes,
-        available: Option<u64>,
     ) -> Option<dutchman::choices::DesktopEstimate> {
-        dutchman::choices::desktop_estimate_parts(
-            sizes,
-            &self.options,
-            self.checker.is_ok(),
-            available,
-        )
+        dutchman::choices::desktop_estimate_parts(sizes, &self.options, self.checker.is_ok())
     }
 
     fn file_estimate_text(&self, path: &Path, estimate: Estimate) -> String {
@@ -1107,112 +1029,11 @@ impl App {
             .iter()
             .find(|(input, _)| input == path)
             .and_then(|(_, sizes)| *sizes)
-            .and_then(|sizes| self.desktop_parts(sizes, self.estimate_available()))
+            .and_then(|sizes| self.desktop_parts(sizes))
             .map_or_else(
                 || estimate_text(estimate),
                 dutchman::choices::desktop_estimate_text,
             )
-    }
-
-    fn memory_dialog(&mut self, ctx: &egui::Context) {
-        let Some((path, MemoryCheck::TooBig { available, .. })) = self.memory_warning.clone()
-        else {
-            return;
-        };
-        let sizes = self
-            .sizes
-            .iter()
-            .find(|(p, _)| *p == path)
-            .and_then(|(_, s)| *s);
-        let sizes_ready = self.sizes.iter().any(|(p, _)| *p == path);
-        let mut action = None;
-        let mut will_not_fit = false;
-        egui::Modal::new(egui::Id::new("memory_warning")).show(ctx, |ui| {
-            ui.set_width((ctx.content_rect().width() - 64.0).clamp(280.0, 560.0));
-            ScrollArea::vertical().max_height((ctx.content_rect().height() - 125.0).max(80.0)).show(ui, |ui| {
-                ui.heading("This conversion may need more memory");
-                ui.label(path.file_name().unwrap_or_default().to_string_lossy());
-                let parts = sizes.and_then(|sizes| self.desktop_parts(sizes, Some(available)));
-                egui::Frame::group(ui.style()).show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    ui.heading("Read the file");
-                    if let Some(split) = parts.and_then(|parts| parts.split) {
-                        ui.label(format!("Reading: {}", estimate_text(split.read)));
-                    }
-                });
-                if let Some(parts) = parts.filter(|parts| parts.split.is_none()) {
-                    ui.label(format!("Reading and converting together: {}", estimate_text(parts.conversion)));
-                }
-                egui::Frame::group(ui.style()).show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    ui.heading("Convert to SolidCraft");
-                    self.preset_ui(ui);
-                    let choices = self.options.choices();
-                    let (mut history, mut sketches, mut joints) = (choices.history, choices.sketches, choices.joints);
-                    ui.add_enabled_ui(self.options.preset != Preset::Fast, |ui| {
-                        ui.checkbox(&mut history, "Feature history");
-                        ui.checkbox(&mut sketches, "Sketches");
-                        ui.checkbox(&mut joints, "Joints");
-                    });
-                    if (history, sketches, joints) != (choices.history, choices.sketches, choices.joints) {
-                        set_choices(&mut self.options, history, sketches, joints);
-                        self.custom = true;
-                    }
-                    if let Some(parts) = sizes.and_then(|sizes| self.desktop_parts(sizes, Some(available))) {
-                        if let Some(split) = parts.split {
-                            ui.label(format!("Converting: {}", estimate_text(split.convert)));
-                        }
-                        if parts.history_omitted { ui.label("Standard leaves feature history out to fit in free memory."); }
-                    }
-                    ui.separator();
-                    let can_check = self.checker.is_ok();
-                    ui.add_enabled_ui(can_check, |ui| {
-                        let mut verify = !self.options.no_verify;
-                        if ui.checkbox(&mut verify, "Check in SolidCraft").changed() { self.options.no_verify = !verify; }
-                        let parts = sizes.and_then(|sizes| self.desktop_parts(sizes, Some(available)));
-                        if let Some(check) = parts.and_then(|parts| parts.check) {
-                            ui.label(format!("Extra for check: {}", estimate_text(check)));
-                        } else if !can_check {
-                            ui.label("SolidCraft CLI not found.");
-                        } else { ui.label("Extra for check: none (check is off)."); }
-                    });
-                });
-                if let Some(parts) = sizes.and_then(|sizes| self.desktop_parts(sizes, Some(available))) {
-                    ui.label(RichText::new(memory_total_text(&dutchman::choices::desktop_estimate_text(parts))).strong());
-                    ui.label("Memory adds the read peak and extra memory for conversion and checking.");
-                    ui.label(format!("About {:.1} GB of memory free.", gigabytes(available)));
-                    will_not_fit = parts.conversion.peak_bytes > available;
-                    if will_not_fit {
-                        ui.colored_label(theme::palette(ui).lantern_text, "Change the preset or checkboxes: reading and converting alone will not fit in free memory. Converting anyway skips memory checks for this run only.");
-                    } else if parts.total.peak_bytes > available && !self.options.no_memory_check {
-                        ui.colored_label(theme::palette(ui).lantern_text, "The check is skipped when it cannot fit after reading; conversion still continues.");
-                    }
-                } else if sizes_ready { ui.label("Estimate unavailable. Convert to check this file again."); } else { ui.label("Working out…"); }
-                ui.label("Estimates can be off by a few GB either way.");
-            });
-            ui.separator();
-            ui.horizontal(|ui| {
-                if ui.add_enabled(sizes_ready, egui::Button::new("Convert with these choices")).clicked() { action = Some(MemoryAction::Convert); }
-                if ui.button("Cancel").clicked() { action = Some(MemoryAction::Cancel); }
-            });
-        });
-        if let Some(action) = action {
-            self.memory_warning = None;
-            match action {
-                MemoryAction::Convert => {
-                    if let Some(pending) = &mut self.pending {
-                        pending.options = self.options.clone();
-                        pending.options.no_memory_check |= will_not_fit;
-                    }
-                    if will_not_fit {
-                        self.start_checked(ctx);
-                    } else {
-                        self.check_memory(ctx);
-                    }
-                }
-                MemoryAction::Cancel => self.pending = None,
-            }
-        }
     }
 
     fn picked(&mut self, pick: Pick, paths: Vec<PathBuf>, ctx: &egui::Context) {
@@ -1268,23 +1089,6 @@ impl App {
                             self.estimate_key = None;
                         }
                     }
-                }
-                Message::MemoryChecked(warning) => {
-                    self.checking_memory = false;
-                    if warning.is_some() {
-                        if let Some((_, MemoryCheck::TooBig { available, .. })) = &warning {
-                            self.available = Some(*available);
-                            self.estimate_key = None;
-                        }
-                        self.memory_warning = warning;
-                    } else {
-                        self.start_checked(ctx);
-                    }
-                }
-                Message::MemorySizes { path, sizes } => {
-                    self.sizes.retain(|(p, _)| *p != path);
-                    self.sizes.push((path, sizes));
-                    self.estimate_key = None;
                 }
                 Message::Picked { pick, paths } => self.picked(pick, paths, ctx),
                 Message::Planned { problems, jobs } => {
@@ -1552,7 +1356,6 @@ impl App {
         let can_restart =
             !self.running() && (!self.updater.windows_package() || self.diagnosis.is_none());
         self.updater.windows(ctx, can_restart, self.header_bottom);
-        self.memory_dialog(ctx);
         self.refresh_estimates(ctx);
     }
 
@@ -1881,7 +1684,7 @@ impl App {
                     .max_height(height)
                     .auto_shrink([false, true])
                     .show(ui, |ui| {
-                for (index, input) in self.inputs.iter().enumerate() {
+                        for (index, input) in self.inputs.iter().enumerate() {
                             egui::Sides::new().shrink_left().truncate().show(
                                 ui,
                                 |ui| {
@@ -1896,38 +1699,46 @@ impl App {
                                         egui::Layout::left_to_right(Align::Center)
                                     };
                                     ui.with_layout(layout, |ui| {
-                                    path_label(ui, &p, input);
-                                    for (path, estimate) in &self.estimates {
-                                        if path == input || path.starts_with(input) {
-                                            if let Some(estimate) = estimate {
-                                                let text = if path == input {
-                                                    self.file_estimate_text(path, *estimate)
-                                                } else {
-                                                    format!(
-                                                        "{}: {}",
-                                                        file_name(path),
+                                        path_label(ui, &p, input);
+                                        for (path, estimate) in &self.estimates {
+                                            if path == input || path.starts_with(input) {
+                                                if let Some(estimate) = estimate {
+                                                    let text = if path == input {
                                                         self.file_estimate_text(path, *estimate)
-                                                    )
-                                                };
-                                                // Room for less than a stub: leave it out rather than draw "…" under the button.
-                                                if ui.available_width() > 48.0 {
-                                                    ui.label(RichText::new(text).small().color(p.tide));
-                                                }
-                                                if self.sizes.iter().find(|(p, _)| p == path).and_then(|(_, sizes)| *sizes).is_some_and(|sizes| dutchman::choices::desktop_estimate(sizes, &self.options, self.checker.is_ok(), self.estimate_available()).1) && ui.available_width() > 48.0 {
-                                                    ui.label(RichText::new("Standard leaves feature history out to fit in free memory.").small());
+                                                    } else {
+                                                        format!(
+                                                            "{}: {}",
+                                                            file_name(path),
+                                                            self.file_estimate_text(
+                                                                path, *estimate
+                                                            )
+                                                        )
+                                                    };
+                                                    // Room for less than a stub: leave it out rather than draw "…" under the button.
+                                                    if ui.available_width() > 48.0 {
+                                                        ui.label(
+                                                            RichText::new(text)
+                                                                .small()
+                                                                .color(p.tide),
+                                                        );
+                                                    }
                                                 }
                                             }
                                         }
-                                    }
-                                    if let Some(format) = dutchman_core::Format::from_path(input) {
-                                        let level = format
-                                            .headline_level()
-                                            .map(|level| format!("  {level}"))
-                                            .unwrap_or_default();
-                                        if ui.available_width() > 48.0 {
-                                            ui.label(format!("{}{level}", format.status_for(input)));
+                                        if let Some(format) =
+                                            dutchman_core::Format::from_path(input)
+                                        {
+                                            let level = format
+                                                .headline_level()
+                                                .map(|level| format!("  {level}"))
+                                                .unwrap_or_default();
+                                            if ui.available_width() > 48.0 {
+                                                ui.label(format!(
+                                                    "{}{level}",
+                                                    format.status_for(input)
+                                                ));
+                                            }
                                         }
-                                    }
                                     });
                                 },
                                 |ui| {
@@ -2217,9 +2028,6 @@ impl App {
         let p = *theme::palette(ui);
         ui.horizontal(|ui| {
             if self.running() {
-                if self.checking_memory {
-                    ui.label("Checking memory…");
-                }
                 if ui
                     .add_enabled(self.run.is_some(), egui::Button::new("Stop"))
                     .clicked()
@@ -3199,11 +3007,6 @@ fn preset_description(preset: Preset) -> &'static str {
     }
 }
 
-fn memory_total_text(text: &str) -> String {
-    let (memory, time) = text.split_once(", ").unwrap_or((text, ""));
-    format!("Total time: {time} · Most memory at once: {memory}")
-}
-
 fn preset_help(response: &egui::Response, description: &str) {
     if response.has_focus() || response.hovered() {
         egui::Tooltip::always_open(
@@ -3675,58 +3478,6 @@ mod tests {
         harness.run_steps(8);
         assert!(!harness.state().custom);
         assert_eq!(harness.state().options.choices(), Choices::of(Preset::Full));
-    }
-
-    #[test]
-    fn memory_warning_can_be_cancelled_without_starting_or_changing_options() {
-        use egui_kittest::kittest::Queryable;
-        let mut harness = egui_kittest::Harness::builder()
-            .with_size(egui::vec2(1000.0, 1400.0))
-            .build_eframe(|cc| {
-                let mut app = App::new(cc);
-                app.pending = Some(PendingRun {
-                    options: app.options.clone(),
-                    kind: RunKind::Batch {
-                        inputs: vec![],
-                        out_dir: PathBuf::from("out"),
-                    },
-                });
-                app.memory_warning = Some((
-                    PathBuf::from("Designs").join("synthetic.f3z"),
-                    MemoryCheck::TooBig {
-                        estimate: Estimate {
-                            peak_bytes: 8_000_000_000,
-                            seconds: 120,
-                            seconds_exact: 120.0,
-                            band: 0.3,
-                            memory_band: 0.3,
-                            time_band: Some(0.3),
-                        },
-                        conversion: Estimate {
-                            peak_bytes: 8_000_000_000,
-                            seconds: 120,
-                            seconds_exact: 120.0,
-                            band: 0.3,
-                            memory_band: 0.3,
-                            time_band: Some(0.3),
-                        },
-                        available: 4_000_000_000,
-                        lighter: Some(Preset::Fast),
-                    },
-                ));
-                app
-            });
-        harness.run_steps(8);
-        assert!(harness.query_by_label("synthetic.f3z").is_some());
-        assert!(harness.query_all_by_label("Working out…").count() > 0);
-        let convert = harness.get_by_label("Convert with these choices").rect();
-        let cancel = harness.get_by_label("Cancel").rect();
-        assert_eq!(convert.center().y, cancel.center().y);
-        harness.get_by_label("Cancel").click_accesskit();
-        harness.run_steps(8);
-        assert!(!harness.state().running());
-        assert!(harness.state().memory_warning.is_none());
-        assert!(!harness.state().options.no_memory_check);
     }
 
     #[test]

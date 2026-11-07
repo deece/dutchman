@@ -77,7 +77,7 @@ When a maintainer asks about `f3a9c0e1d2b4f5a6`, look it up in your key.
   "versions": {"dutchman": "0.1.5", "cadmpeg": "0.6.5+63ebadd", "solidcraft": "0.18.2",
                "solidcraft_search": null, "os": "linux", "arch": "x86_64"},
   "run": {"verify": true, "import_only": false, "jobs": 8, "timeout_s": 900,
-          "max_memory_mb": 8192, "resumed": 0},
+          "max_memory_mb": null, "resumed": 0},
   "totals": {"files": 105, "converted": 77, "history_verified": 3, "history_unverified": 0,
              "geometry_only": 74, "degraded": 77, "incomplete": 3, "failed": 28,
              "skipped": 2},

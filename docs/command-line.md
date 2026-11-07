@@ -225,8 +225,8 @@ folders at most 32 levels deep.
 Large batches:
 
 - **Each file in its own process.** A file that takes longer than `--timeout SECONDS` (default
-  900) or holds more than `--max-memory MB` (default 8192; `0` for no limit) is stopped and
-  reported as failed, and the rest carry on. A file that crashes the converter fails alone.
+  900) or holds more than `--max-memory MB` (default `0`, no limit) is stopped and
+  reported as failed. Any file also stops if the computer really runs low on memory, and the rest carry on. A file that crashes the converter fails alone.
 - **Carry on where you stopped.** `--journal FILE` records each file's result as it finishes.
   Run the same command again and the files already recorded, unchanged since, are not
   converted again; their results come from the journal. Files another version of Dutchman
@@ -278,7 +278,7 @@ output folder, with neither folder inside the other and no symbolic links in out
 
 Each conversion runs in the existing isolated batch worker. `--jobs` defaults to the
 machine's cores, at most 8. `--timeout` defaults to 900 seconds per file, and
-`--max-memory` to 8192 MB (0 disables the memory limit). The same conversion options as
+`--max-memory` to 0, no limit. A file also stops if the computer really runs low on memory. The same conversion options as
 `convert-all` apply, including `--to`, `--import-only`, `--no-verify`, `--solidcraft`, `--solidcraft-version`,
 `--project` and `--search`.
 

@@ -715,14 +715,37 @@ fn convert(arguments: &Arguments) -> Result<Value, String> {
         }));
     }
     let output = path(arguments, "output")?;
-    Ok(crate::convert_options_with_progress(
+    // A unit test's own program is not a converter.
+    #[cfg(test)]
+    return Ok(crate::convert_options_with_progress(
         &input,
         &output,
         &options,
         !options.no_clobber,
         &options.part_search(),
         &|_| {},
-    ))
+    ));
+    // In a child, so that running low on memory stops the conversion and not this server.
+    #[cfg(not(test))]
+    {
+        let program =
+            std::env::current_exe().map_err(|err| format!("cannot find this program: {err}"))?;
+        let job = crate::batch::Job {
+            project_files: None,
+            fallback: None,
+            input,
+            output,
+            replace: !options.no_clobber,
+            search: options.part_search(),
+        };
+        let limits = crate::worker::Limits {
+            timeout: std::time::Duration::from_secs(u64::MAX / 4),
+            max_memory: None,
+        };
+        Ok(crate::worker::convert_isolated(
+            &program, &job, &options, &limits,
+        ))
+    }
 }
 
 fn inspect(arguments: &Arguments) -> Result<Value, String> {
@@ -795,7 +818,7 @@ fn convert_all(arguments: &Arguments) -> Result<Value, String> {
         options.diagnostics_salt = Some(salt);
     }
     let max_memory = match arguments.get("max_memory_mb") {
-        None | Some(Value::Null) => Some(crate::worker::DEFAULT_MAX_MEMORY_MB << 20),
+        None | Some(Value::Null) => None,
         Some(value) => match value.as_u64() {
             Some(0) => None,
             Some(mb) => Some(mb.saturating_mul(1 << 20)),

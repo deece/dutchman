@@ -87,8 +87,12 @@ struct Args {
     timeout: u64,
     /// Megabytes of memory one file may hold before it is stopped and reported as failed
     /// (0: no limit).
-    #[arg(long, env = "DUTCHMAN_WEB_MAX_MEMORY", value_name = "MB",
-          default_value_t = dutchman::worker::DEFAULT_MAX_MEMORY_MB)]
+    #[arg(
+        long,
+        env = "DUTCHMAN_WEB_MAX_MEMORY",
+        value_name = "MB",
+        default_value_t = 8192
+    )]
     max_memory: u64,
     /// The user name asked for when DUTCHMAN_WEB_PASSWORD is set.
     #[arg(long, env = "DUTCHMAN_WEB_USER", default_value = "dutchman")]

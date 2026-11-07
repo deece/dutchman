@@ -34,10 +34,10 @@ use dutchman_core::{
 use serde_json::Value;
 
 pub use verify::{
-    cached_solidcraft_version, chosen_cli, discover, find_cli, search_report, solidcraft_minor,
-    solidcraft_status, solidcraft_version, target_loses_history, usable_cli, Discovery, NoCli,
-    Place, SolidCraftVersion, Verification, VersionGate, CLI_ENV, DEFAULT_TIMEOUT,
-    NEWEST_SOLIDCRAFT, OLDEST_SOLIDCRAFT, VOLUME_TOLERANCE, WINDOW_OLDEST,
+    cached_solidcraft_version, chosen_cli, discover, find_cli, hide_console, search_report,
+    solidcraft_minor, solidcraft_status, solidcraft_version, target_loses_history, usable_cli,
+    Discovery, NoCli, Place, SolidCraftVersion, Verification, VersionGate, CLI_ENV,
+    DEFAULT_TIMEOUT, NEWEST_SOLIDCRAFT, OLDEST_SOLIDCRAFT, VOLUME_TOLERANCE, WINDOW_OLDEST,
 };
 
 use document::Live;

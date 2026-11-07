@@ -89,8 +89,8 @@ dutchman convert-all ~/CAD \
 - A thousand files take from minutes to a few hours, depending on their size and whether
   SolidCraft checks them. `--jobs N` sets how many convert at once (default: your cores, at
   most 8); use fewer if the machine is busy.
-- A file that takes over 15 minutes or 8 GB of memory is stopped and counted as failed; change
-  that with `--timeout SECONDS` and `--max-memory MB`.
+- A file that takes over 15 minutes, or that runs the computer low on memory, is stopped and
+  counted as failed; set your own limits with `--timeout SECONDS` and `--max-memory MB`.
 - **Stopped part way?** Run the same command again. The journal remembers every file already
   done, and only the rest are converted.
 - Inventor assemblies find their part files as Inventor does: at the paths they store, else
