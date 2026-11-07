@@ -124,7 +124,7 @@ Unreleased changes live in [changelog.d/](changelog.d/).
 
 ### cadmpeg
 
-- The cadmpeg pin moves from `65d6e87` to `22bebb1` (cadmpeg 0.6.9), now taken from cadmpeg's own repository
+- The cadmpeg pin moves from `65d6e87` to `8bba939` (cadmpeg 0.6.9), now taken from cadmpeg's own repository
   rather than a fork of it.
 - Fusion: extrude profiles are proven from their end caps and recipe operands are bound per
   counted operand, so extrudes no longer sweep the wrong sketch region where cadmpeg picked one
