@@ -1014,9 +1014,11 @@ pub(crate) struct Placed {
 
 /// What to say when a replayed partial history doesn't hold the bodies the source stores at
 /// the same point (`stored`, the centres of their boxes): fewer bodies, or a stored body with
-/// no replayed body whose box centre is within a tenth of its size (at least 0.5 mm). The
-/// source's boxes come from edges, so they can be a little off, never by that. The source's
-/// list can leave bodies out, so a replay with more bodies than it lists isn't a difference.
+/// no replayed body whose box centre is within half its box's diagonal (at least 0.5 mm).
+/// The source's boxes are taken over points sampled on each edge, which can bunch on a full
+/// circle, so a stored centre can be off by up to the body's radius: a replayed body of the
+/// right size is never further than that from it. The source's list can leave bodies out, so
+/// a replay with more bodies than it lists isn't a difference.
 pub(crate) fn bodies_differ(
     stored: Option<&[[f64; 3]]>,
     replayed: Option<&[Placed]>,
@@ -1032,7 +1034,7 @@ pub(crate) fn bodies_differ(
     }
     let mut free: Vec<(usize, [f64; 3], f64)> = Vec::new();
     for (at, body) in replayed.iter().enumerate() {
-        free.push((at, body.center?, (body.size? * 0.1).max(0.5)));
+        free.push((at, body.center?, (body.size? * 0.5).max(0.5)));
     }
     let distance = |a: &[f64; 3], b: &[f64; 3]| {
         a.iter()
@@ -1808,9 +1810,10 @@ mod tests {
             bodies_differ(Some(&one), Some(&[piece])).as_deref(),
             Some("a retained body sits 12.6 mm from where the source has it at the same point")
         );
-        // Within a tenth of the body's size: the same body.
+        // Within half the body's size, as far as a full circle's samples can put the stored
+        // centre: the same body.
         let near = Placed {
-            center: Some([0.0, 13.5, 1.5]),
+            center: Some([0.0, 26.0, 1.5]),
             size: Some(30.0),
         };
         assert_eq!(bodies_differ(Some(&one), Some(&[near])), None);
