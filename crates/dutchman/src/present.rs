@@ -575,7 +575,43 @@ pub fn outcome(report: &Value) -> String {
             text.push_str(" Retained history unverified.");
         }
     }
+    if let Some(note) = identity_note(report) {
+        text.push(' ');
+        text.push_str(&note);
+    }
     text
+}
+
+/// The parts at their design's origin because their placement could not be read. Among
+/// hundreds of losses a warning goes unseen, so this one stays in the sentence always shown.
+fn identity_note(report: &Value) -> Option<String> {
+    const SHOWN: usize = 3;
+    let parts: Vec<&str> = report
+        .pointer("/part_positions/assumed")?
+        .as_array()?
+        .iter()
+        .filter(|part| part.get("reason").and_then(Value::as_str) == Some("identity"))
+        .filter_map(|part| part.get("part").and_then(Value::as_str))
+        .collect();
+    let names = parts
+        .iter()
+        .take(SHOWN)
+        .copied()
+        .collect::<Vec<_>>()
+        .join(", ");
+    match parts.len() {
+        0 => None,
+        1 => Some(format!(
+            "1 part may not be where the source has it, because its placement could not be read: {names}."
+        )),
+        n if n <= SHOWN => Some(format!(
+            "{n} parts may not be where the source has them, because their placement could not be read: {names}."
+        )),
+        n => Some(format!(
+            "{n} parts may not be where the source has them, because their placement could not be read: {names} and {} more.",
+            n - SHOWN
+        )),
+    }
 }
 
 fn outcome_without_memory_note(report: &Value) -> String {
@@ -640,6 +676,29 @@ pub fn loss_counts(losses: &[&Value]) -> String {
 #[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parts_at_identity_stay_in_the_sentence_always_shown() {
+        let part = |name: &str, reason: &str| serde_json::json!({"part": name, "reason": reason});
+        let report = |assumed: Value| serde_json::json!({"ok": true, "mode": "import", "part_positions": {"assumed": assumed}});
+        let one = outcome(&report(serde_json::json!([part("Lid", "identity")])));
+        assert!(
+            one.contains("1 part may not be where the source has it"),
+            "{one}"
+        );
+        assert!(one.contains(": Lid."), "{one}");
+        let many = outcome(&report(serde_json::json!([
+            part("A", "identity"),
+            part("B", "identity"),
+            part("C", "identity"),
+            part("D", "identity"),
+            part("E", "only_stored_pose")
+        ])));
+        assert!(many.contains("4 parts may not be"), "{many}");
+        assert!(many.contains(": A, B, C and 1 more."), "{many}");
+        let stored = outcome(&report(serde_json::json!([part("E", "only_stored_pose")])));
+        assert!(!stored.contains("may not be"), "{stored}");
+    }
 
     #[test]
     fn a_partial_history_card_shows_a_memory_skip() {

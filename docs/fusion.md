@@ -146,7 +146,8 @@ first placement, as do unsupported touching joints and ambiguous pose carriers. 
 are deterministic. Joints then work from the selected placements as before.
 
 The report names the parts whose position nothing confirms. A part whose placement could not be
-read sits at its design's origin, and a warning on the result card names it. A part with only a
+read sits at its design's origin, and the sentence always shown on the result card says so,
+naming the first few, with all of them in a warning below. A part with only a
 stored pose and no joint, or with a later pose that was not used, is named in a note, because
 those positions are usually right: when one looks misplaced, it's the place to look. The full list is
 `part_positions.assumed` in the [JSON report](json.md).
