@@ -484,6 +484,7 @@ impl SolidCraftWriter {
         mapping: &mut history::Mapping,
         step: &str,
         why: Option<String>,
+        report: &mut Report,
     ) -> Result<Check, Error> {
         if let Some(why) = why {
             let error = why
@@ -522,9 +523,29 @@ impl SolidCraftWriter {
             if let Some(why) = self.memory_refusal() {
                 return Ok(Check::Partial(format!("{summary}; {why}")));
             }
-            match verify::replay(cli, remaining, &design) {
-                verify::Outcome::Matches => return Ok(Check::Partial(format!("{summary}; retained features replay in SolidCraft; the full history is not verified"))),
-                verify::Outcome::Unverified(why) => return Ok(Check::Partial(format!("{summary}; prefix unverified: {why}"))),
+            let (outcome, bodies) = verify::replay(cli, remaining, &design);
+            match outcome {
+                verify::Outcome::Matches => {
+                    if let Some(why) =
+                        verify::bodies_differ(history.stored_bodies_at_end(), bodies.as_deref())
+                    {
+                        report.push_coded(
+                            Severity::Degraded,
+                            model.name.as_str(),
+                            "history/body-mismatch",
+                            &why,
+                        );
+                        return Ok(Check::Partial(format!(
+                            "{summary}; retained features replay in SolidCraft, but {why}"
+                        )));
+                    }
+                    return Ok(Check::Partial(format!("{summary}; retained features replay in SolidCraft; the full history is not verified")));
+                }
+                verify::Outcome::Unverified(why) => {
+                    return Ok(Check::Partial(format!(
+                        "{summary}; prefix unverified: {why}"
+                    )))
+                }
                 verify::Outcome::Differs(why) => {
                     if !self.stop_replay(mapping, &why) {
                         mapping.result = Err(format!("cannot replay retained history: {why}"));
@@ -1016,9 +1037,10 @@ impl Writer for SolidCraftWriter {
                     &mut mapping,
                     &step,
                     Some(format!("replay differs ({why})")),
+                    report,
                 )?)
             } else if mapping.result.as_ref().is_ok_and(|h| h.stop.is_some()) {
-                Some(self.partial(model, &mut mapping, &step, None)?)
+                Some(self.partial(model, &mut mapping, &step, None, report)?)
             } else {
                 None
             };

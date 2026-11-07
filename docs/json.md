@@ -231,6 +231,12 @@ Offset datum planes need no building feature when their support resolves or all 
 consumers carry independent resolved sketch placements. Otherwise the history reason
 names the unresolved plane reference; resolved skipped planes count as `not_needed`.
 
+A partial history that replays but whose bodies differ from what the source stores at the same
+point adds a `Degraded` loss with code `history/body-mismatch`, and `verification.reason` says
+so: another number of bodies, or a body whose box centre is further from the source's than a tenth
+of the body's size (at least 0.5 mm). It is compared when the last retained feature that isn't a
+sketch carries the source's bodies, which Fusion files can.
+
 Shells require removed faces from their own historical input topology, a resolved
 thickness and inward or outward direction, and one earlier named body. A shell input-face
 blocker means the source selection or historical boundary is not supported yet; final-body

@@ -586,9 +586,10 @@ fn prepare_history(
             &mut mapping,
             step,
             Some(format!("replay differs ({why})")),
+            &mut part_report,
         )?)
     } else if mapping.result.as_ref().is_ok_and(|h| h.stop.is_some()) {
-        Some(writer.partial(part, &mut mapping, step, None)?)
+        Some(writer.partial(part, &mut mapping, step, None, &mut part_report)?)
     } else {
         None
     };

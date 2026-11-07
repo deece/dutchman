@@ -969,19 +969,92 @@ pub(crate) fn compare(
 }
 
 /// Checks that retained features replay, without comparing an unfinished body to the final one.
-pub(crate) fn replay(cli: &Path, timeout: Duration, design: &[u8]) -> Outcome {
+///
+/// Also says where the replay's bodies are, when it replayed.
+pub(crate) fn replay(
+    cli: &Path,
+    timeout: Duration,
+    design: &[u8],
+) -> (Outcome, Option<Vec<Placed>>) {
     let dir = match tempfile::tempdir() {
         Ok(dir) => dir,
-        Err(err) => return Outcome::Unverified(format!("no scratch folder: {err}")),
+        Err(err) => {
+            return (
+                Outcome::Unverified(format!("no scratch folder: {err}")),
+                None,
+            )
+        }
     };
     match evaluate(cli, timeout, dir.path(), "prefix", design) {
         Ok(Evaluation::Done(eval)) => match eval.errors.first() {
-            Some(why) => Outcome::Differs(why.clone()),
-            None => Outcome::Matches,
+            Some(why) => (Outcome::Differs(why.clone()), None),
+            None => {
+                let placed = eval
+                    .bodies
+                    .iter()
+                    .map(|body| Placed {
+                        center: body.center,
+                        size: body.size,
+                    })
+                    .collect();
+                (Outcome::Matches, Some(placed))
+            }
         },
-        Ok(Evaluation::Failed(why)) => Outcome::Differs(why),
-        Err(why) => Outcome::Unverified(why),
+        Ok(Evaluation::Failed(why)) => (Outcome::Differs(why), None),
+        Err(why) => (Outcome::Unverified(why), None),
     }
+}
+
+/// Where a replayed body is: the centre and diagonal of its box, when SolidCraft gives them.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Placed {
+    pub center: Option<[f64; 3]>,
+    pub size: Option<f64>,
+}
+
+/// What to say when a replayed partial history doesn't hold the bodies the source stores at
+/// the same point (`stored`, the centres of their boxes): another number of bodies, or a body
+/// whose box centre is further from every stored one than a tenth of its size (at least
+/// 0.5 mm). The source's boxes come from edges, so they can be a little off, never by that.
+pub(crate) fn bodies_differ(
+    stored: Option<&[[f64; 3]]>,
+    replayed: Option<&[Placed]>,
+) -> Option<String> {
+    let (stored, replayed) = (stored?, replayed?);
+    let bodies = |count: usize| format!("{count} bod{}", if count == 1 { "y" } else { "ies" });
+    if stored.len() != replayed.len() {
+        return Some(format!(
+            "the retained features give {} where the source has {} at the same point",
+            bodies(replayed.len()),
+            bodies(stored.len())
+        ));
+    }
+    let mut free: Vec<(usize, [f64; 3], f64)> = Vec::new();
+    for (at, body) in replayed.iter().enumerate() {
+        free.push((at, body.center?, (body.size? * 0.1).max(0.5)));
+    }
+    let distance = |a: &[f64; 3], b: &[f64; 3]| {
+        a.iter()
+            .zip(b)
+            .map(|(x, y)| (x - y) * (x - y))
+            .sum::<f64>()
+            .sqrt()
+    };
+    for center in stored {
+        let nearest = free
+            .iter()
+            .enumerate()
+            .map(|(slot, (_, at, _))| (slot, distance(center, at)))
+            .min_by(|a, b| a.1.total_cmp(&b.1))?;
+        if nearest.1 > free[nearest.0].2 {
+            return Some(format!(
+                "a retained body sits {:.1} mm from where the source has it at the same point",
+                nearest.1
+            ));
+        }
+        free.remove(nearest.0);
+    }
+    None
 }
 
 /// What is wrong with a design's body `volumes` in SolidCraft, for a design with
@@ -1146,6 +1219,8 @@ struct Measured {
     area: Option<f64>,
     /// The diagonal of its box, when SolidCraft gives it.
     size: Option<f64>,
+    /// The centre of its box, when SolidCraft gives it.
+    center: Option<[f64; 3]>,
 }
 
 /// One design as SolidCraft evaluated it.
@@ -1665,10 +1740,15 @@ fn parse(value: &Value) -> Result<Eval, String> {
                     .sum::<f64>()
                     .sqrt()
             });
+            let center = corner("min").zip(corner("max")).and_then(|(min, max)| {
+                let center = [0, 1, 2].map(|axis| (min[axis] + max[axis]) * 0.5);
+                center.iter().all(|v| v.is_finite()).then_some(center)
+            });
             Ok(Measured {
                 volume,
                 area: body.get("area_mm2").and_then(Value::as_f64),
                 size: size.filter(|size| size.is_finite()),
+                center,
             })
         })
         .collect::<Result<Vec<_>, String>>()?;
@@ -1699,6 +1779,51 @@ fn parse(value: &Value) -> Result<Eval, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_partial_history_with_other_bodies_than_the_source_is_said_to_differ() {
+        let at = |x: f64, size: f64| Placed {
+            center: Some([x, 0.0, 0.0]),
+            size: Some(size),
+        };
+        let one = [[0.0, 12.2, 1.5]];
+        assert_eq!(
+            bodies_differ(Some(&one), Some(&[at(0.0, 30.0), at(5.0, 6.0)])).as_deref(),
+            Some(
+                "the retained features give 2 bodies where the source has 1 body at the same point"
+            )
+        );
+        // One body each, but the replay's is the small piece the source no longer has.
+        let piece = Placed {
+            center: Some([0.0, 24.8, 1.5]),
+            size: Some(6.6),
+        };
+        assert_eq!(
+            bodies_differ(Some(&one), Some(&[piece])).as_deref(),
+            Some("a retained body sits 12.6 mm from where the source has it at the same point")
+        );
+        // Within a tenth of the body's size: the same body.
+        let near = Placed {
+            center: Some([0.0, 13.5, 1.5]),
+            size: Some(30.0),
+        };
+        assert_eq!(bodies_differ(Some(&one), Some(&[near])), None);
+        // Bodies in another order still match.
+        let two = [[0.0, 0.0, 0.0], [50.0, 0.0, 0.0]];
+        assert_eq!(
+            bodies_differ(Some(&two), Some(&[at(50.0, 10.0), at(0.0, 10.0)])),
+            None
+        );
+        // The source not saying is unknown, not none, and nothing to compare.
+        assert_eq!(bodies_differ(None, Some(&[piece])), None);
+        assert_eq!(bodies_differ(Some(&one), None), None);
+        // Nor a body without a box.
+        let unknown = Placed {
+            center: None,
+            size: None,
+        };
+        assert_eq!(bodies_differ(Some(&one), Some(&[unknown])), None);
+    }
 
     fn touch(folder: &Path, name: &str) -> PathBuf {
         std::fs::create_dir_all(folder).unwrap();
@@ -1961,6 +2086,7 @@ mod tests {
                 volume,
                 area: None,
                 size: None,
+                center: None,
             })
             .collect()
     }
@@ -1970,6 +2096,7 @@ mod tests {
             volume,
             area: Some(area),
             size: Some(size),
+            center: None,
         }]
     }
 

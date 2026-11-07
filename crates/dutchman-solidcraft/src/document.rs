@@ -413,6 +413,7 @@ mod history_tests {
     fn history() -> History {
         History {
             default_bodies: Default::default(),
+            stored_bodies: Default::default(),
             params: vec![json!({"name": "d1", "expr": "10 mm", "unit": "mm", "model": true})],
             features: vec![
                 json!({"id": 1, "name": "Sketch1", "type": "sketch", "suppressed": false}),

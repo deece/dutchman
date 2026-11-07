@@ -59,6 +59,9 @@ pub(crate) struct History {
     pub(crate) stop: Option<String>,
     /// The source row that emitted each feature, including auxiliary features.
     pub(crate) sources: BTreeMap<u64, usize>,
+    /// The centres of the bodies the source stores in the state right after a feature, by the
+    /// id of the feature it became. Absent when the source doesn't say, which is not "none".
+    pub(crate) stored_bodies: BTreeMap<u64, Vec<[f64; 3]>>,
     pub(crate) params: Vec<Value>,
     pub(crate) features: Vec<Value>,
     /// The looks of the bodies the history makes, by body name.
@@ -86,7 +89,42 @@ pub(crate) struct History {
     pub(crate) hidden: Vec<u64>,
 }
 
+/// The centres of the boxes of the bodies the source stores in the state right after
+/// `feature`, from `id:x,y,z;id:x,y,z` in its `body_centers`. `None` when it has none, which
+/// is unknown, or when an entry can't be read.
+fn stored_body_centers(feature: &Value) -> Option<Vec<[f64; 3]>> {
+    let centers = feature
+        .pointer("/source_properties/body_centers")
+        .and_then(Value::as_str)?;
+    let centers = centers
+        .split(';')
+        .filter(|entry| !entry.is_empty())
+        .map(|entry| {
+            let (_, point) = entry.split_once(':')?;
+            let point: Vec<f64> = point
+                .split(',')
+                .map(|value| value.trim().parse::<f64>().ok().filter(|v| v.is_finite()))
+                .collect::<Option<_>>()?;
+            <[f64; 3]>::try_from(point).ok()
+        })
+        .collect::<Option<Vec<_>>>()?;
+    (!centers.is_empty()).then_some(centers)
+}
+
 impl History {
+    /// Where the source stores the bodies at the point this history ends, when its last
+    /// feature that isn't a sketch says. An earlier feature's count can't speak for a later one.
+    pub(crate) fn stored_bodies_at_end(&self) -> Option<&[[f64; 3]]> {
+        let last = self
+            .features
+            .iter()
+            .rev()
+            .find(|feature| feature.get("type").and_then(Value::as_str) != Some("sketch"))?;
+        self.stored_bodies
+            .get(&last.get("id").and_then(Value::as_u64)?)
+            .map(Vec::as_slice)
+    }
+
     /// Source features that became SolidCraft features.
     pub(crate) fn rebuilt(&self) -> usize {
         self.mapped.saturating_sub(self.not_needed)
@@ -982,6 +1020,9 @@ fn map_into(
         for emitted in history.features.iter().skip(before) {
             if let Some(id) = emitted.get("id").and_then(Value::as_u64) {
                 history.sources.insert(id, out.len().saturating_sub(1));
+                if let Some(centers) = stored_body_centers(feature) {
+                    history.stored_bodies.insert(id, centers);
+                }
             }
         }
     }
