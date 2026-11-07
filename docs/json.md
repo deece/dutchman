@@ -150,6 +150,8 @@ default material: the decoded model does not establish that no source appearance
   "history": {
     "mapped": 2,
     "total": 2,
+    "rebuilt": 2,
+    "needing": 2,
     "features": [
       {"name": "Base sketch", "kind": "sketch", "status": "mapped", "reason": null},
       {"name": "Block", "kind": "extrude", "status": "mapped", "reason": null}
@@ -496,7 +498,7 @@ The same fields as `convert` except `output` (with `completeness` for an assembl
   "conversion": {"possible": true, "reason": null},
   "mode": "partial_history",
   "verification": {"status": "partial", "reason": "history stopped at feature \"Shell1\": shell waits on input face geometry (2 of 3 features rebuilt); the rest is the imported final shape; prefix unverified: inspect writes nothing"},
-  "history": {"mapped": 2, "total": 3, "features": [ … ]},
+  "history": {"mapped": 2, "total": 3, "rebuilt": 2, "needing": 3, "features": [ … ]},
   "losses": [ … ]
 }
 ```
