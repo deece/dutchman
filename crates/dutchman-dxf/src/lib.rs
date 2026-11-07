@@ -239,11 +239,15 @@ pub fn pages(
                             ));
                         }
                         for text in &template.texts {
+                            // A text with no stored height has no size to write.
+                            let Some(height) = text.height else {
+                                continue;
+                            };
                             document.entities.push((
                                 "TITLE_BLOCK".into(),
                                 Entity::Text {
                                     position: text.position.get(),
-                                    height: text.height.get(),
+                                    height: height.get(),
                                     rotation: 0.0,
                                     text: text.text.clone(),
                                 },
