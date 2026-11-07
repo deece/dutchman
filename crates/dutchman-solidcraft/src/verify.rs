@@ -1574,6 +1574,15 @@ const CHECK_STOPPED_FOR_MEMORY: &str =
 /// Set once a check stops for memory: the checks after it would only run out again.
 static CHECKS_STOPPED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// Whether checks watch memory at all: on unless memory checks are turned off for the run.
+static CHECKS_WATCH_MEMORY: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Turns the memory watch on running checks on or off, for this run.
+pub fn watch_check_memory(on: bool) {
+    CHECKS_WATCH_MEMORY.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// Whether this much free memory is too little for a check to carry on.
 fn below_check_floor(available: Option<u64>) -> bool {
     available.is_some_and(|free| free < CHECK_MEMORY_FLOOR)
@@ -1583,8 +1592,17 @@ fn below_check_floor(available: Option<u64>) -> bool {
 fn check_must_stop() -> bool {
     use std::sync::atomic::Ordering;
     #[cfg(debug_assertions)]
-    if std::env::var_os("DUTCHMAN_TEST_CHECK_LOW_MEMORY").is_some() {
-        return true;
+    {
+        if std::env::var_os("DUTCHMAN_TEST_CHECK_LOW_MEMORY").is_some() {
+            return CHECKS_WATCH_MEMORY.load(Ordering::Relaxed);
+        }
+        // A test's made-up free memory is for the decisions before a check, not during one.
+        if std::env::var_os("DUTCHMAN_TEST_MEMORY").is_some() {
+            return false;
+        }
+    }
+    if !CHECKS_WATCH_MEMORY.load(Ordering::Relaxed) {
+        return false;
     }
     if below_check_floor(dutchman_core::available_memory()) {
         CHECKS_STOPPED.store(true, Ordering::Relaxed);

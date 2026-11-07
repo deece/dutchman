@@ -374,6 +374,7 @@ impl Writer for PreparedWriter {
         out: &mut dyn std::io::Write,
         report: &mut Report,
     ) -> Result<(), Error> {
+        dutchman_solidcraft::watch_check_memory(self.check_history_memory);
         let (held, available) = if self.memory_stop || self.check_history_memory {
             measured_memory()
         } else {

@@ -2279,6 +2279,19 @@ fn a_check_stopped_for_memory_keeps_the_design_unverified() {
         "{report}"
     );
     assert!(output.exists());
+    // Memory checks turned off leave the check alone: this one then runs out its own time.
+    let forced = Command::new(env!("CARGO_BIN_EXE_dutchman"))
+        .args(["convert", &input, output.to_str().unwrap(), "--json"])
+        .args(["--solidcraft", cli.to_str().unwrap()])
+        .args(["--no-memory-check", "--verify-timeout", "1", "--force"])
+        .env("DUTCHMAN_TEST_CHECK_LOW_MEMORY", "1")
+        .output()
+        .unwrap();
+    assert!(forced.status.success(), "{forced:?}");
+    assert!(
+        !String::from_utf8_lossy(&forced.stdout).contains("History check stopped"),
+        "{forced:?}"
+    );
 }
 
 #[cfg(debug_assertions)]
