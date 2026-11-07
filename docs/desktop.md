@@ -27,6 +27,10 @@ Every desktop run keeps a local diagnostic log in the diagnostics folder (**Open
 folder** opens it), never beside your designs. It holds no names or contents from your file
 and stays on your computer. The folder keeps the newest 50 logs.
 
+If a run was cut off, the next launch says **The last run didn't finish.**, with a button to its
+log folder. **Dismiss** keeps that run's notice away after a relaunch; another unfinished run
+shows its own.
+
 ## Project inputs
 
 Files whose names start with `~$` are lock files. They are ignored in project planning
