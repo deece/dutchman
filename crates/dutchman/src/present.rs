@@ -581,11 +581,36 @@ pub fn outcome(report: &Value) -> String {
             text.push_str(" Retained history unverified.");
         }
     }
+    if let Some(note) = region_note(report) {
+        text.push(' ');
+        text.push_str(&note);
+    }
     if let Some(note) = identity_note(report) {
         text.push(' ');
         text.push_str(&note);
     }
     text
+}
+
+/// The kept extrudes whose sketch region nothing checked against the source. They replay,
+/// but one could sweep the wrong region, so the card says how many rather than leave it to
+/// the JSON report.
+fn region_note(report: &Value) -> Option<String> {
+    let count = report
+        .pointer("/history/features")?
+        .as_array()?
+        .iter()
+        .filter(|feature| feature.get("profile_unverified") == Some(&Value::Bool(true)))
+        .count();
+    match count {
+        0 => None,
+        1 => Some(
+            "1 kept extrude's sketch region couldn't be checked against the source.".to_owned(),
+        ),
+        n => Some(format!(
+            "{n} kept extrudes' sketch regions couldn't be checked against the source."
+        )),
+    }
 }
 
 /// The parts at their design's origin because their placement could not be read. Among
@@ -689,6 +714,29 @@ pub fn loss_counts(losses: &[&Value]) -> String {
 #[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_card_counts_extrudes_whose_region_was_not_checked() {
+        let report = |flags: &[bool]| {
+            let features: Vec<Value> = flags
+                .iter()
+                .map(|flag| {
+                    let mut row = serde_json::json!({"kind": "extrude", "status": "mapped"});
+                    if *flag {
+                        row["profile_unverified"] = Value::Bool(true);
+                    }
+                    row
+                })
+                .collect();
+            serde_json::json!({"ok": true, "mode": "partial_history",
+                "history": {"rebuilt": 3, "needing": 4, "features": features}})
+        };
+        assert!(!outcome(&report(&[false, false])).contains("checked against"));
+        assert!(outcome(&report(&[true, false]))
+            .ends_with("1 kept extrude's sketch region couldn't be checked against the source."));
+        assert!(outcome(&report(&[true, true]))
+            .ends_with("2 kept extrudes' sketch regions couldn't be checked against the source."));
+    }
 
     #[test]
     fn the_card_counts_features_rebuilt_and_an_older_report_still_reads() {
