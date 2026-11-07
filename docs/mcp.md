@@ -214,6 +214,9 @@ not measure simultaneously busy CPU cores. Failed worker tasks can retry seriall
 claude mcp add dutchman -- dutchman-mcp
 ```
 
+`dutchman-mcp --version` prints the version and `dutchman-mcp --help` prints a short usage
+note; both exit at once without starting the server.
+
 On macOS, a blocked SolidCraft check explains how to open SolidCraft once and allow it
 with **Open Anyway** in **System Settings > Privacy & Security**, then try again.
 Dutchman checks the quarantine attribute for the user-approved flag without changing it.

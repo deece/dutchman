@@ -707,3 +707,27 @@ fn read_report_refuses_missing_malformed_wrong_schema_and_oversized_reports() {
     );
     client.finish();
 }
+
+#[test]
+fn version_and_help_print_and_exit_without_stdin() {
+    for (flag, expected) in [
+        (
+            "--version",
+            format!("dutchman-mcp {}", env!("CARGO_PKG_VERSION")),
+        ),
+        ("-V", format!("dutchman-mcp {}", env!("CARGO_PKG_VERSION"))),
+        ("--help", "Usage: dutchman-mcp".to_string()),
+    ] {
+        // stdin is left open and never written to; the process must still exit by itself.
+        let mut child = Command::new(env!("CARGO_BIN_EXE_dutchman-mcp"))
+            .arg(flag)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut out = String::new();
+        std::io::Read::read_to_string(&mut child.stdout.take().unwrap(), &mut out).unwrap();
+        assert!(child.wait().unwrap().success(), "{flag}");
+        assert!(out.contains(&expected), "{flag}: {out}");
+    }
+}
