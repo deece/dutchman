@@ -152,6 +152,7 @@ default material: the decoded model does not establish that no source appearance
     "total": 2,
     "rebuilt": 2,
     "needing": 2,
+    "reapplied": 0,
     "features": [
       {"name": "Base sketch", "kind": "sketch", "status": "mapped", "reason": null},
       {"name": "Block", "kind": "extrude", "status": "mapped", "reason": null}
@@ -207,7 +208,7 @@ Explicit output paths keep their given extension. The container format stays `so
 | `history.features[].reapplied`, `final_body` | `true` on such a kept feature, and on the base feature written with its final body. Absent otherwise. |
 | `history.mapped`, `history.total` | Mapped or not-needed features, out of all but left-out ones. `mapped` counts features that needed nothing, such as component inserts and joints, so it isn't a count of editable features. |
 | `history.features[].source`, `category`, `upstream`, `reason_raw` | Present only on a feature SolidCraft itself refused when it replayed the history. `source` is `solidcraft`; `reason` then reads `SolidCraft refused feature "X": ...` without SolidCraft's internal site number, and `reason_raw` keeps the original text. `category` is `solidcraft-refused` for a refusal not yet recognised, or a specific name such as `fillet-overflows-neighbouring-face` (the blend is larger than the neighbouring faces). `upstream` is the link to the SolidCraft issue that tracks a known category, else `null`. Absent for Dutchman's own mapping limits. |
-| `history.parts` | For an assembly written as SolidCraft components: each part's history, in the order written. `name`; `status` and `reason` as in `verification` (`not_applicable` when the part has no source features, else `flattened` with its first blocker, `partial`, `unverified` or `verified`); `mapped` and `total` as in `history`. A part placed several times is listed once. Absent for a single part. |
+| `history.parts` | For an assembly written as SolidCraft components: each part's history, in the order written. `name`; `status` and `reason` as in `verification` (`not_applicable` when the part has no source features, else `flattened` with its first blocker, `partial`, `unverified` or `verified`); `mapped`, `total`, `rebuilt`, `needing` and `reapplied` as in `history`. A part placed several times is listed once. Absent for a single part. |
 | `completeness` | For an assembly: `placed` counts placements with geometry and assembly holders of children; `placed_empty` counts placements of leaf parts with no bodies. Empty leaves no longer inflate `placed`. `placements` is `placed + placed_empty + sum(left_out.count)`. Counts include every recorded placement through placed sub-assemblies, each as often as placed. `left_out` lists those not placed by cause, most first: `file` (the file placed, or `null`), `reason`, `stage` and `count`. Absent for a single part. |
 | `joints` | For an assembly whose joints were written: how many of each kind, `{"revolute": 5, "rigid": 1}` (kinds `revolute`, `slider`, `rigid`). Grounded joints count as `rigid`, fixing their occurrence to the design at its stored placement. Absent when none were. |
 | `names` | Every name the conversion met, sorted: the paths and folders it read from, and the names the design gives its parts, components, bodies, features, sketches, parameters and properties. For tools that take names out of a report before it is shared (the anonymous report does); absent when there were none. |
@@ -510,7 +511,7 @@ The same fields as `convert` except `output` (with `completeness` for an assembl
   "conversion": {"possible": true, "reason": null},
   "mode": "partial_history",
   "verification": {"status": "partial", "reason": "history stopped at feature \"Shell1\": shell waits on input face geometry (2 of 3 features rebuilt); the rest is the imported final shape; prefix unverified: inspect writes nothing"},
-  "history": {"mapped": 2, "total": 3, "rebuilt": 2, "needing": 3, "features": [ … ]},
+  "history": {"mapped": 2, "total": 3, "rebuilt": 2, "needing": 3, "reapplied": 0, "features": [ … ]},
   "losses": [ … ]
 }
 ```

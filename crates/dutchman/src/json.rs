@@ -1504,8 +1504,8 @@ mod tests {
         assert_eq!(
             out["history"]["parts"],
             json!([
-                {"name": "Bracket", "status": "flattened", "reason": "feature \"Extrude1\": not mapped yet", "mapped": 1, "total": 2, "rebuilt": 1, "needing": 2},
-                {"name": "Rail", "status": "not_applicable", "reason": "the design carries no feature history", "mapped": 0, "total": 0, "rebuilt": 0, "needing": 0},
+                {"name": "Bracket", "status": "flattened", "reason": "feature \"Extrude1\": not mapped yet", "mapped": 1, "total": 2, "rebuilt": 1, "needing": 2, "reapplied": 0},
+                {"name": "Rail", "status": "not_applicable", "reason": "the design carries no feature history", "mapped": 0, "total": 0, "rebuilt": 0, "needing": 0, "reapplied": 0},
             ])
         );
     }
