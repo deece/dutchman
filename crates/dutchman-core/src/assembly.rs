@@ -4090,7 +4090,7 @@ mod tests {
         )
         .unwrap()
         .unwrap();
-        let kept: Vec<Value> = assembly.parts.iter().flat_map(|p| centers(p)).collect();
+        let kept: Vec<Value> = assembly.parts.iter().flat_map(centers).collect();
         assert!(kept.contains(&json!("1:0,0,1;2:0,0,2")), "{kept:?}");
         assert!(kept.contains(&json!("1:0,0,3")), "{kept:?}");
     }
