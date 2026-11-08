@@ -389,7 +389,7 @@ fn crossed(curves: &[String]) -> bool {
 }
 
 /// How many profile loops the source sketch has.
-fn profile_count(ctx: &Context, sketch: &str) -> usize {
+pub(super) fn profile_count(ctx: &Context, sketch: &str) -> usize {
     ctx.row("sketches", sketch)
         .and_then(|row| row.get("profiles"))
         .and_then(Value::as_array)

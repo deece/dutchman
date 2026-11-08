@@ -89,6 +89,24 @@ pub(crate) struct History {
     pub(crate) blends: Vec<blend::Pending>,
     /// Ids of sketch features whose source sketch is hidden in the source.
     pub(crate) hidden: Vec<u64>,
+    /// Ids of features whose source profile is the whole of a sketch with more than one
+    /// profile. Which of them it takes isn't stated, so each is kept only when SolidCraft's
+    /// check confirms the replay ([`History::first_unconfirmed`]).
+    pub(crate) unconfirmed: BTreeSet<u64>,
+}
+
+/// Whether `feature`'s profile is a whole sketch that has more than one profile. cadmpeg
+/// doesn't say which of them such a reference takes: a cut that took them all can remove
+/// the body Fusion keeps.
+fn whole_of_several(feature: &Value, ctx: &Context) -> bool {
+    let Some(profile) = feature.pointer("/definition/profile") else {
+        return false;
+    };
+    profile.get("kind").and_then(Value::as_str) == Some("sketch")
+        && profile
+            .get("value")
+            .and_then(Value::as_str)
+            .is_some_and(|sketch| profile::profile_count(ctx, sketch) > 1)
 }
 
 /// The bodies the source stores in the state right after `feature`: the centres of their
@@ -137,6 +155,25 @@ impl History {
         self.stored_bodies
             .get(&last.get("id").and_then(Value::as_u64)?)
             .map(Vec::as_slice)
+    }
+
+    /// The source row of the first kept feature whose whole-sketch profile nothing has
+    /// confirmed, and why it can't stay unconfirmed.
+    pub(crate) fn first_unconfirmed(&self) -> Option<(usize, String)> {
+        self.features.iter().find_map(|feature| {
+            let id = feature.get("id").and_then(Value::as_u64)?;
+            if !self.unconfirmed.contains(&id) {
+                return None;
+            }
+            let name = feature.get("name").and_then(Value::as_str).unwrap_or("?");
+            Some((
+                *self.sources.get(&id)?,
+                format!(
+                    "feature \"{name}\": its profile is the whole of a sketch with several \
+                     profiles, and SolidCraft's check could not confirm which it takes"
+                ),
+            ))
+        })
     }
 
     /// Source features that became SolidCraft features, but those that only re-apply to a base
@@ -1058,6 +1095,9 @@ fn map_into(
                 history.sources.insert(id, out.len().saturating_sub(1));
                 if let Some(centers) = stored_body_centers(feature) {
                     history.stored_bodies.insert(id, centers);
+                }
+                if whole_of_several(feature, &ctx) {
+                    history.unconfirmed.insert(id);
                 }
             }
         }
@@ -2119,5 +2159,39 @@ mod tests {
         assert_eq!(err, "no feature in the history builds geometry");
         let loss = report.losses().first().unwrap();
         assert_eq!(loss.subject, "feature \"Hidden\"");
+    }
+
+    #[test]
+    fn a_whole_sketch_of_several_profiles_waits_for_confirmation() {
+        let model = json!({"sketches": [
+            {"id": "two", "profiles": [[{"entity": "a"}], [{"entity": "b"}]]},
+            {"id": "one", "profiles": [[{"entity": "a"}]]},
+        ]});
+        let ctx = Context::new(&model);
+        let whole =
+            |sketch: &str| json!({"definition": {"profile": {"kind": "sketch", "value": sketch}}});
+        assert!(whole_of_several(&whole("two"), &ctx));
+        assert!(!whole_of_several(&whole("one"), &ctx));
+        let picked = json!({"definition": {"profile": {"kind": "sketch_profiles",
+            "value": {"sketch": "two", "profiles": [0]}}}});
+        assert!(!whole_of_several(&picked, &ctx));
+
+        let mut history = History {
+            features: vec![
+                json!({"id": 1, "name": "Sketch 1", "type": "sketch"}),
+                json!({"id": 2, "name": "Extrude 1", "type": "extrude"}),
+                json!({"id": 3, "name": "Extrude 4", "type": "extrude"}),
+            ],
+            sources: BTreeMap::from([(1, 0), (2, 1), (3, 2)]),
+            ..History::default()
+        };
+        assert_eq!(history.first_unconfirmed(), None);
+        history.unconfirmed.insert(3);
+        let (source, why) = history.first_unconfirmed().unwrap();
+        assert_eq!(source, 2);
+        assert!(
+            why.starts_with("feature \"Extrude 4\": its profile is the whole of a sketch"),
+            "{why}"
+        );
     }
 }

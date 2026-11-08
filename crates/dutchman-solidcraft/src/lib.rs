@@ -497,8 +497,12 @@ impl SolidCraftWriter {
                 .and_then(|s| s.strip_suffix(')'))
                 .unwrap_or(&why);
             let identified = self.stop_replay(mapping, error);
-            if let (false, Ok(history)) = (identified, &mut mapping.result) {
-                history.stop = Some(why);
+            // A replay that differs without naming a feature: a whole-sketch profile nothing
+            // confirmed is the first suspect.
+            if !identified && !unconfirmed_stop(mapping) {
+                if let Ok(history) = &mut mapping.result {
+                    history.stop = Some(why);
+                }
             }
         }
         let cli = verify::usable_cli(&self.verification);
@@ -531,9 +535,15 @@ impl SolidCraftWriter {
             let (outcome, bodies) = verify::replay(cli, remaining, &design);
             match outcome {
                 verify::Outcome::Matches => {
-                    if let Some(why) =
-                        verify::bodies_differ(history.stored_bodies_at_end(), bodies.as_deref())
-                    {
+                    let stored = history.stored_bodies_at_end();
+                    let differs = verify::bodies_differ(stored, bodies.as_deref());
+                    // A whole-sketch profile of several stays only when the source's bodies
+                    // at this point are known and the replay holds them.
+                    let confirmed = differs.is_none() && stored.is_some() && bodies.is_some();
+                    if !confirmed && unconfirmed_stop(mapping) {
+                        continue;
+                    }
+                    if let Some(why) = differs {
                         report.push_coded(
                             Severity::Degraded,
                             model.name.as_str(),
@@ -752,6 +762,21 @@ fn through_last(history: &history::History, after: &[u64]) -> Option<history::Hi
     let mut prefix = history.clone();
     prefix.features.truncate(last.saturating_add(1));
     Some(prefix)
+}
+
+/// Cuts the history before its first feature whose whole-sketch profile nothing confirmed.
+/// False when it has none.
+fn unconfirmed_stop(mapping: &mut history::Mapping) -> bool {
+    let Some((source, why)) = mapping
+        .result
+        .as_ref()
+        .ok()
+        .and_then(history::History::first_unconfirmed)
+    else {
+        return false;
+    };
+    history::shorten(mapping, source, why);
+    true
 }
 
 fn partial_summary(history: &history::History) -> String {

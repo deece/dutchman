@@ -245,6 +245,11 @@ replayed bodies than it lists don't count. It is compared when the last retained
 sketch carries the source's bodies, which Fusion files can. In a design with components, a list
 that features of more than one component carry isn't any one component's state, so it isn't used.
 
+A feature whose source profile is the whole of a sketch with more than one profile is kept only
+when SolidCraft confirms it: the full history matches the original, or, in a partial history, the
+replay holds the bodies the source stores at that point. Otherwise the history stops before it,
+saying its profile is the whole of a sketch with several profiles.
+
 Shells require removed faces from their own historical input topology, a resolved
 thickness and inward or outward direction, and one earlier named body. A shell input-face
 blocker means the source selection or historical boundary is not supported yet; final-body
