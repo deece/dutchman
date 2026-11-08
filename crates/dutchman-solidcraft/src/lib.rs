@@ -459,6 +459,11 @@ impl SolidCraftWriter {
                 return Err(why);
             }
             let cli = verify::usable_cli(&self.replay).map_err(|why| why.to_string())?;
+            // SolidCraft evaluates a whole design when it opens it, rolled back or not, so
+            // the replay gets the history only up to the last step it inspects: a slow later
+            // feature would otherwise cost every proof run its full time.
+            let prefix = through_last(history, after);
+            let history = prefix.as_ref().unwrap_or(history);
             let design = match self.history_design(model, history, step, Live::History) {
                 Ok(design) => design,
                 Err(err) => {
@@ -730,6 +735,23 @@ fn final_live(history: &history::History, model: &Model) -> Live {
     } else {
         Live::History
     }
+}
+
+/// `history` ending at the last of its features whose id is in `after`, or `None` when that
+/// is its last feature already (or none of them is in it).
+fn through_last(history: &history::History, after: &[u64]) -> Option<history::History> {
+    let last = history.features.iter().rposition(|feature| {
+        feature
+            .get("id")
+            .and_then(Value::as_u64)
+            .is_some_and(|id| after.contains(&id))
+    })?;
+    if last.saturating_add(1) >= history.features.len() {
+        return None;
+    }
+    let mut prefix = history.clone();
+    prefix.features.truncate(last.saturating_add(1));
+    Some(prefix)
 }
 
 fn partial_summary(history: &history::History) -> String {
@@ -1289,5 +1311,32 @@ mod memory_tests {
         let fits = SolidCraftWriter::new().history_check_memory(0, Some(0));
         assert!(fits.memory_refusal().is_none());
         assert!(!fits.keep_unverified_hidden());
+    }
+}
+
+#[cfg(test)]
+mod proof_prefix_tests {
+    use super::*;
+
+    #[test]
+    fn a_blend_proof_replays_only_through_its_last_step() {
+        let history = history::History {
+            features: (1..=4)
+                .map(|id| serde_json::json!({"id": id, "type": "extrude"}))
+                .collect(),
+            ..history::History::default()
+        };
+        let ids = |history: &history::History| -> Vec<u64> {
+            history
+                .features
+                .iter()
+                .filter_map(|feature| feature.get("id").and_then(Value::as_u64))
+                .collect()
+        };
+        assert_eq!(ids(&through_last(&history, &[1, 2]).unwrap()), [1, 2]);
+        assert_eq!(ids(&through_last(&history, &[3]).unwrap()), [1, 2, 3]);
+        // Already the whole history, or no step in it: nothing to trim.
+        assert!(through_last(&history, &[4, 1]).is_none());
+        assert!(through_last(&history, &[9]).is_none());
     }
 }
