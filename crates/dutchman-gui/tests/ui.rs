@@ -2650,6 +2650,69 @@ fn unchecked_regions_screenshots() {
     std::fs::write(dir.join("index.md"), index).unwrap();
 }
 
+#[cfg(feature = "test-support")]
+#[test]
+#[ignore = "renders GPU screenshots of a card whose rebuilt features don't match the source"]
+fn body_mismatch_screenshots() {
+    let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
+    std::fs::create_dir_all(&dir).unwrap();
+    let why = "the retained features give 0 bodies where the source has 1 body at the same point";
+    let report = serde_json::json!({
+        "ok": true,
+        "mode": "partial_history",
+        "verification": {"status": "partial", "reason": format!(
+            "history stopped at feature \"Chamfer 1\"; retained features replay in SolidCraft, but {why}"
+        )},
+        "history": {"mapped": 5, "total": 7, "rebuilt": 5, "needing": 7, "features": [
+            {"name": "Sketch 1", "kind": "sketch", "status": "mapped"},
+            {"name": "Extrude 1", "kind": "extrude", "status": "mapped"},
+            {"name": "Extrude 2", "kind": "extrude", "status": "mapped"},
+            {"name": "Sketch 2", "kind": "sketch", "status": "mapped"},
+            {"name": "Extrude 3", "kind": "extrude", "status": "mapped"},
+            {"name": "Chamfer 1", "kind": "chamfer", "status": "blocked"},
+            {"name": "Fillet 1", "kind": "fillet", "status": "blocked"}
+        ]},
+        "losses": [{"code": "history/body-mismatch", "level": "Degraded",
+            "subject": "synthetic.f3d", "message": why}]
+    });
+    let mut index = String::from("# Rebuilt features that don't match the source, on the card\n\n");
+    for (theme, name) in [
+        (ThemePreference::Light, "day"),
+        (ThemePreference::Dark, "night"),
+    ] {
+        for width in [520.0, 1000.0] {
+            let mut harness = screenshot_harness(theme);
+            harness.set_size(egui::vec2(width, 700.0));
+            harness.state_mut().set_checker_for_test(true);
+            harness
+                .state_mut()
+                .preview_result_for_test(dutchman_gui::app::Row {
+                    input: PathBuf::from("synthetic.f3d"),
+                    output: Some(PathBuf::from("converted/synthetic.sc")),
+                    status: Status::Converted,
+                    progress: None,
+                    job: None,
+                    size: None,
+                    report: Some(report.clone()),
+                });
+            harness.run_steps(8);
+            harness
+                .get_by_label_contains("don't match the source")
+                .scroll_to_me();
+            harness.run_steps(8);
+            shot(
+                &mut harness,
+                &dir,
+                &mut index,
+                &format!("body-mismatch-{width}"),
+                name,
+                "Synthetic partial history whose rebuilt features give no body where the source has one.",
+            );
+        }
+    }
+    std::fs::write(dir.join("index.md"), index).unwrap();
+}
+
 #[test]
 #[ignore = "renders a GPU screenshot of the Part positions choices"]
 fn part_positions_screenshot() {

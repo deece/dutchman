@@ -585,6 +585,10 @@ pub fn outcome(report: &Value) -> String {
         text.push(' ');
         text.push_str(&note);
     }
+    if let Some(note) = body_note(report) {
+        text.push(' ');
+        text.push_str(&note);
+    }
     if let Some(note) = identity_note(report) {
         text.push(' ');
         text.push_str(&note);
@@ -612,6 +616,33 @@ fn region_note(report: &Value) -> Option<String> {
         n => Some(format!(
             "{n} rebuilt extrudes may use the wrong sketch region; it couldn't be checked against \
              the source."
+        )),
+    }
+}
+
+/// The partial histories whose replay doesn't hold the bodies the source stores where the
+/// history stops (`history/body-mismatch`). The imported final shape is still right, but the
+/// rebuilt features are not the source's, so the card says so rather than leave it to the
+/// JSON report.
+fn body_note(report: &Value) -> Option<String> {
+    let found: Vec<&str> = report
+        .get("losses")?
+        .as_array()?
+        .iter()
+        .filter(|loss| loss.get("code").and_then(Value::as_str) == Some("history/body-mismatch"))
+        .map(|loss| loss.get("message").and_then(Value::as_str).unwrap_or(""))
+        .collect();
+    match found.as_slice() {
+        [] => None,
+        [""] => {
+            Some("The rebuilt features don't match the source where the history stops.".to_owned())
+        }
+        [why] => Some(format!(
+            "The rebuilt features don't match the source where the history stops: {why}."
+        )),
+        all => Some(format!(
+            "In {} parts, the rebuilt features don't match the source where the history stops.",
+            all.len()
         )),
     }
 }
@@ -717,6 +748,28 @@ pub fn loss_counts(losses: &[&Value]) -> String {
 #[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_card_says_when_rebuilt_features_do_not_match_the_source() {
+        let report = |messages: &[&str]| {
+            let losses: Vec<Value> = messages
+                .iter()
+                .map(|message| {
+                    serde_json::json!({"code": "history/body-mismatch", "level": "Degraded",
+                        "message": message})
+                })
+                .chain([serde_json::json!({"code": "f3d/other", "message": "unrelated"})])
+                .collect();
+            serde_json::json!({"ok": true, "mode": "partial_history",
+                "history": {"rebuilt": 3, "needing": 4}, "losses": losses})
+        };
+        assert!(!outcome(&report(&[])).contains("don't match"));
+        assert!(outcome(&report(&["the retained features give 0 bodies where the source has 1 body at the same point"]))
+            .ends_with("The rebuilt features don't match the source where the history stops: the retained features give 0 bodies where the source has 1 body at the same point."));
+        assert!(outcome(&report(&["a", "b"])).ends_with(
+            "In 2 parts, the rebuilt features don't match the source where the history stops."
+        ));
+    }
 
     #[test]
     fn the_card_counts_extrudes_whose_region_was_not_checked() {
