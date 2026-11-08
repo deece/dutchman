@@ -592,7 +592,7 @@ pub fn outcome(report: &Value) -> String {
     text
 }
 
-/// The kept extrudes whose sketch region nothing checked against the source. They replay,
+/// The rebuilt extrudes whose sketch region nothing checked against the source. They replay,
 /// but one could sweep the wrong region, so the card says how many rather than leave it to
 /// the JSON report.
 fn region_note(report: &Value) -> Option<String> {
@@ -605,10 +605,13 @@ fn region_note(report: &Value) -> Option<String> {
     match count {
         0 => None,
         1 => Some(
-            "1 kept extrude's sketch region couldn't be checked against the source.".to_owned(),
+            "1 rebuilt extrude may use the wrong sketch region; it couldn't be checked against \
+             the source."
+                .to_owned(),
         ),
         n => Some(format!(
-            "{n} kept extrudes' sketch regions couldn't be checked against the source."
+            "{n} rebuilt extrudes may use the wrong sketch region; it couldn't be checked against \
+             the source."
         )),
     }
 }
@@ -731,11 +734,11 @@ mod tests {
             serde_json::json!({"ok": true, "mode": "partial_history",
                 "history": {"rebuilt": 3, "needing": 4, "features": features}})
         };
-        assert!(!outcome(&report(&[false, false])).contains("checked against"));
+        assert!(!outcome(&report(&[false, false])).contains("sketch region"));
         assert!(outcome(&report(&[true, false]))
-            .ends_with("1 kept extrude's sketch region couldn't be checked against the source."));
+            .ends_with("1 rebuilt extrude may use the wrong sketch region; it couldn't be checked against the source."));
         assert!(outcome(&report(&[true, true]))
-            .ends_with("2 kept extrudes' sketch regions couldn't be checked against the source."));
+            .ends_with("2 rebuilt extrudes may use the wrong sketch region; it couldn't be checked against the source."));
     }
 
     #[test]

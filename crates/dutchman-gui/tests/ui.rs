@@ -2634,7 +2634,7 @@ fn unchecked_regions_screenshots() {
                 });
             harness.run_steps(8);
             harness
-                .get_by_label_contains("sketch regions couldn't be checked")
+                .get_by_label_contains("may use the wrong sketch region")
                 .scroll_to_me();
             harness.run_steps(8);
             shot(
@@ -2643,7 +2643,7 @@ fn unchecked_regions_screenshots() {
                 &mut index,
                 &format!("unchecked-regions-{width}"),
                 name,
-                "Synthetic partial history with two kept extrudes whose regions couldn't be checked.",
+                "Synthetic partial history with two rebuilt extrudes whose regions couldn't be checked.",
             );
         }
     }
