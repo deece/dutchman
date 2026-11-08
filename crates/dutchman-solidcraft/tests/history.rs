@@ -5645,7 +5645,12 @@ fn placed_cylinders_and_cones_become_solidcraft_primitives() {
     let cone = placed_primitive(
         json!({"kind": "cone", "radius1": 4.0, "radius2": 1.0, "height": 6.0, "angle": full}),
     );
-    let (document, _) = convert(&primitive_history(cone.clone()), &writer);
+    // Cones exist from SolidCraft 0.24.1: name that target rather than whichever SolidCraft
+    // the machine running the test has.
+    let with_cones = SolidCraftWriter::new()
+        .verification(Verification::Off)
+        .target_version(Some("0.24.1".parse().unwrap()));
+    let (document, _) = convert(&primitive_history(cone.clone()), &with_cones);
     let tip = &document["features"][0];
     assert_eq!(tip["type"], "cone");
     assert_eq!(
