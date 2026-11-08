@@ -430,6 +430,7 @@ mod history_tests {
             total: 2,
             blends: Vec::new(),
             hidden: Vec::new(),
+            unconfirmed: Default::default(),
             stop: None,
             sources: Default::default(),
         }
