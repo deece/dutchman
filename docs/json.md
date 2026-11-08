@@ -233,8 +233,11 @@ names the unresolved plane reference; resolved skipped planes count as `not_need
 
 A partial history that replays but whose bodies differ from what the source stores at the same
 point adds a `Degraded` loss with code `history/body-mismatch`, and `verification.reason` says
-so: fewer bodies, or a body the source has with no replayed body whose box centre is within half
-the body's box diagonal (at least 0.5 mm), since the source's centres are approximate. The source's list can leave bodies out, so more
+so: fewer bodies, or a body the source has with no replayed body whose box centre is near
+enough. When the source marks a body's box as the solid's own (Fusion's `body_centers_exact`),
+its centre must be within 0.5 mm or 1% of the replayed body's box diagonal. Other boxes are
+taken over points sampled on each edge and can be off by up to the body's radius, so for those
+it is half the diagonal (at least 0.5 mm). The source's list can leave bodies out, so more
 replayed bodies than it lists don't count. It is compared when the last retained feature that isn't a
 sketch carries the source's bodies, which Fusion files can.
 

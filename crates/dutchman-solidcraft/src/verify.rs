@@ -1012,15 +1012,24 @@ pub(crate) struct Placed {
     pub size: Option<f64>,
 }
 
+/// A body the source stores in a history state: the centre of its box, and whether that box
+/// is the solid's own (`exact`) or one over points sampled on its edges.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct StoredBody {
+    pub center: [f64; 3],
+    pub exact: bool,
+}
+
 /// What to say when a replayed partial history doesn't hold the bodies the source stores at
-/// the same point (`stored`, the centres of their boxes): fewer bodies, or a stored body with
-/// no replayed body whose box centre is within half its box's diagonal (at least 0.5 mm).
-/// The source's boxes are taken over points sampled on each edge, which can bunch on a full
-/// circle, so a stored centre can be off by up to the body's radius: a replayed body of the
-/// right size is never further than that from it. The source's list can leave bodies out, so
-/// a replay with more bodies than it lists isn't a difference.
+/// the same point (`stored`): fewer bodies, or a stored body with no replayed body whose box
+/// centre is near enough. An exact stored box is the solid's own, so its centre must be within
+/// 0.5 mm or 1% of the replayed body's box diagonal. Any other is taken over points sampled on
+/// each edge, which can bunch on a curve, so its centre can be off by up to the body's radius:
+/// half the diagonal (at least 0.5 mm), as far as a replayed body of the right size can be. The
+/// source's list can leave bodies out, so a replay with more bodies than it lists isn't a
+/// difference.
 pub(crate) fn bodies_differ(
-    stored: Option<&[[f64; 3]]>,
+    stored: Option<&[StoredBody]>,
     replayed: Option<&[Placed]>,
 ) -> Option<String> {
     let (stored, replayed) = (stored?, replayed?);
@@ -1032,9 +1041,9 @@ pub(crate) fn bodies_differ(
             bodies(stored.len())
         ));
     }
-    let mut free: Vec<(usize, [f64; 3], f64)> = Vec::new();
-    for (at, body) in replayed.iter().enumerate() {
-        free.push((at, body.center?, (body.size? * 0.5).max(0.5)));
+    let mut free: Vec<([f64; 3], f64)> = Vec::new();
+    for body in replayed {
+        free.push((body.center?, body.size?));
     }
     let distance = |a: &[f64; 3], b: &[f64; 3]| {
         a.iter()
@@ -1043,11 +1052,12 @@ pub(crate) fn bodies_differ(
             .sum::<f64>()
             .sqrt()
     };
-    for center in stored {
+    for body in stored {
+        let share = if body.exact { 0.01 } else { 0.5 };
         let nearest = free
             .iter()
             .enumerate()
-            .map(|(slot, (_, at, tolerance))| (slot, distance(center, at), *tolerance))
+            .map(|(slot, (at, size))| (slot, distance(&body.center, at), (size * share).max(0.5)))
             .min_by(|a, b| a.1.total_cmp(&b.1))?;
         if nearest.1 > nearest.2 {
             return Some(format!(
@@ -1795,16 +1805,27 @@ mod tests {
             center: Some([x, 0.0, 0.0]),
             size: Some(size),
         };
-        let one = [[0.0, 12.2, 1.5]];
+        let approximate = |center: [f64; 3]| StoredBody {
+            center,
+            exact: false,
+        };
+        let one = [approximate([0.0, 12.2, 1.5])];
         assert_eq!(
-            bodies_differ(Some(&[[0.0; 3], [50.0, 0.0, 0.0]]), Some(&[at(0.0, 30.0)])).as_deref(),
+            bodies_differ(
+                Some(&[approximate([0.0; 3]), approximate([50.0, 0.0, 0.0])]),
+                Some(&[at(0.0, 30.0)])
+            )
+            .as_deref(),
             Some(
                 "the retained features give 1 body where the source has 2 bodies at the same point"
             )
         );
         // The source's list can leave a body out: one more in the replay is no difference.
         assert_eq!(
-            bodies_differ(Some(&[[0.0; 3]]), Some(&[at(0.0, 30.0), at(5.0, 6.0)])),
+            bodies_differ(
+                Some(&[approximate([0.0; 3])]),
+                Some(&[at(0.0, 30.0), at(5.0, 6.0)])
+            ),
             None
         );
         // One body each, but the replay's is the small piece the source no longer has.
@@ -1823,8 +1844,23 @@ mod tests {
             size: Some(30.0),
         };
         assert_eq!(bodies_differ(Some(&one), Some(&[near])), None);
+        // An exact stored box is the solid's own: the same 13.8 mm is a different body, and
+        // only a centre within 1% of the size (at least 0.5 mm) matches.
+        let exact = [StoredBody {
+            center: [0.0, 12.2, 1.5],
+            exact: true,
+        }];
+        assert_eq!(
+            bodies_differ(Some(&exact), Some(&[near])).as_deref(),
+            Some("a retained body sits 13.8 mm from where the source has it at the same point")
+        );
+        let close = Placed {
+            center: Some([0.0, 12.4, 1.5]),
+            size: Some(30.0),
+        };
+        assert_eq!(bodies_differ(Some(&exact), Some(&[close])), None);
         // Bodies in another order still match.
-        let two = [[0.0, 0.0, 0.0], [50.0, 0.0, 0.0]];
+        let two = [approximate([0.0, 0.0, 0.0]), approximate([50.0, 0.0, 0.0])];
         assert_eq!(
             bodies_differ(Some(&two), Some(&[at(50.0, 10.0), at(0.0, 10.0)])),
             None

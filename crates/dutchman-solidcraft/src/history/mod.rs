@@ -61,7 +61,7 @@ pub(crate) struct History {
     pub(crate) sources: BTreeMap<u64, usize>,
     /// The centres of the bodies the source stores in the state right after a feature, by the
     /// id of the feature it became. Absent when the source doesn't say, which is not "none".
-    pub(crate) stored_bodies: BTreeMap<u64, Vec<[f64; 3]>>,
+    pub(crate) stored_bodies: BTreeMap<u64, Vec<crate::verify::StoredBody>>,
     pub(crate) params: Vec<Value>,
     pub(crate) features: Vec<Value>,
     /// The looks of the bodies the history makes, by body name.
@@ -89,23 +89,35 @@ pub(crate) struct History {
     pub(crate) hidden: Vec<u64>,
 }
 
-/// The centres of the boxes of the bodies the source stores in the state right after
-/// `feature`, from `id:x,y,z;id:x,y,z` in its `body_centers`. `None` when it has none, which
-/// is unknown, or when an entry can't be read.
-fn stored_body_centers(feature: &Value) -> Option<Vec<[f64; 3]>> {
-    let centers = feature
-        .pointer("/source_properties/body_centers")
-        .and_then(Value::as_str)?;
-    let centers = centers
+/// The bodies the source stores in the state right after `feature`: the centres of their
+/// boxes, from `id:x,y,z;id:x,y,z` in its `body_centers`, each exact when its id is in
+/// `body_centers_exact`. `None` when it has none, which is unknown, or when an entry can't be
+/// read.
+fn stored_body_centers(feature: &Value) -> Option<Vec<crate::verify::StoredBody>> {
+    let property = |name: &str| {
+        feature
+            .pointer(&format!("/source_properties/{name}"))
+            .and_then(Value::as_str)
+    };
+    let exact: std::collections::BTreeSet<&str> = property("body_centers_exact")
+        .unwrap_or_default()
+        .split(',')
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .collect();
+    let centers = property("body_centers")?
         .split(';')
         .filter(|entry| !entry.is_empty())
         .map(|entry| {
-            let (_, point) = entry.split_once(':')?;
+            let (id, point) = entry.split_once(':')?;
             let point: Vec<f64> = point
                 .split(',')
                 .map(|value| value.trim().parse::<f64>().ok().filter(|v| v.is_finite()))
                 .collect::<Option<_>>()?;
-            <[f64; 3]>::try_from(point).ok()
+            Some(crate::verify::StoredBody {
+                center: <[f64; 3]>::try_from(point).ok()?,
+                exact: exact.contains(id.trim()),
+            })
         })
         .collect::<Option<Vec<_>>>()?;
     (!centers.is_empty()).then_some(centers)
@@ -114,7 +126,7 @@ fn stored_body_centers(feature: &Value) -> Option<Vec<[f64; 3]>> {
 impl History {
     /// Where the source stores the bodies at the point this history ends, when its last
     /// feature that isn't a sketch says. An earlier feature's count can't speak for a later one.
-    pub(crate) fn stored_bodies_at_end(&self) -> Option<&[[f64; 3]]> {
+    pub(crate) fn stored_bodies_at_end(&self) -> Option<&[crate::verify::StoredBody]> {
         let last = self
             .features
             .iter()
