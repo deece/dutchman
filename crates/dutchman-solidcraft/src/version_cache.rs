@@ -246,7 +246,13 @@ mod tests {
         let cache = dir.path().join("cache.json");
         let start = std::time::Instant::now();
         assert_eq!(version_at(&cli, true, Some(cache.clone())), Ok(None));
-        assert!(start.elapsed() < std::time::Duration::from_millis(3500));
+        // The script sleeps 30 s: finishing well before that proves the probe was cut off,
+        // with room for a slow runner to start and stop it.
+        assert!(
+            start.elapsed() < super::super::VERSION_TIMEOUT + std::time::Duration::from_secs(10),
+            "{:?}",
+            start.elapsed()
+        );
         assert_eq!(version_at(&cli, true, Some(cache.clone())), Ok(None));
         assert!(!cache.exists());
         assert_eq!(
