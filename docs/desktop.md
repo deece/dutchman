@@ -128,10 +128,10 @@ They replay, but nothing proves they swept the right region; the JSON report mar
 `profile_unverified`.
 
 When a partial history replays but its bodies differ from what the source stores where the
-history stops, the card says so, such as "The rebuilt features don't match the source where the
-history stops: the retained features give 0 bodies where the source has 1 body at the same
-point." In an assembly it gives how many parts. The imported final shape is unaffected; the JSON
-report has the loss `history/body-mismatch`.
+history stops, the card says so and what to do, such as "The rebuilt features don't match the
+original where the history stops (0 bodies where it has 1). The final shape is correct; check the
+rebuilt features before editing them." In an assembly it gives how many parts. The JSON report has
+the loss `history/body-mismatch`.
 
 Expanded **Losses** lists wrap long feature ids inside their result card. Ordinary text
 wraps at spaces.

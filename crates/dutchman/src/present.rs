@@ -622,9 +622,11 @@ fn region_note(report: &Value) -> Option<String> {
 
 /// The partial histories whose replay doesn't hold the bodies the source stores where the
 /// history stops (`history/body-mismatch`). The imported final shape is still right, but the
-/// rebuilt features are not the source's, so the card says so rather than leave it to the
-/// JSON report.
+/// rebuilt features are not the source's, so the card says so, and what to do, rather than
+/// leave it to the JSON report.
 fn body_note(report: &Value) -> Option<String> {
+    const ADVICE: &str =
+        "The final shape is correct; check the rebuilt features before editing them.";
     let found: Vec<&str> = report
         .get("losses")?
         .as_array()?
@@ -634,17 +636,32 @@ fn body_note(report: &Value) -> Option<String> {
         .collect();
     match found.as_slice() {
         [] => None,
-        [""] => {
-            Some("The rebuilt features don't match the source where the history stops.".to_owned())
-        }
-        [why] => Some(format!(
-            "The rebuilt features don't match the source where the history stops: {why}."
-        )),
+        [why] => Some(match body_difference(why) {
+            Some(short) => format!(
+                "The rebuilt features don't match the original where the history stops ({short}). {ADVICE}"
+            ),
+            None => format!(
+                "The rebuilt features don't match the original where the history stops. {ADVICE}"
+            ),
+        }),
         all => Some(format!(
-            "In {} parts, the rebuilt features don't match the source where the history stops.",
+            "In {} parts, the rebuilt features don't match the original where the history stops. {ADVICE}",
             all.len()
         )),
     }
+}
+
+/// A body-mismatch message in a few plain words: "0 bodies where it has 1", or "a rebuilt
+/// body is 12.6 mm from where it has it". `None` for a message of another form.
+fn body_difference(message: &str) -> Option<String> {
+    if let Some(rest) = message.strip_prefix("the retained features give ") {
+        let (rebuilt, source) = rest.split_once(" where the source has ")?;
+        let count = source.split_whitespace().next()?;
+        return Some(format!("{rebuilt} where it has {count}"));
+    }
+    let rest = message.strip_prefix("a retained body sits ")?;
+    let distance = rest.strip_suffix(" from where the source has it at the same point")?;
+    Some(format!("a rebuilt body is {distance} from where it has it"))
 }
 
 /// The parts at their design's origin because their placement could not be read. Among
@@ -763,12 +780,17 @@ mod tests {
             serde_json::json!({"ok": true, "mode": "partial_history",
                 "history": {"rebuilt": 3, "needing": 4}, "losses": losses})
         };
+        let advice = "The final shape is correct; check the rebuilt features before editing them.";
         assert!(!outcome(&report(&[])).contains("don't match"));
         assert!(outcome(&report(&["the retained features give 0 bodies where the source has 1 body at the same point"]))
-            .ends_with("The rebuilt features don't match the source where the history stops: the retained features give 0 bodies where the source has 1 body at the same point."));
-        assert!(outcome(&report(&["a", "b"])).ends_with(
-            "In 2 parts, the rebuilt features don't match the source where the history stops."
-        ));
+            .ends_with(&format!("The rebuilt features don't match the original where the history stops (0 bodies where it has 1). {advice}")));
+        assert!(outcome(&report(&["a retained body sits 12.6 mm from where the source has it at the same point"]))
+            .ends_with(&format!("The rebuilt features don't match the original where the history stops (a rebuilt body is 12.6 mm from where it has it). {advice}")));
+        assert!(outcome(&report(&["something else"])).ends_with(&format!(
+            "The rebuilt features don't match the original where the history stops. {advice}"
+        )));
+        assert!(outcome(&report(&["a", "b"]))
+            .ends_with(&format!("In 2 parts, the rebuilt features don't match the original where the history stops. {advice}")));
     }
 
     #[test]

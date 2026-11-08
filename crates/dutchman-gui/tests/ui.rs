@@ -2697,7 +2697,7 @@ fn body_mismatch_screenshots() {
                 });
             harness.run_steps(8);
             harness
-                .get_by_label_contains("don't match the source")
+                .get_by_label_contains("don't match the original")
                 .scroll_to_me();
             harness.run_steps(8);
             shot(
