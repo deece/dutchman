@@ -948,7 +948,7 @@ fn map_into(
                 || kind.starts_with("datum")
                 || matches!(
                     kind.as_str(),
-                    "tree_node" | "insert_component" | "assembly_joint"
+                    "tree_node" | "insert_component" | "assembly_joint" | "reference_image"
                 )
                 || helpers::is_helper(feature))
         })
@@ -992,7 +992,13 @@ fn map_into(
         let definition = operation(feature);
         let structural = matches!(
             definition.get("definition").and_then(Value::as_str),
-            Some("datum_principal_plane" | "tree_node" | "insert_component" | "assembly_joint")
+            Some(
+                "datum_principal_plane"
+                    | "tree_node"
+                    | "insert_component"
+                    | "assembly_joint"
+                    | "reference_image"
+            )
         ) || helpers::is_helper(feature);
         if blocked.is_some() && (kind(feature) != "sketch" || !keep_sketches) && !structural {
             out.push(outcome(
@@ -1497,6 +1503,8 @@ fn map_feature(
         Some("tree_node") => Ok(Mapped::Nothing),
         // A component inserted, or a joint made, in the timeline: the assembly carries it.
         Some("insert_component" | "assembly_joint") => Ok(Mapped::Nothing),
+        // A raster image placed for reference (a Fusion Canvas): it builds no geometry.
+        Some("reference_image") => Ok(Mapped::Nothing),
         Some("sketch") => sketch::map(feature, definition, ctx, report).map(Mapped::Feature),
         Some("spatial_sketch") => {
             spatial::map(feature, definition, ctx, report).map(Mapped::Feature)
@@ -1975,6 +1983,18 @@ mod tests {
         .result
         .unwrap_err();
         assert_eq!(err, "no feature in the history builds geometry");
+    }
+
+    #[test]
+    fn a_reference_image_builds_nothing() {
+        let model = json!({"features": []});
+        let mut ctx = Context::new(&model);
+        let canvas = json!({"id": "f3d:model:feature#7", "ordinal": 7, "name": "Canvas 1",
+            "definition": {"definition": "reference_image", "asset": "f3d:model:asset#1"}});
+        let mut features = Vec::new();
+        let mapped = map_feature(&canvas, &mut ctx, &mut Report::default(), &mut features);
+        assert!(matches!(mapped, Ok(Mapped::Nothing)));
+        assert!(features.is_empty());
     }
 
     #[test]
