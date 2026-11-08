@@ -2586,6 +2586,70 @@ fn converted_report_screenshots() {
     std::fs::write(dir.join("index.md"), index).unwrap();
 }
 
+#[cfg(feature = "test-support")]
+#[test]
+#[ignore = "renders GPU screenshots of a card with unchecked extrude regions"]
+fn unchecked_regions_screenshots() {
+    let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
+    std::fs::create_dir_all(&dir).unwrap();
+    let extrude = |unchecked: bool| {
+        let mut row = serde_json::json!({"name": "Extrude", "kind": "extrude", "status": "mapped"});
+        if unchecked {
+            row["profile_unverified"] = serde_json::Value::Bool(true);
+        }
+        row
+    };
+    let report = serde_json::json!({
+        "ok": true,
+        "mode": "partial_history",
+        "verification": {"status": "partial", "reason": "history stopped at feature \"Fillet 1\""},
+        "history": {"mapped": 5, "total": 7, "rebuilt": 5, "needing": 7, "features": [
+            {"name": "Sketch 1", "kind": "sketch", "status": "mapped"},
+            extrude(true), extrude(true), extrude(false),
+            {"name": "Sketch 2", "kind": "sketch", "status": "mapped"},
+            {"name": "Fillet 1", "kind": "fillet", "status": "blocked"},
+            {"name": "Chamfer 1", "kind": "chamfer", "status": "blocked"}
+        ]},
+        "losses": []
+    });
+    let mut index = String::from("# Unchecked extrude regions on the card\n\n");
+    for (theme, name) in [
+        (ThemePreference::Light, "day"),
+        (ThemePreference::Dark, "night"),
+    ] {
+        for width in [520.0, 1000.0] {
+            let mut harness = screenshot_harness(theme);
+            harness.set_size(egui::vec2(width, 700.0));
+            harness.state_mut().set_checker_for_test(true);
+            harness
+                .state_mut()
+                .preview_result_for_test(dutchman_gui::app::Row {
+                    input: PathBuf::from("synthetic.f3d"),
+                    output: Some(PathBuf::from("converted/synthetic.sc")),
+                    status: Status::Converted,
+                    progress: None,
+                    job: None,
+                    size: None,
+                    report: Some(report.clone()),
+                });
+            harness.run_steps(8);
+            harness
+                .get_by_label_contains("sketch regions couldn't be checked")
+                .scroll_to_me();
+            harness.run_steps(8);
+            shot(
+                &mut harness,
+                &dir,
+                &mut index,
+                &format!("unchecked-regions-{width}"),
+                name,
+                "Synthetic partial history with two kept extrudes whose regions couldn't be checked.",
+            );
+        }
+    }
+    std::fs::write(dir.join("index.md"), index).unwrap();
+}
+
 #[test]
 #[ignore = "renders a GPU screenshot of the Part positions choices"]
 fn part_positions_screenshot() {
