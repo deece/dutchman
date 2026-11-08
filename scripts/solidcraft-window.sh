@@ -11,7 +11,7 @@ latest_patch() {
     local minor=$1 page count
     : "${GITHUB_TOKEN:?Set GITHUB_TOKEN to resolve the newest SolidCraft patch}"
     for page in {1..20}; do
-        curl -fsSL --connect-timeout 15 --max-time 120 \
+        curl -fsSL --retry 5 --retry-all-errors --connect-timeout 15 --max-time 120 \
             -H "Authorization: Bearer $GITHUB_TOKEN" -H 'Accept: application/vnd.github+json' \
             "https://api.github.com/repos/tangency-labs/solidcraft/releases?per_page=100&page=$page" \
             -o "$work/page-$page.json"
@@ -27,7 +27,7 @@ latest_patch() {
 
 release_checksum() {
     local version=$1 archive="solidcraft-$1-linux-x86_64.tar.gz"
-    curl -fsSL --connect-timeout 15 --max-time 120 \
+    curl -fsSL --retry 5 --retry-all-errors --connect-timeout 15 --max-time 120 \
         "https://github.com/tangency-labs/solidcraft/releases/download/v$version/SHA256SUMS.txt" \
         -o "$work/sums.txt"
     python3 "$helper" checksum "$archive" "$work/sums.txt"
@@ -43,7 +43,7 @@ if [[ ${1:-} == --fetch && $# -ge 2 && $# -le 3 ]]; then
         exit 2
     fi
     archive="solidcraft-$version-linux-x86_64.tar.gz"
-    curl -fsSL --connect-timeout 15 --max-time 120 -o "$archive" \
+    curl -fsSL --retry 5 --retry-all-errors --connect-timeout 15 --max-time 120 -o "$archive" \
         "https://github.com/tangency-labs/solidcraft/releases/download/v$version/$archive"
     printf '%s  %s\n' "$checksum" "$archive" | sha256sum -c - >&2
     tar xzf "$archive"
