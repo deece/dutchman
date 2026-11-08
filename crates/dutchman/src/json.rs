@@ -615,6 +615,7 @@ fn part_fields(parts: &[dutchman_core::PartHistory]) -> Value {
                 "total": part.total,
                 "rebuilt": part.rebuilt,
                 "needing": part.needing,
+                "reapplied": part.reapplied,
             })
         })
         .collect()
@@ -646,6 +647,12 @@ fn outcome_fields(outcome: &Outcome) -> Map<String, Value> {
             if let (true, Some(fields)) = (feature.profile_unverified, row.as_object_mut()) {
                 fields.insert("profile_unverified".to_owned(), json!(true));
             }
+            if let (true, Some(fields)) = (feature.reapplied, row.as_object_mut()) {
+                fields.insert("reapplied".to_owned(), json!(true));
+            }
+            if let (true, Some(fields)) = (feature.final_body, row.as_object_mut()) {
+                fields.insert("final_body".to_owned(), json!(true));
+            }
             if let (Some(refusal), Some(fields)) = (&refusal, row.as_object_mut()) {
                 fields.insert("source".into(), json!("solidcraft"));
                 fields.insert("category".into(), json!(refusal.category));
@@ -665,7 +672,12 @@ fn outcome_fields(outcome: &Outcome) -> Map<String, Value> {
     let rebuilt = outcome
         .features
         .iter()
-        .filter(|f| f.status == FeatureStatus::Mapped)
+        .filter(|f| f.status == FeatureStatus::Mapped && !f.reapplied)
+        .count();
+    let reapplied = outcome
+        .features
+        .iter()
+        .filter(|f| f.status == FeatureStatus::Mapped && f.reapplied)
         .count();
     let needing = outcome
         .features
@@ -688,7 +700,8 @@ fn outcome_fields(outcome: &Outcome) -> Map<String, Value> {
     );
     out.insert(
         "history".to_owned(),
-        json!({"mapped": mapped, "total": total, "rebuilt": rebuilt, "needing": needing, "features": features}),
+        json!({"mapped": mapped, "total": total, "rebuilt": rebuilt, "needing": needing,
+            "reapplied": reapplied, "features": features}),
     );
     out
 }
@@ -1227,6 +1240,8 @@ mod tests {
                 ordinal: Some(3),
                 variant: Some("fillet, 1 radius group".to_owned()),
                 profile_unverified: false,
+                reapplied: false,
+                final_body: false,
             }],
         });
         let fields = Value::Object(fields);
@@ -1413,6 +1428,8 @@ mod tests {
             ordinal: None,
             variant: None,
             profile_unverified: false,
+            reapplied: false,
+            final_body: false,
         }
     }
 
@@ -1472,6 +1489,7 @@ mod tests {
             total: 2,
             rebuilt: 1,
             needing: 2,
+            reapplied: 0,
         });
         report.push_part(dutchman_core::PartHistory {
             name: "Rail".to_owned(),
@@ -1480,6 +1498,7 @@ mod tests {
             total: 0,
             rebuilt: 0,
             needing: 0,
+            reapplied: 0,
         });
         let out = Value::Object(success(CONVERT, json!({}), &report));
         assert_eq!(

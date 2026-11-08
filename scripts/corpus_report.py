@@ -74,7 +74,7 @@ def summarize(meta, report, err_tail):
         "wall_s": meta.get("wall_s"), "peak_rss_kb": meta.get("peak_rss_kb"),
         "mode": report.get("mode"), "verification": verification.get("status"),
         "verification_reason": verification.get("reason"),
-        "history_rebuilt": history.get("rebuilt"), "history_needing": history.get("needing"),
+        "history_rebuilt": history.get("rebuilt"), "history_needing": history.get("needing"), "history_reapplied": history.get("reapplied"),
         "history_mapped": history.get("mapped"), "history_total": history.get("total"),
         "placed": completeness.get("placed"), "placements": completeness.get("placements"),
         "losses": len(report.get("losses") or []),

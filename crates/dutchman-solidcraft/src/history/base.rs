@@ -2,9 +2,11 @@
 //! them (modelled directly, or imported), as SolidCraft Import features at their place in the
 //! timeline, so the features after them keep their history.
 //!
-//! The bodies are the design's as it ends, so a base body a later feature changes would be
-//! imported changed already, and the later feature would change it again. Such a base feature
-//! is refused, naming the feature that changes its body.
+//! The bodies are the design's as it ends, so a base body a later feature changes is imported
+//! changed already. A later join, cut or intersection re-applies to it without changing the
+//! shape: those features are kept but marked as re-applied, not rebuilt, and the base feature as
+//! holding the final body. Any other later change (a move, a blend, a deleted face) would apply
+//! twice, so such a base feature is refused, naming the feature that changes its body.
 
 use std::collections::BTreeSet;
 
@@ -48,20 +50,48 @@ pub(super) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
         .and_then(Value::as_array)
         .map(|ids| ids.iter().filter_map(Value::as_str).collect())
         .unwrap_or_default();
-    if let Some(later) = later_change(feature, &ids, ctx) {
+    let later = later_changes(feature, &ids, ctx);
+    if let Some(twice) = later.iter().find(|row| !reapplies(row)) {
         return Err(format!(
-            "its body is stored only as the design ends, and the later feature \"{later}\" \
-             changes it"
+            "its body is stored only as the design ends, and the later feature \"{}\" \
+             changes it",
+            name(twice).unwrap_or("?")
         ));
     }
-    import(feature, &ids, ctx)
+    let mapped = import(feature, &ids, ctx)?;
+    if !later.is_empty() {
+        ctx.final_body = true;
+        ctx.reapplied.extend(
+            later
+                .iter()
+                .filter_map(|row| row.get("id").and_then(Value::as_str))
+                .map(str::to_owned),
+        );
+    }
+    Ok(mapped)
 }
 
-/// The name of the first active feature after `feature` on the timeline that outputs one of
-/// the bodies `ids`, which it then changes.
-fn later_change<'a>(feature: &Value, ids: &[&str], ctx: &Context<'a>) -> Option<&'a str> {
-    let ordinal = feature.get("ordinal").and_then(Value::as_u64)?;
-    ctx.arena("features")
+/// Whether a later feature re-applies to a body that already holds its result without
+/// changing it: a join, cut or intersection by an extrude, revolve, sweep, loft or hole.
+fn reapplies(row: &Value) -> bool {
+    let kind = super::kind(row);
+    let op = super::operation(row)
+        .get("op")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    kind == "hole"
+        || (matches!(kind.as_str(), "extrude" | "revolve" | "sweep" | "loft")
+            && matches!(op, "join" | "cut" | "intersect"))
+}
+
+/// The active features after `feature` on the timeline that output one of the bodies `ids`,
+/// which they then change, in timeline order.
+fn later_changes<'a>(feature: &Value, ids: &[&str], ctx: &Context<'a>) -> Vec<&'a Value> {
+    let Some(ordinal) = feature.get("ordinal").and_then(Value::as_u64) else {
+        return Vec::new();
+    };
+    let mut rows: Vec<&'a Value> = ctx
+        .arena("features")
         .iter()
         .filter(|row| row.get("suppressed").and_then(Value::as_bool) != Some(true))
         .filter(|row| {
@@ -78,8 +108,9 @@ fn later_change<'a>(feature: &Value, ids: &[&str], ctx: &Context<'a>) -> Option<
                         .any(|out| out.as_str().is_some_and(|out| ids.contains(&out)))
                 })
         })
-        .min_by_key(|row| row.get("ordinal").and_then(Value::as_u64))
-        .map(|row| name(row).unwrap_or("?"))
+        .collect();
+    rows.sort_by_key(|row| row.get("ordinal").and_then(Value::as_u64));
+    rows
 }
 
 /// Stored geometry names its retained bodies in the feature's outputs, not its operation.
@@ -225,18 +256,19 @@ pub(crate) fn store(
 mod tests {
     use super::*;
 
+    fn base(ordinal: u64) -> Value {
+        json!({"id": "b", "name": "Base Feature 1", "ordinal": ordinal, "outputs": ["body#1"]})
+    }
+
     #[test]
-    fn a_base_feature_whose_body_a_later_feature_changes_is_refused() {
-        let base = |ordinal: u64| {
-            json!({"id": "b", "name": "Base Feature 1", "ordinal": ordinal,
-                "outputs": ["body#1"]})
-        };
+    fn a_base_feature_whose_body_a_later_move_changes_is_refused() {
         let definition = json!({"bodies": {"kind": "resolved", "value": {"bodies": ["body#1"]}}});
         let model = json!({"features": [
             base(1),
-            {"id": "m", "name": "Move 1", "ordinal": 2, "outputs": ["body#1"]},
-            {"id": "s", "name": "Move 2", "ordinal": 3, "outputs": ["body#1"], "suppressed": true},
-            {"id": "o", "name": "Extrude 1", "ordinal": 4, "outputs": ["body#2"]},
+            {"id": "e", "name": "Extrude 1", "kind": "extrude", "ordinal": 2,
+                "definition": {"definition": "extrude", "op": "join"}, "outputs": ["body#1"]},
+            {"id": "m", "name": "Move 1", "kind": "move_body", "ordinal": 3,
+                "definition": {"definition": "move_body"}, "outputs": ["body#1"]},
         ]});
         let mut ctx = Context::new(&model);
         let err = map(&base(1), &definition, &mut ctx).unwrap_err();
@@ -244,13 +276,29 @@ mod tests {
             err,
             "its body is stored only as the design ends, and the later feature \"Move 1\" changes it"
         );
-        // A suppressed later feature, or one making another body, changes nothing.
+        assert!(ctx.reapplied.is_empty());
+    }
+
+    #[test]
+    fn later_joins_and_cuts_re_apply_and_others_do_not() {
+        let row = |kind: &str, op: &str| json!({"kind": kind, "definition": {"definition": kind, "op": op}});
+        assert!(reapplies(&row("extrude", "join")));
+        assert!(reapplies(&row("revolve", "cut")));
+        assert!(reapplies(&row("loft", "intersect")));
+        assert!(reapplies(
+            &json!({"kind": "hole", "definition": {"definition": "hole"}})
+        ));
+        assert!(!reapplies(&row("extrude", "new_body")));
+        assert!(!reapplies(&row("fillet", "")));
+        assert!(!reapplies(&row("move_body", "")));
+        assert!(!reapplies(&row("delete_face", "")));
+        // A suppressed later feature, or one making another body, is not a later change.
         let model = json!({"features": [
             base(1),
             {"id": "s", "name": "Move 2", "ordinal": 3, "outputs": ["body#1"], "suppressed": true},
             {"id": "o", "name": "Extrude 1", "ordinal": 4, "outputs": ["body#2"]},
         ]});
         let ctx = Context::new(&model);
-        assert_eq!(later_change(&base(1), &["body#1"], &ctx), None);
+        assert!(later_changes(&base(1), &["body#1"], &ctx).is_empty());
     }
 }

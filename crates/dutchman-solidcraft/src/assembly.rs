@@ -468,7 +468,11 @@ fn part_history(part: &Model, features: &[FeatureOutcome], check: Check) -> Part
             .count(),
         rebuilt: counted
             .clone()
-            .filter(|f| f.status == FeatureStatus::Mapped)
+            .filter(|f| f.status == FeatureStatus::Mapped && !f.reapplied)
+            .count(),
+        reapplied: counted
+            .clone()
+            .filter(|f| f.status == FeatureStatus::Mapped && f.reapplied)
             .count(),
         needing: counted
             .clone()

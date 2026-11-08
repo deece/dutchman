@@ -426,6 +426,7 @@ mod history_tests {
             pattern_replay_required: false,
             mapped: 2,
             not_needed: 0,
+            reapplied: 0,
             total: 2,
             blends: Vec::new(),
             hidden: Vec::new(),

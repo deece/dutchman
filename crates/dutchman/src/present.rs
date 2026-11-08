@@ -589,11 +589,46 @@ pub fn outcome(report: &Value) -> String {
         text.push(' ');
         text.push_str(&note);
     }
+    if let Some(note) = final_body_note(report) {
+        text.push(' ');
+        text.push_str(&note);
+    }
     if let Some(note) = identity_note(report) {
         text.push(' ');
         text.push_str(&note);
     }
     text
+}
+
+/// The base features written with their bodies as the design ends, which later joins and cuts
+/// re-apply to: those are kept, but editing them may not change the shape.
+fn final_body_note(report: &Value) -> Option<String> {
+    let names: Vec<&str> = report
+        .pointer("/history/features")?
+        .as_array()?
+        .iter()
+        .filter(|feature| feature.get("final_body") == Some(&Value::Bool(true)))
+        .map(|feature| {
+            feature
+                .get("name")
+                .and_then(Value::as_str)
+                .map_or("A base feature", |name| {
+                    name.rsplit(": ").next().unwrap_or(name)
+                })
+        })
+        .collect();
+    match names.as_slice() {
+        [] => None,
+        [name] => Some(format!(
+            "{name} holds the body as the design ends. The features after it are kept but \
+             re-apply to that body, so editing them may not change the shape."
+        )),
+        all => Some(format!(
+            "{} base features hold their bodies as the design ends. The features after them are \
+             kept but re-apply to those bodies, so editing them may not change the shape.",
+            all.len()
+        )),
+    }
 }
 
 /// The rebuilt extrudes whose sketch region nothing checked against the source. They replay,
@@ -698,7 +733,16 @@ fn identity_note(report: &Value) -> Option<String> {
 
 fn outcome_without_memory_note(report: &Value) -> String {
     let field = |pointer: &str| report.pointer(pointer).and_then(Value::as_str);
-    let history = |rebuilt: u64, needing: u64| format!("{rebuilt} of {needing} features rebuilt");
+    // Features kept but re-applied to a base body as the design ends are not rebuilt.
+    let reapplied = report
+        .pointer("/history/reapplied")
+        .and_then(Value::as_u64)
+        .filter(|count| *count > 0)
+        .map_or(String::new(), |count| {
+            format!(", {count} kept and re-applied to the final body")
+        });
+    let history =
+        |rebuilt: u64, needing: u64| format!("{rebuilt} of {needing} features rebuilt{reapplied}");
     // A report saved by an older version has only the counts with features that need none.
     let count = |new: &str, old: &str| {
         report
@@ -713,7 +757,8 @@ fn outcome_without_memory_note(report: &Value) -> String {
     match field("/mode") {
         Some("partial_history") => match counts {
             (Some(m), Some(t)) => format!(
-                "Partial editable history, {m} of {t} features rebuilt; imported final shape visible."
+                "Partial editable history, {}; imported final shape visible.",
+                history(m, t)
             ),
             _ => "Partial editable history; imported final shape visible.".to_owned(),
         },
@@ -791,6 +836,25 @@ mod tests {
         )));
         assert!(outcome(&report(&["a", "b"]))
             .ends_with(&format!("In 2 parts, the rebuilt features don't match the original where the history stops. {advice}")));
+    }
+
+    #[test]
+    fn the_card_says_which_features_re_apply_to_a_final_base_body() {
+        let report = serde_json::json!({"ok": true, "mode": "partial_history",
+        "history": {"rebuilt": 43, "needing": 235, "reapplied": 76, "features": [
+            {"name": "part.f3d: Base Feature 1", "kind": "base_feature", "status": "mapped",
+                "final_body": true},
+            {"name": "part.f3d: Extrude 1", "kind": "extrude", "status": "mapped", "reapplied": true}
+        ]}});
+        let text = outcome(&report);
+        assert!(text.starts_with("Partial editable history, 43 of 235 features rebuilt, 76 kept and re-applied to the final body; imported final shape visible."), "{text}");
+        assert!(text.ends_with("Base Feature 1 holds the body as the design ends. The features after it are kept but re-apply to that body, so editing them may not change the shape."), "{text}");
+        let plain = serde_json::json!({"ok": true, "mode": "partial_history",
+            "history": {"rebuilt": 3, "needing": 4, "reapplied": 0, "features": []}});
+        assert_eq!(
+            outcome(&plain),
+            "Partial editable history, 3 of 4 features rebuilt; imported final shape visible."
+        );
     }
 
     #[test]

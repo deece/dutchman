@@ -286,6 +286,8 @@ pub struct PartHistory {
     /// those that need none, such as a component insert or a joint.
     pub rebuilt: usize,
     pub needing: usize,
+    /// Kept features that re-apply to a base body as the design ends, not counted as rebuilt.
+    pub reapplied: usize,
 }
 
 /// What became of one source feature.
@@ -305,6 +307,12 @@ pub struct FeatureOutcome {
     pub variant: Option<String>,
     /// It mapped, but its profile region was not checked against the source.
     pub profile_unverified: bool,
+    /// It mapped, but re-applies to a base body that already holds its result (the body as
+    /// the design ends), so editing it may not change the shape: kept, not rebuilt.
+    pub reapplied: bool,
+    /// A base feature written with its body as the design ends, which later features re-apply
+    /// to.
+    pub final_body: bool,
 }
 
 /// Whether a source feature mapped.

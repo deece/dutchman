@@ -80,6 +80,8 @@ pub(crate) struct History {
     pub(crate) mapped: usize,
     /// Of those, the ones that needed no feature: a component insert, a joint, a default plane.
     pub(crate) not_needed: usize,
+    /// Of those, the ones kept that re-apply to a base body already holding their result.
+    pub(crate) reapplied: usize,
     /// Active source features.
     pub(crate) total: usize,
     /// Blends whose input edges wait for SolidCraft's replay of the history before them
@@ -137,9 +139,12 @@ impl History {
             .map(Vec::as_slice)
     }
 
-    /// Source features that became SolidCraft features.
+    /// Source features that became SolidCraft features, but those that only re-apply to a base
+    /// body already holding their result.
     pub(crate) fn rebuilt(&self) -> usize {
-        self.mapped.saturating_sub(self.not_needed)
+        self.mapped
+            .saturating_sub(self.not_needed)
+            .saturating_sub(self.reapplied)
     }
 
     /// Source features that need one: all active ones but those that need no feature.
@@ -566,6 +571,10 @@ struct Context<'a> {
     profile_unverified: bool,
     /// Set by the feature being mapped: its profile region disagrees with the source.
     profile_mismatch: bool,
+    /// Source ids of later features that re-apply to a base body already holding their result.
+    reapplied: BTreeSet<String>,
+    /// Set by a base feature being mapped with its body as the design ends.
+    final_body: bool,
 }
 
 impl<'a> Context<'a> {
@@ -604,6 +613,8 @@ impl<'a> Context<'a> {
             sole_builder: false,
             profile_unverified: false,
             profile_mismatch: false,
+            reapplied: BTreeSet::new(),
+            final_body: false,
         }
     }
 
@@ -857,6 +868,11 @@ fn discard_reference_sketches(mapping: &mut Mapping) {
         .iter()
         .filter(|f| f.status == FeatureStatus::NotNeeded)
         .count();
+    history.reapplied = mapping
+        .features
+        .iter()
+        .filter(|f| f.status == FeatureStatus::Mapped && f.reapplied)
+        .count();
     history.total = mapping
         .features
         .iter()
@@ -913,6 +929,8 @@ fn map_into(
             ordinal: feature.get("ordinal").and_then(Value::as_u64),
             variant: variant(feature),
             profile_unverified: false,
+            reapplied: false,
+            final_body: false,
         };
         if feature.get("suppressed").and_then(Value::as_bool) == Some(true) {
             report.push(
@@ -1000,6 +1018,11 @@ fn map_into(
                 history.features.push(mapped);
                 let mut kept = outcome(FeatureStatus::Mapped, None);
                 kept.profile_unverified = std::mem::take(&mut ctx.profile_unverified);
+                kept.final_body = std::mem::take(&mut ctx.final_body);
+                kept.reapplied = feature
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .is_some_and(|id| ctx.reapplied.contains(id));
                 out.push(kept);
                 let main = history.features.len().saturating_sub(1);
                 for pending in ctx.blends.iter_mut().skip(blends) {
@@ -1014,6 +1037,7 @@ fn map_into(
             Err(reason) => {
                 ctx.builds = builds;
                 ctx.profile_unverified = false;
+                ctx.final_body = false;
                 if std::mem::take(&mut ctx.profile_mismatch) {
                     report.push_coded(
                         Severity::Degraded,
@@ -1038,6 +1062,10 @@ fn map_into(
             }
         }
     }
+    history.reapplied = out
+        .iter()
+        .filter(|f| f.status == FeatureStatus::Mapped && f.reapplied)
+        .count();
     // Some decoders supply sketches without timeline rows. Their resolved frames are
     // independent of replayed topology; unresolved attachments are refused by sketch::map.
     let bound: std::collections::BTreeSet<&str> = ctx
@@ -1371,6 +1399,11 @@ pub(crate) fn shorten(mapping: &mut Mapping, source: usize, reason: String) {
         .features
         .iter()
         .filter(|feature| feature.status == FeatureStatus::NotNeeded)
+        .count();
+    history.reapplied = mapping
+        .features
+        .iter()
+        .filter(|feature| feature.status == FeatureStatus::Mapped && feature.reapplied)
         .count();
     if first_blocker.is_none_or(|first| source <= first) {
         history.stop = Some(reason.clone());

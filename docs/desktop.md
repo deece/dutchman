@@ -122,6 +122,11 @@ reading the archive again.
 When Standard leaves history out to fit in memory, its result card shows the
 history Info message even with the full loss log collapsed. The original geometry is kept.
 
+When a Fusion Base Feature holds its body as the design ends and later joins or cuts re-apply to it,
+the card counts those features apart ("43 of 235 features rebuilt, 76 kept and re-applied to the
+final body") and says "Base Feature 1 holds the body as the design ends. The features after it are
+kept but re-apply to that body, so editing them may not change the shape."
+
 A result card ends with how many rebuilt extrudes may use the wrong sketch region, such as "2
 rebuilt extrudes may use the wrong sketch region; it couldn't be checked against the source."
 They replay, but nothing proves they swept the right region; the JSON report marks each with
