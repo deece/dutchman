@@ -399,12 +399,15 @@ pub enum VersionGate {
     SketchProfileCoil,
     /// Editable ordered mirror-pattern chains.
     MirrorChain,
+    /// Cone and frustum primitives.
+    ConePrimitive,
 }
 
 impl VersionGate {
     fn minimum(self) -> SolidCraftVersion {
         match self {
             Self::EntryRecessTip => SolidCraftVersion::V0_22_1,
+            Self::ConePrimitive => SolidCraftVersion::V0_24_1,
             Self::SketchProfileCoil | Self::MirrorChain => SolidCraftVersion::V0_25_1,
         }
     }
@@ -421,6 +424,7 @@ pub fn target_loses_history(target: SolidCraftVersion) -> bool {
         VersionGate::EntryRecessTip,
         VersionGate::SketchProfileCoil,
         VersionGate::MirrorChain,
+        VersionGate::ConePrimitive,
     ]
     .into_iter()
     .any(|gate| {
@@ -462,6 +466,9 @@ pub struct SolidCraftVersion([u64; 3]);
 impl SolidCraftVersion {
     /// First release that applies a drill-point angle on counterbores and countersinks.
     pub const V0_22_1: Self = Self([0, 22, 1]);
+
+    /// First release with the cone primitive (`solid.cone`).
+    pub const V0_24_1: Self = Self([0, 24, 1]);
 
     /// First release with sketch-profile coils and the `.sc` design extension.
     pub const V0_25_1: Self = Self([0, 25, 1]);

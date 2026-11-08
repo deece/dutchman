@@ -5616,6 +5616,70 @@ fn spheres_and_tori_become_solidcraft_primitives() {
     );
 }
 
+fn placed_primitive(solid: Value) -> Value {
+    // Its frame's z axis along model +y, its origin at (1, 2, 3).
+    json!({"definition": "primitive", "solid": solid,
+           "placement": [[1.0, 0.0, 0.0, 1.0], [0.0, 0.0, 1.0, 2.0], [0.0, -1.0, 0.0, 3.0]],
+           "op": "new_body"})
+}
+
+#[test]
+fn placed_cylinders_and_cones_become_solidcraft_primitives() {
+    let writer = SolidCraftWriter::new().verification(Verification::Off);
+    let full = std::f64::consts::TAU;
+    let (document, _) = convert(
+        &primitive_history(placed_primitive(
+            json!({"kind": "cylinder", "radius": 2.5, "height": 26.0, "angle": full}),
+        )),
+        &writer,
+    );
+    let pin = &document["features"][0];
+    assert_eq!(pin["type"], "cylinder");
+    assert_eq!(pin["base"], json!([1.0, 2.0, 3.0]));
+    assert_eq!(pin["axis"], json!([0.0, 1.0, 0.0]));
+    assert_eq!(
+        (pin["radius"].clone(), pin["height"].clone()),
+        (json!("2.5 mm"), json!("26 mm"))
+    );
+
+    let cone = placed_primitive(
+        json!({"kind": "cone", "radius1": 4.0, "radius2": 1.0, "height": 6.0, "angle": full}),
+    );
+    let (document, _) = convert(&primitive_history(cone.clone()), &writer);
+    let tip = &document["features"][0];
+    assert_eq!(tip["type"], "cone");
+    assert_eq!(
+        (
+            tip["radius"].clone(),
+            tip["top_radius"].clone(),
+            tip["height"].clone()
+        ),
+        (json!("4 mm"), json!("1 mm"), json!("6 mm"))
+    );
+
+    // A cone needs SolidCraft 0.24.1; a part-turn cylinder has no SolidCraft form.
+    let older = SolidCraftWriter::new()
+        .verification(Verification::Off)
+        .target_version(Some("0.23.0".parse().unwrap()));
+    let (_, report) = convert(&primitive_history(cone), &older);
+    assert!(
+        history_line(&report).contains("a cone needs SolidCraft 0.24 patch 1 or newer"),
+        "{}",
+        history_line(&report)
+    );
+    let (_, report) = convert(
+        &primitive_history(placed_primitive(
+            json!({"kind": "cylinder", "radius": 2.5, "height": 26.0, "angle": 3.0}),
+        )),
+        &writer,
+    );
+    assert!(
+        history_line(&report).contains("a part-turn cylinder is not mapped yet"),
+        "{}",
+        history_line(&report)
+    );
+}
+
 #[test]
 fn primitives_solidcraft_cannot_place_flatten_the_history() {
     let writer = SolidCraftWriter::new().verification(Verification::Off);

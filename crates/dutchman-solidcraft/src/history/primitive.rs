@@ -1,9 +1,8 @@
-//! Solid primitives, as SolidCraft primitive features: spheres, tori about the Z axis, and
-//! coils along any axis.
+//! Solid primitives, as SolidCraft primitive features: spheres, tori about the Z axis, coils
+//! along any axis, and full cylinders and cones placed by their feature frame.
 //!
-//! Boxes and cylinders are not mapped. cadmpeg gives a box as dimensions and a placement
-//! without saying whether the placement is the box's corner or its centre, and a cylinder
-//! primitive without a placement at all, so neither can be put where the source has it.
+//! Boxes are not mapped: cadmpeg gives a box as dimensions and a placement without saying
+//! whether the placement is the box's corner or its centre.
 
 use serde_json::{json, Value};
 
@@ -222,15 +221,91 @@ fn coil_start_angle(axis: [f64; 3], radial: [f64; 3]) -> Result<f64, String> {
         .to_degrees())
 }
 
-/// Why a box or cylinder primitive is not mapped.
-pub(crate) fn unplaced(kind: &str) -> String {
-    match kind {
-        "block" => "boxes are not mapped yet: cadmpeg does not say whether a box's placement \
-                    is its corner or its centre"
-            .to_owned(),
-        _ => "cylinder and cone primitives are not mapped yet: cadmpeg gives them no placement"
-            .to_owned(),
+/// Why a box primitive is not mapped.
+pub(crate) fn unplaced(_kind: &str) -> String {
+    "boxes are not mapped yet: cadmpeg does not say whether a box's placement is its corner or \
+     its centre"
+        .to_owned()
+}
+
+/// Maps a cylinder or cone primitive whose operation is `definition`. Each stands on its
+/// feature frame's origin and runs along the frame's z axis, a cone with its first radius at
+/// the origin; the placement gives that frame in the model as three rows of a 3×4 transform.
+pub(crate) fn placed(
+    feature: &Value,
+    definition: &Value,
+    ctx: &mut Context,
+) -> Result<Value, String> {
+    let solid = definition.get("solid").ok_or("its solid is malformed")?;
+    let kind = solid.get("kind").and_then(Value::as_str).unwrap_or("");
+    if !matches!(kind, "cylinder" | "cone") {
+        return Err(format!("{kind} primitives are not mapped yet"));
     }
+    let full = number(solid.get("angle"))
+        .is_some_and(|angle| (angle - std::f64::consts::TAU).abs() < 1e-9);
+    if !full {
+        return Err(format!(
+            "a part-turn {kind} is not mapped yet: SolidCraft's {kind} is always whole"
+        ));
+    }
+    let rows = definition
+        .get("placement")
+        .and_then(Value::as_array)
+        .filter(|rows| rows.len() == 3)
+        .ok_or_else(|| format!("a {kind} primitive without a placement is not mapped yet"))?;
+    let mut frame = [[0.0f64; 4]; 3];
+    for (row, values) in frame.iter_mut().zip(rows) {
+        let values = values
+            .as_array()
+            .filter(|values| values.len() == 4)
+            .ok_or("its placement is malformed")?;
+        for (cell, value) in row.iter_mut().zip(values) {
+            *cell = value
+                .as_f64()
+                .filter(|v| v.is_finite())
+                .ok_or("its placement is malformed")?;
+        }
+    }
+    let [r0, r1, r2] = frame;
+    let base = [r0[3], r1[3], r2[3]];
+    let axis = unit([r0[2], r1[2], r2[2]]).ok_or("its placement is malformed")?;
+    let height = length(solid.get("height"), "height")?;
+    let operation = operation(definition.get("op"))?;
+    if kind == "cylinder" {
+        let radius = length(solid.get("radius"), "radius")?;
+        return Ok(primitive(
+            feature,
+            ctx,
+            operation,
+            "cylinder",
+            "Cylinder",
+            json!({"base": base, "axis": axis, "radius": mm(radius), "height": mm(height)}),
+        ));
+    }
+    if !crate::VersionGate::ConePrimitive.supported(ctx.target_version) {
+        return Err(format!(
+            "a cone needs SolidCraft 0.24 patch 1 or newer (target {})",
+            ctx.target_version.minor()
+        ));
+    }
+    let radius = |key: &str| {
+        number(solid.get(key))
+            .filter(|radius| *radius >= 0.0)
+            .ok_or_else(|| format!("its {key} is malformed"))
+    };
+    let (bottom, top) = (radius("radius1")?, radius("radius2")?);
+    if bottom == 0.0 && top == 0.0 {
+        return Err("its radii are malformed".to_owned());
+    }
+    Ok(primitive(
+        feature,
+        ctx,
+        operation,
+        "cone",
+        "Cone",
+        json!({"base": base, "axis": axis, "radius": mm(bottom), "top_radius": mm(top),
+               "height": mm(height)}),
+    ))
 }
 
 fn primitive(

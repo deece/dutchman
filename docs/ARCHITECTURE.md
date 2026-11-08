@@ -231,8 +231,7 @@ sketch curves (whole path, solid or surface, square to it, held as drawn or with
 binormal, optionally twisted up to four turns and scaled at the end by 0.01–100, or guided by
 one rail without other orientation, twist, or scale options; a whole-sketch path or rail maps
 when it has a single non-construction curve; taper, explicit corner transitions, changing
-sections, tangent-path extension, and post-sweep simplification are not mapped); spheres, and tori about the Z axis (boxes and cylinder primitives wait on cadmpeg
-placing them); coils along any axis, travelling up or down it, of round or square section,
+sections, tangent-path extension, and post-sweep simplification are not mapped); spheres, tori about the Z axis, and whole cylinders and cones placed by their feature frame (cones on SolidCraft 0.24.1 and newer; boxes wait on cadmpeg saying whether a box's placement is its corner or its centre); coils along any axis, travelling up or down it, of round or square section,
 turning either way (tapered coils, flat spirals and triangular sections are not mapped);
 simple, counterbore and countersink
 holes drilled at the circle centres, arc centres or points of a sketch (including explicit
