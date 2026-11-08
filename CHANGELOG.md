@@ -156,8 +156,17 @@ Unreleased changes live in [changelog.d/](changelog.d/).
 
 ### cadmpeg
 
-- The cadmpeg pin moves from `65d6e87` to `a7ca215` (cadmpeg 0.6.10), now taken from cadmpeg's own repository
+- The cadmpeg pin moves from `65d6e87` to `b2e9867` (cadmpeg 0.6.10), now taken from cadmpeg's own repository
   rather than a fork of it.
+- Fusion, since 0.2.8-rc.3: a through cut no longer reads its remaining far face as its selected
+  profile (the wrong intermediate shape some through cuts had in 0.2.7 and 0.2.8-rc.3 is gone).
+  Typed profile loops join the regions they bound, Delete Face and Chamfer selections with edge and
+  face groups are read, Sweeps that select body faces and more Sweep and Boolean forms decode, work
+  planes placed in more ways and Reverse Normal map, a pattern's body seed binds through the state
+  before it, and a history state marks the bodies whose stored box is exact.
+- Inventor reads Mirror source bodies, more hole and edge selector forms and derived stored
+  bodies; Creo transfers geometric tolerances; NX assembly placements and CATIA face colours are
+  read more correctly.
 - Fusion: extrude profiles are proven from their end caps and recipe operands are bound per
   counted operand, so extrudes no longer sweep the wrong sketch region where cadmpeg picked one
   by heuristic. Fillet, chamfer and face selections match their recipe faces exactly, and
