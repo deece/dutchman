@@ -223,6 +223,7 @@ fn decode_unguarded(
     } else {
         with_fallback(&mut ir, report, &policy, bytes.len() as u64)
     };
+    drop_removed_bodies(&mut ir, report);
 
     let model = Model {
         ir,
@@ -434,6 +435,70 @@ fn member_error_code(error: &CodecError) -> &'static str {
 
 /// Keep only the arenas needed to restate geometry and its assembly structure.
 /// Rebuilding the model also removes the private feature-regeneration parent graph.
+/// Leaves out the bodies an active Remove feature deletes. Fusion keeps a removed body in its
+/// B-rep and only stops showing it, and cadmpeg still lists it among the model's bodies, so it
+/// would otherwise be converted as part of the design. Only a Remove whose bodies cadmpeg
+/// resolves can say which bodies those are; any other is left as it is.
+fn drop_removed_bodies(ir: &mut cadmpeg_ir::CadIr, report: &mut Report) {
+    use cadmpeg_ir::{BodyRetentionMode, BodySelection, FeatureOperation};
+    let mut removed: Vec<(cadmpeg_ir::ids::BodyId, String)> = Vec::new();
+    for feature in &ir.model.features {
+        if feature.suppressed == Some(true) {
+            continue;
+        }
+        let FeatureOperation::DeleteBody {
+            bodies,
+            mode: BodyRetentionMode::DeleteSelected,
+        } = feature.evaluation.definition().operation()
+        else {
+            continue;
+        };
+        let ids: Vec<&cadmpeg_ir::ids::BodyId> = match bodies {
+            BodySelection::Bodies(bodies) | BodySelection::Resolved { bodies, .. } => {
+                bodies.iter().collect()
+            }
+            _ => continue,
+        };
+        let name = feature
+            .name
+            .clone()
+            .unwrap_or_else(|| "a Remove feature".to_owned());
+        for id in ids {
+            if ir.model.bodies.iter().any(|body| &body.id == id)
+                && !removed.iter().any(|(known, _)| known == id)
+            {
+                removed.push((id.clone(), name.clone()));
+            }
+        }
+    }
+    if removed.is_empty() {
+        return;
+    }
+    let gone = |id: &cadmpeg_ir::ids::BodyId| removed.iter().any(|(known, _)| known == id);
+    ir.model.bodies.retain(|body| !gone(&body.id));
+    for definition in &mut ir.model.product_definitions {
+        definition.bodies.retain(|id| !gone(id));
+    }
+    let mut by_feature: Vec<(&str, usize)> = Vec::new();
+    for (_, name) in &removed {
+        match by_feature
+            .iter_mut()
+            .find(|(known, _)| *known == name.as_str())
+        {
+            Some((_, count)) => *count += 1,
+            None => by_feature.push((name.as_str(), 1)),
+        }
+    }
+    for (name, count) in by_feature {
+        let bodies = if count == 1 { "body" } else { "bodies" };
+        report.push(
+            Severity::Info,
+            format!("feature \"{name}\""),
+            format!("{count} {bodies} it removes left out of the converted design"),
+        );
+    }
+}
+
 fn geometry_only(ir: &mut cadmpeg_ir::CadIr) {
     let mut source = std::mem::take(&mut ir.model);
     macro_rules! keep {
@@ -884,6 +949,39 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(failure, Error::Checks { .. }), "{failure:?}");
+    }
+
+    #[test]
+    fn a_body_an_active_remove_deletes_is_left_out() {
+        let remove = |suppressed: bool| -> cadmpeg_ir::Feature {
+            serde_json::from_value(serde_json::json!({
+                "id": format!("test:model:feature#{suppressed}"), "ordinal": 9,
+                "name": "RemoveBody 1", "suppressed": suppressed,
+                "definition": {"definition": "delete_body",
+                    "bodies": {"kind": "bodies", "value": [cube().ir.model.bodies[0].id.clone()]},
+                    "mode": "delete_selected"}
+            }))
+            .unwrap()
+        };
+        // A suppressed Remove deletes nothing.
+        let mut model = cube();
+        model.ir.model.features.push(remove(true));
+        let mut report = Report::default();
+        drop_removed_bodies(&mut model.ir, &mut report);
+        assert_eq!(model.ir.model.bodies.len(), 1);
+        assert!(report.losses().is_empty());
+
+        let mut model = cube();
+        model.ir.model.features.push(remove(false));
+        let mut report = Report::default();
+        drop_removed_bodies(&mut model.ir, &mut report);
+        assert!(model.ir.model.bodies.is_empty());
+        let loss = report.losses().first().unwrap();
+        assert_eq!(loss.subject, "feature \"RemoveBody 1\"");
+        assert_eq!(
+            loss.detail,
+            "1 body it removes left out of the converted design"
+        );
     }
 
     #[test]
