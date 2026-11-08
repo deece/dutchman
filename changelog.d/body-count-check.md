@@ -5,3 +5,5 @@
   `history/body-mismatch`, rather than counted as replaying cleanly. Fusion files store this.
   In a design with components, a stored list that features of more than one component carry is
   not used, since it isn't any one component's state.
+  A base feature written with its body as the design ends isn't compared, since the source's
+  state after it is the body before later features changed it.

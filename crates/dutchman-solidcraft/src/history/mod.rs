@@ -95,6 +95,19 @@ pub(crate) struct History {
     pub(crate) unconfirmed: BTreeSet<u64>,
 }
 
+/// The bodies the source stores right after `feature`, to compare its replay with. A base
+/// feature written with its body as the design ends doesn't hold that state (later features
+/// changed the body), so there is nothing at that point to compare it with.
+fn compared_state(
+    outcome: &FeatureOutcome,
+    feature: &Value,
+) -> Option<Vec<crate::verify::StoredBody>> {
+    if outcome.final_body {
+        return None;
+    }
+    stored_body_centers(feature)
+}
+
 /// Whether `feature`'s profile is a whole sketch that has more than one profile. cadmpeg
 /// doesn't say which of them such a reference takes: a cut that took them all can remove
 /// the body Fusion keeps.
@@ -1093,7 +1106,10 @@ fn map_into(
         for emitted in history.features.iter().skip(before) {
             if let Some(id) = emitted.get("id").and_then(Value::as_u64) {
                 history.sources.insert(id, out.len().saturating_sub(1));
-                if let Some(centers) = stored_body_centers(feature) {
+                if let Some(centers) = out
+                    .last()
+                    .and_then(|outcome| compared_state(outcome, feature))
+                {
                     history.stored_bodies.insert(id, centers);
                 }
                 if whole_of_several(feature, &ctx) {
@@ -2193,5 +2209,27 @@ mod tests {
             why.starts_with("feature \"Extrude 4\": its profile is the whole of a sketch"),
             "{why}"
         );
+    }
+
+    #[test]
+    fn a_base_feature_holding_its_final_body_has_no_stored_state_to_compare() {
+        let feature = json!({"name": "Base Feature 1",
+            "source_properties": {"body_centers": "1:0,0,10"}});
+        let outcome = |final_body: bool| FeatureOutcome {
+            name: Some("Base Feature 1".to_owned()),
+            kind: "base_feature".to_owned(),
+            status: FeatureStatus::Mapped,
+            reason: None,
+            ordinal: Some(0),
+            variant: None,
+            profile_unverified: false,
+            reapplied: false,
+            final_body,
+        };
+        assert_eq!(
+            compared_state(&outcome(false), &feature).map(|c| c.len()),
+            Some(1)
+        );
+        assert!(compared_state(&outcome(true), &feature).is_none());
     }
 }

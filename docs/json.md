@@ -244,6 +244,8 @@ it is half the diagonal (at least 0.5 mm). The source's list can leave bodies ou
 replayed bodies than it lists don't count. It is compared when the last retained feature that isn't a
 sketch carries the source's bodies, which Fusion files can. In a design with components, a list
 that features of more than one component carry isn't any one component's state, so it isn't used.
+A base feature written with its body as the design ends (`final_body`) isn't compared either: the
+source's stored state after it is the body before later features changed it.
 
 A feature whose source profile is the whole of a sketch with more than one profile is kept only
 when SolidCraft confirms it: the full history matches the original, or, in a partial history, the
