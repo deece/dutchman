@@ -156,7 +156,7 @@ Unreleased changes live in [changelog.d/](changelog.d/).
 
 ### cadmpeg
 
-- The cadmpeg pin moves from `65d6e87` to `64bff10` (cadmpeg 0.6.10), now taken from cadmpeg's own repository
+- The cadmpeg pin moves from `65d6e87` to `52ba5a1` (cadmpeg 0.6.10), now taken from cadmpeg's own repository
   rather than a fork of it.
 - Fusion, since 0.2.8-rc.3: a through cut no longer reads its remaining far face as its selected
   profile (the wrong intermediate shape some through cuts had in 0.2.7 and 0.2.8-rc.3 is gone).
@@ -164,7 +164,8 @@ Unreleased changes live in [changelog.d/](changelog.d/).
   face groups are read, Sweeps that select body faces and more Sweep and Boolean forms decode, work
   planes placed in more ways and Reverse Normal map, a pattern's body seed binds through the state
   before it, and a history state marks the bodies whose stored box is exact. Timeline
-  transitions, split planes, absorbed bodies and hole-loop profiles are resolved.
+  transitions, split planes, absorbed bodies and hole-loop profiles are resolved, construction axes
+  become datum axes, surface patches become filled surfaces, and compact Surface Extend forms decode.
 - Inventor reads Mirror source bodies, more hole and edge selector forms, derived stored
   bodies, sketch box members and Thicken face operands; Creo transfers geometric tolerances; NX assembly placements and CATIA face colours are
   read more correctly.
