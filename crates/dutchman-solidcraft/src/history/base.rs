@@ -2,8 +2,9 @@
 //! them (modelled directly, or imported), as SolidCraft Import features at their place in the
 //! timeline, so the features after them keep their history.
 //!
-//! The bodies are the design's as it ends, so a base body a later feature changes is imported
-//! changed already; the check against the original geometry then finds the replay differs.
+//! The bodies are the design's as it ends, so a base body a later feature changes would be
+//! imported changed already, and the later feature would change it again. Such a base feature
+//! is refused, naming the feature that changes its body.
 
 use std::collections::BTreeSet;
 
@@ -47,7 +48,38 @@ pub(super) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
         .and_then(Value::as_array)
         .map(|ids| ids.iter().filter_map(Value::as_str).collect())
         .unwrap_or_default();
+    if let Some(later) = later_change(feature, &ids, ctx) {
+        return Err(format!(
+            "its body is stored only as the design ends, and the later feature \"{later}\" \
+             changes it"
+        ));
+    }
     import(feature, &ids, ctx)
+}
+
+/// The name of the first active feature after `feature` on the timeline that outputs one of
+/// the bodies `ids`, which it then changes.
+fn later_change<'a>(feature: &Value, ids: &[&str], ctx: &Context<'a>) -> Option<&'a str> {
+    let ordinal = feature.get("ordinal").and_then(Value::as_u64)?;
+    ctx.arena("features")
+        .iter()
+        .filter(|row| row.get("suppressed").and_then(Value::as_bool) != Some(true))
+        .filter(|row| {
+            row.get("ordinal")
+                .and_then(Value::as_u64)
+                .is_some_and(|at| at > ordinal)
+        })
+        .filter(|row| {
+            row.get("outputs")
+                .and_then(Value::as_array)
+                .is_some_and(|outputs| {
+                    outputs
+                        .iter()
+                        .any(|out| out.as_str().is_some_and(|out| ids.contains(&out)))
+                })
+        })
+        .min_by_key(|row| row.get("ordinal").and_then(Value::as_u64))
+        .map(|row| name(row).unwrap_or("?"))
 }
 
 /// Stored geometry names its retained bodies in the feature's outputs, not its operation.
@@ -187,4 +219,38 @@ pub(crate) fn store(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_base_feature_whose_body_a_later_feature_changes_is_refused() {
+        let base = |ordinal: u64| {
+            json!({"id": "b", "name": "Base Feature 1", "ordinal": ordinal,
+                "outputs": ["body#1"]})
+        };
+        let definition = json!({"bodies": {"kind": "resolved", "value": {"bodies": ["body#1"]}}});
+        let model = json!({"features": [
+            base(1),
+            {"id": "m", "name": "Move 1", "ordinal": 2, "outputs": ["body#1"]},
+            {"id": "s", "name": "Move 2", "ordinal": 3, "outputs": ["body#1"], "suppressed": true},
+            {"id": "o", "name": "Extrude 1", "ordinal": 4, "outputs": ["body#2"]},
+        ]});
+        let mut ctx = Context::new(&model);
+        let err = map(&base(1), &definition, &mut ctx).unwrap_err();
+        assert_eq!(
+            err,
+            "its body is stored only as the design ends, and the later feature \"Move 1\" changes it"
+        );
+        // A suppressed later feature, or one making another body, changes nothing.
+        let model = json!({"features": [
+            base(1),
+            {"id": "s", "name": "Move 2", "ordinal": 3, "outputs": ["body#1"], "suppressed": true},
+            {"id": "o", "name": "Extrude 1", "ordinal": 4, "outputs": ["body#2"]},
+        ]});
+        let ctx = Context::new(&model);
+        assert_eq!(later_change(&base(1), &["body#1"], &ctx), None);
+    }
 }
