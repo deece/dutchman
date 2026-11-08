@@ -122,6 +122,11 @@ reading the archive again.
 When Standard leaves history out to fit in memory, its result card shows the
 history Info message even with the full loss log collapsed. The original geometry is kept.
 
+A result card ends with how many kept extrudes have a sketch region that couldn't be checked
+against the source, such as "2 kept extrudes' sketch regions couldn't be checked against the
+source." They replay, but nothing proves they swept the right region; the JSON report marks each
+with `profile_unverified`.
+
 Expanded **Losses** lists wrap long feature ids inside their result card. Ordinary text
 wraps at spaces.
 
