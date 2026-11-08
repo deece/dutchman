@@ -239,7 +239,8 @@ its centre must be within 0.5 mm or 1% of the replayed body's box diagonal. Othe
 taken over points sampled on each edge and can be off by up to the body's radius, so for those
 it is half the diagonal (at least 0.5 mm). The source's list can leave bodies out, so more
 replayed bodies than it lists don't count. It is compared when the last retained feature that isn't a
-sketch carries the source's bodies, which Fusion files can.
+sketch carries the source's bodies, which Fusion files can. In a design with components, a list
+that features of more than one component carry isn't any one component's state, so it isn't used.
 
 Shells require removed faces from their own historical input topology, a resolved
 thickness and inward or outward direction, and one earlier named body. A shell input-face

@@ -2,7 +2,7 @@
 //! a component reaches it; only structure and history need an expanded JSON view.
 
 use std::borrow::Cow;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{value::RawValue, Value};
@@ -116,6 +116,9 @@ pub(super) struct Index<'a> {
     // Decoded models have unique ids. Preserve the old selection behavior for callers
     // passing an in-progress model with duplicate ids: follow the last, emit all.
     pub duplicates: Vec<(String, Entry<'a>)>,
+    /// `body_centers` lists that features of more than one definition carry. Such a list
+    /// can't be the state of each owning component, so a component's slice leaves it out.
+    pub shared_centers: BTreeSet<&'a str>,
 }
 
 impl<'a> Index<'a> {
@@ -131,12 +134,35 @@ impl<'a> Index<'a> {
                 bindings.entry(target).or_default().push(binding);
             }
         }
+        let mut owners: BTreeMap<&str, BTreeSet<Option<&str>>> = BTreeMap::new();
+        for feature in document
+            .pointer("/model/features")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            if let Some(centers) = feature
+                .pointer("/source_properties/body_centers")
+                .and_then(Value::as_str)
+            {
+                owners
+                    .entry(centers)
+                    .or_default()
+                    .insert(feature.get("product_definition").and_then(Value::as_str));
+            }
+        }
+        let shared_centers = owners
+            .into_iter()
+            .filter(|(_, definitions)| definitions.len() > 1)
+            .map(|(centers, _)| centers)
+            .collect();
         Self {
             document,
             rows: BTreeMap::new(),
             arenas: Vec::new(),
             bindings,
             duplicates: Vec::new(),
+            shared_centers,
         }
     }
 

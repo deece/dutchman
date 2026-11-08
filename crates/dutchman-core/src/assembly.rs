@@ -3121,6 +3121,18 @@ fn slice(
                 if let Some(ids) = fields.get_mut("dependencies").and_then(Value::as_array_mut) {
                     ids.retain(|id| id.as_str().is_some_and(|id| keep.contains_key(id)));
                 }
+                if let Some(properties) = fields
+                    .get_mut("source_properties")
+                    .and_then(Value::as_object_mut)
+                {
+                    if properties
+                        .get("body_centers")
+                        .and_then(Value::as_str)
+                        .is_some_and(|centers| slices.shared_centers.contains(centers))
+                    {
+                        properties.remove("body_centers");
+                    }
+                }
             }
             slicing::Selected::Value(std::borrow::Cow::Owned(row))
         } else {
@@ -4020,6 +4032,67 @@ mod tests {
                 ["synthetic:copy:feature#other"]
             );
         }
+    }
+
+    #[test]
+    fn a_body_centers_list_two_components_share_is_left_out_of_both() {
+        let model = with_owned_history();
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let shared = "1:0,0,1;2:0,0,2";
+        wire["model"]["features"][0]["source_properties"] = json!({"body_centers": shared});
+        wire["model"]["features"][1]["source_properties"] = json!({"body_centers": shared});
+        let model = Model {
+            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ..model
+        };
+        let centers = |model: &Model| -> Vec<Value> {
+            let wire = serde_json::to_value(&model.ir).unwrap();
+            wire["model"]["features"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|f| {
+                    f.pointer("/source_properties/body_centers")
+                        .cloned()
+                        .unwrap_or(Value::Null)
+                })
+                .collect()
+        };
+        let (assembly, _) = local_components_with_threads(
+            &model,
+            &BTreeMap::new(),
+            1,
+            crate::PartPositions::LastShown,
+            &mut Report::default(),
+        )
+        .unwrap()
+        .unwrap();
+        for part in &assembly.parts {
+            assert!(
+                centers(part).iter().all(Value::is_null),
+                "{:?}",
+                centers(part)
+            );
+        }
+
+        // A list only one component carries is that component's, and stays.
+        wire["model"]["features"][1]["source_properties"] = json!({"body_centers": "1:0,0,3"});
+        let model = Model {
+            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ..model
+        };
+        let (assembly, _) = local_components_with_threads(
+            &model,
+            &BTreeMap::new(),
+            1,
+            crate::PartPositions::LastShown,
+            &mut Report::default(),
+        )
+        .unwrap()
+        .unwrap();
+        let kept: Vec<Value> = assembly.parts.iter().flat_map(|p| centers(p)).collect();
+        assert!(kept.contains(&json!("1:0,0,1;2:0,0,2")), "{kept:?}");
+        assert!(kept.contains(&json!("1:0,0,3")), "{kept:?}");
     }
 
     #[test]
