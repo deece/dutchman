@@ -1047,9 +1047,9 @@ pub(crate) fn bodies_differ(
         let nearest = free
             .iter()
             .enumerate()
-            .map(|(slot, (_, at, _))| (slot, distance(center, at)))
+            .map(|(slot, (_, at, tolerance))| (slot, distance(center, at), *tolerance))
             .min_by(|a, b| a.1.total_cmp(&b.1))?;
-        if nearest.1 > free[nearest.0].2 {
+        if nearest.1 > nearest.2 {
             return Some(format!(
                 "a retained body sits {:.1} mm from where the source has it at the same point",
                 nearest.1
@@ -1744,8 +1744,14 @@ fn parse(value: &Value) -> Result<Eval, String> {
                     .sqrt()
             });
             let center = corner("min").zip(corner("max")).and_then(|(min, max)| {
-                let center = [0, 1, 2].map(|axis| (min[axis] + max[axis]) * 0.5);
-                center.iter().all(|v| v.is_finite()).then_some(center)
+                let center: Vec<f64> = min
+                    .iter()
+                    .zip(&max)
+                    .map(|(lo, hi)| (lo + hi) * 0.5)
+                    .collect();
+                <[f64; 3]>::try_from(center)
+                    .ok()
+                    .filter(|center| center.iter().all(|v| v.is_finite()))
             });
             Ok(Measured {
                 volume,
