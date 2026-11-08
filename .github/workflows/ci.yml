@@ -301,9 +301,17 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo build --locked -p dutchman --bin dutchman
       - run: df -h / .
+      # Fetched archives are kept between runs, so a release server outage doesn't fail the
+      # check: the script still verifies a cached archive against the release checksum.
+      - uses: actions/cache@v6
+        with:
+          path: solidcraft-cache
+          key: solidcraft-${{ matrix.solidcraft.version }}-${{ hashFiles('crates/dutchman-solidcraft/src/verify.rs') }}
+          restore-keys: solidcraft-${{ matrix.solidcraft.version }}-
       - name: Fetch SolidCraft
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          SOLIDCRAFT_CACHE: solidcraft-cache
         run: |
           # "newest" is the minor named by NEWEST_SOLIDCRAFT, so a new minor never edits this file.
           if [ "$SOLIDCRAFT_VERSION" = newest ]; then

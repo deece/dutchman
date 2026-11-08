@@ -25,11 +25,29 @@ latest_patch() {
     return 1
 }
 
+# Fetches one asset of release v<version> to <out>. The release download URL can fail for
+# hours on one asset (a 504 on SHA256SUMS.txt while the archives still download), so after
+# its retries the same asset is fetched through the API's asset endpoint.
+fetch_asset() {
+    local version=$1 name=$2 out=$3 id
+    curl -fsSL --retry 3 --retry-all-errors --connect-timeout 15 --max-time 600 -o "$out" \
+        "https://github.com/tangency-labs/solidcraft/releases/download/v$version/$name" && return
+    echo "release download of $name failed; fetching it through the API" >&2
+    local auth=()
+    [[ -n ${GITHUB_TOKEN:-} ]] && auth=(-H "Authorization: Bearer $GITHUB_TOKEN")
+    curl -fsSL --retry 5 --retry-all-errors --connect-timeout 15 --max-time 120 "${auth[@]}" \
+        -H 'Accept: application/vnd.github+json' \
+        "https://api.github.com/repos/tangency-labs/solidcraft/releases/tags/v$version" \
+        -o "$work/release.json"
+    id=$(python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); print(next(a["id"] for a in r["assets"] if a["name"]==sys.argv[2]))' "$work/release.json" "$name")
+    curl -fsSL --retry 5 --retry-all-errors --connect-timeout 15 --max-time 600 "${auth[@]}" \
+        -H 'Accept: application/octet-stream' -o "$out" \
+        "https://api.github.com/repos/tangency-labs/solidcraft/releases/assets/$id"
+}
+
 release_checksum() {
     local version=$1 archive="solidcraft-$1-linux-x86_64.tar.gz"
-    curl -fsSL --retry 5 --retry-all-errors --connect-timeout 15 --max-time 120 \
-        "https://github.com/tangency-labs/solidcraft/releases/download/v$version/SHA256SUMS.txt" \
-        -o "$work/sums.txt"
+    fetch_asset "$version" SHA256SUMS.txt "$work/sums.txt"
     python3 "$helper" checksum "$archive" "$work/sums.txt"
 }
 
@@ -43,9 +61,20 @@ if [[ ${1:-} == --fetch && $# -ge 2 && $# -le 3 ]]; then
         exit 2
     fi
     archive="solidcraft-$version-linux-x86_64.tar.gz"
-    curl -fsSL --retry 5 --retry-all-errors --connect-timeout 15 --max-time 120 -o "$archive" \
-        "https://github.com/tangency-labs/solidcraft/releases/download/v$version/$archive"
-    printf '%s  %s\n' "$checksum" "$archive" | sha256sum -c - >&2
+    # SOLIDCRAFT_CACHE (a folder CI restores between runs) holds archives already fetched. A
+    # cached archive is used only when it matches the checksum, like a fresh download.
+    cache=${SOLIDCRAFT_CACHE:-}
+    if [[ -n $cache && -f $cache/$archive ]] \
+        && printf '%s  %s\n' "$checksum" "$cache/$archive" | sha256sum -c - >&2; then
+        cp "$cache/$archive" "$archive"
+    else
+        fetch_asset "$version" "$archive" "$archive"
+        printf '%s  %s\n' "$checksum" "$archive" | sha256sum -c - >&2
+        if [[ -n $cache ]]; then
+            mkdir -p "$cache"
+            cp "$archive" "$cache/$archive"
+        fi
+    fi
     tar xzf "$archive"
     printf '%s\n' "$version"
     exit
