@@ -51,6 +51,18 @@ Unreleased changes live in [changelog.d/](changelog.d/).
 - A Move Face that moves planar faces along their normal is written as SolidCraft's offset-face
   feature, with each face picked by a point inside it. Rotations, translations along another
   direction, non-planar faces and unresolved selections are reported with their own reason.
+- An extrude whose region is part of a circle crossed by another keeps its history: two crossing
+  circles bound several regions with the same curves, so the region is now selected by a point
+  inside it, taken from the stored boundary. A boundary that doesn't close stays refused.
+
+### Assemblies
+
+- Reference sketches in a large assembly are mapped from the sketch, feature, and parameter
+  data alone, built once per conversion instead of a full copy of the model for each group of
+  components, so the conversion needs less memory.
+- The report and the result card name the parts whose position nothing confirms: a warning for
+  parts at their design's origin because their placement could not be read, and a note for parts
+  resting on a stored pose that no joint, saved view, or usable later pose confirms.
 
 ### Desktop app
 
@@ -88,6 +100,9 @@ Unreleased changes live in [changelog.d/](changelog.d/).
 - Update checks read GitHub's releases feed instead of its rate-limited API.
 - Release notes in the update window show their headings, bold text, code and bullet lists properly.
 - On a Mac, the free memory shown for designs no longer reads about 0 GB when plenty of memory is available.
+- Dismissing "The last run didn't finish." keeps it dismissed after a relaunch, until another run
+  doesn't finish.
+- On Windows, converting no longer opens a terminal window for each SolidCraft or FreeCAD check.
 
 ### Command line and install
 
@@ -100,6 +115,8 @@ Unreleased changes live in [changelog.d/](changelog.d/).
 - `--write-replay` on `convert` and `convert-all` also writes `<design>.replay.json` beside a
   `.sc` design: the command script that rebuilds its history step by step, for
   `solidcraft-cli run`. The JSON report names the file as `replay_script`.
+- `dutchman-mcp --version` prints `dutchman-mcp <version>` and `dutchman-mcp --help` prints a
+  short usage note; both exit at once instead of starting the server and waiting on stdin.
 
 ### Reports
 
@@ -121,10 +138,25 @@ Unreleased changes live in [changelog.d/](changelog.d/).
   report's `versions.solidcraft_search` say where Dutchman looked (`SOLIDCRAFT_CLI`, `PATH`,
   Program Files and the other install folders) and what it found in each. The anonymous report
   names the places only, never a path.
+- When memory runs low during the SolidCraft check, the check stops and the built design is kept,
+  marked unverified with the reason, instead of losing the file.
+- An estimate from a file's size no longer refuses a conversion or leaves out feature history.
+  The conversion runs, watching memory, and stops with a clear message if the computer really
+  gets down to 1 GB free while the conversion holds at least 1 GB.
+- Standard leaves feature history out only when what the read really took leaves no room for it.
+- `convert-all`, `watch`, and the MCP batch tool no longer stop a file at 8 GB by default.
+- The desktop no longer stops to warn about an estimate before converting.
+- A file that runs out of memory alongside others in a batch is converted again alone at the end,
+  once, and the report says so.
+- The desktop converts each file in its own process, so a stop or a crash ends that file, not the
+  app.
+- The result card and summaries count features rebuilt, out of those that need one. `history.rebuilt`
+  and `history.needing` are new in the JSON report; `history.mapped` also counts features that need
+  nothing, such as component inserts and joints, so it overstated editable history.
 
 ### cadmpeg
 
-- The cadmpeg pin moves from `65d6e87` to `a7ca215` (cadmpeg 0.6.9), now taken from cadmpeg's own repository
+- The cadmpeg pin moves from `65d6e87` to `a7ca215` (cadmpeg 0.6.10), now taken from cadmpeg's own repository
   rather than a fork of it.
 - Fusion: extrude profiles are proven from their end caps and recipe operands are bound per
   counted operand, so extrudes no longer sweep the wrong sketch region where cadmpeg picked one
@@ -163,6 +195,11 @@ Unreleased changes live in [changelog.d/](changelog.d/).
 - Contributing explains how to build against a local cadmpeg, how to build a fast optimised
   profile for checking one file, and that tests for bugs found on private files use generic
   dimensions and synthetic geometry.
+
+### Formats
+
+- Falling back to geometry alone no longer fails when a component's definition names sketches
+  that the fallback removed.
 
 ## 0.2.7 (2026-11-04)
 
