@@ -703,5 +703,7 @@ fn rebuild_steps(signature: &Signature) -> String {
     crate::diagnose::recipes::render(signature)
 }
 
+pub mod synth;
+
 #[cfg(test)]
 mod tests;

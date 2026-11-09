@@ -75,8 +75,8 @@ fn the_summary_keeps_kinds_and_positions_but_no_names_or_sizes() {
     let report = report(&input);
     let scrub = scrubber(&report, &input);
     let anonymous = anonymous(&report, &input, dir.path());
-    let md = summary(&report, &anonymous, None, None, &scrub);
-    check(&md, &report, &anonymous, &[], &scrub).unwrap();
+    let md = summary(&report, &anonymous, None, None, None, &scrub);
+    check(&md, &report, &anonymous, &[], None, &scrub).unwrap();
     let text = &md.text;
     for private in [
         "Secret",
@@ -113,7 +113,7 @@ fn the_summary_keeps_kinds_and_positions_but_no_names_or_sizes() {
         "{text}"
     );
     assert!(text.contains("- History: 2 of 5 features"), "{text}");
-    assert!(text.contains("- Synthetic case: none made"), "{text}");
+    assert!(text.contains("- Synthetic case: not tried"), "{text}");
     // Replays that may be wrong come before the blockers.
     assert!(text.find("Replays that may be wrong") < text.find("First blocked feature"));
 }
@@ -126,7 +126,7 @@ fn a_number_from_the_design_written_as_fixed_text_is_caught() {
     let anonymous = json!({});
     let mut md = Md::default();
     md.fixed("a size of 182.1342 slipped through\n");
-    let error = check(&md, &report, &anonymous, &[], &scrub).unwrap_err();
+    let error = check(&md, &report, &anonymous, &[], None, &scrub).unwrap_err();
     assert!(error.contains("number from the design"), "{error}");
 }
 
@@ -139,7 +139,7 @@ fn a_name_from_the_design_is_caught() {
     // As if the scrubbing had been skipped.
     md.text.push_str("Lid Mount");
     md.designed.push_str("Lid Mount");
-    let error = check(&md, &report, &json!({}), &[], &scrub).unwrap_err();
+    let error = check(&md, &report, &json!({}), &[], None, &scrub).unwrap_err();
     assert!(error.contains("name or path"), "{error}");
 }
 
@@ -156,6 +156,7 @@ fn a_given_report_is_summarised_kept_private_and_reused() {
         report: Some(saved.clone()),
         send: Consent::No,
         compare: false,
+        synthetic: false,
         ..Settings::default()
     };
     let asked = std::cell::Cell::new(false);
@@ -199,7 +200,7 @@ fn sending_without_a_service_keeps_the_summary_locally() {
     let out = dir.path().join("inv");
     std::fs::create_dir_all(&out).unwrap();
     let id = Salt::random().unwrap().file_id(&input);
-    let sent = send_summary(&out, &id, "fusion_design", "# summary\n", None).unwrap();
+    let sent = send_summary(&out, &id, "fusion_design", "# summary\n", &[], None).unwrap();
     assert_eq!(sent["sent"], false);
     let folder = report_send::local_folder(&out, &id);
     let prepared = report_send::Prepared::load(&folder).unwrap();
@@ -207,7 +208,7 @@ fn sending_without_a_service_keeps_the_summary_locally() {
     assert_eq!(prepared.parts.len(), 1);
     assert_eq!(prepared.parts.first().unwrap().role, "summary");
     // The same consent is reused on a retry.
-    let again = send_summary(&out, &id, "fusion_design", "# summary\n", None).unwrap();
+    let again = send_summary(&out, &id, "fusion_design", "# summary\n", &[], None).unwrap();
     assert_eq!(again["sent"], false);
 }
 
@@ -247,8 +248,8 @@ fn newer_builds_are_summarised_regressions_first_and_pass_the_check() {
             ..compare::Delta::default()
         },
     ];
-    let md = summary(&report, &anonymous, None, Some(&deltas), &scrub);
-    check(&md, &report, &anonymous, &deltas, &scrub).unwrap();
+    let md = summary(&report, &anonymous, None, Some(&deltas), None, &scrub);
+    check(&md, &report, &anonymous, &deltas, None, &scrub).unwrap();
     let text = &md.text;
     let nightly = text.find("- nightly (Nightly 2026-11-08)").unwrap();
     let fix = text.find("- fix-12 (Fillets on closed edges)").unwrap();
@@ -271,5 +272,46 @@ fn newer_builds_are_summarised_regressions_first_and_pass_the_check() {
     );
     assert!(!text.contains("someone"), "{text}");
     // Without the deltas the build numbers are not allowed.
-    assert!(check(&md, &report, &anonymous, &[], &scrub).is_err());
+    assert!(check(&md, &report, &anonymous, &[], None, &scrub).is_err());
+}
+
+#[test]
+fn the_synthetic_line_says_why_there_is_no_case_and_how_long_it_took() {
+    let input = Path::new("/somewhere/part.f3d");
+    let report = report(input);
+    let scrub = scrubber(&report, input);
+    let none = synthetic::Synthetic::from_json(&json!({
+        "made": false,
+        "reason": "SolidCraft can't yet export a design with components as a command script",
+        "seconds": 37,
+    }))
+    .unwrap();
+    let md = summary(&report, &json!({}), None, None, Some(&none), &scrub);
+    check(&md, &report, &json!({}), &[], Some(&none), &scrub).unwrap();
+    assert!(
+        md.text.contains(
+            "- Synthetic case: none made: SolidCraft can't yet export a design with components \
+             as a command script (https://github.com/tangency-labs/solidcraft/issues/6562) \
+             (took 37 s)"
+        ),
+        "{}",
+        md.text
+    );
+    let made = synthetic::Synthetic {
+        folder: Some(PathBuf::from("synthetic")),
+        steps: Some(3),
+        reason: None,
+        seconds: 412,
+    };
+    let md = summary(&report, &json!({}), None, None, Some(&made), &scrub);
+    check(&md, &report, &json!({}), &[], Some(&made), &scrub).unwrap();
+    assert!(
+        md.text.contains(
+            "- Synthetic case: made, 3 steps on invented dimensions, in synthetic/ (took 412 s)"
+        ),
+        "{}",
+        md.text
+    );
+    // Without the record the step's numbers are not allowed.
+    assert!(check(&md, &report, &json!({}), &[], None, &scrub).is_err());
 }

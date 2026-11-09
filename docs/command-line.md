@@ -48,9 +48,23 @@ The summary lists, regressions first, whether each converts, how many features i
 and each feature it rebuilds that this version doesn't, or the reverse. `--no-compare` skips
 this; `--compare-time-limit` (default 30m) bounds each build's conversion.
 
-Then it asks once: `Send this summary to the Dutchman team? [y/N]`. Yes sends `summary.md`,
-and nothing else, through the anonymous report endpoint with the signature `investigate`,
-and prints the receipt id. No leaves everything where it is. `--yes` and `--no-send` give the
+When SolidCraft refused a feature, it also tries to make a synthetic case: a small SolidCraft
+command script on invented dimensions and generic names that fails the same way. It converts
+the part holding the first refused feature alone, cut just after it and unchecked, exports
+that with `solidcraft-cli script`, removes every step the failure doesn't need, and then
+re-dimensions what is left until an invented case fails the same way. A case that would keep
+a number or name from the design, or more than 12 steps, is refused by code. `synthetic/`
+(`case.json`, `recipe.md`, `manifest.json`) is written only when such a case fails the same
+way; otherwise the summary says why, and how long the step took. SolidCraft can't yet export a
+design with components as a command script
+([tangency-labs/solidcraft#6562](https://github.com/tangency-labs/solidcraft/issues/6562)),
+and Dutchman's designs have them, so today the summary says that. `--no-synthetic` skips the
+step; `--synthetic-time-limit` (default 20m) bounds it.
+
+Then it asks once: `Send this summary to the Dutchman team? [y/N]`, or `Send this summary
+and the synthetic case to the Dutchman team? [y/N]` when one was made. Yes sends `summary.md`
+(and the synthetic case, when one was made), and nothing else, through the anonymous report
+endpoint with the signature `investigate`, and prints the receipt id. No leaves everything where it is. `--yes` and `--no-send` give the
 answer in advance, for an AI the user has already answered. Without a terminal and without
 either flag, nothing is sent; the result says to ask the user and run again with one of them.
 That second run reuses the summary the first one made instead of converting again; `--fresh`

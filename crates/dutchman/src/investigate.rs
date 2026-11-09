@@ -41,6 +41,10 @@ const STATE_SCHEMA: &str = "dutchman.investigate-local/1";
 /// The question asked before anything is sent.
 pub const QUESTION: &str = "Send this summary to the Dutchman team? [y/N]";
 
+/// The question when a synthetic case was made too.
+pub const QUESTION_WITH_CASE: &str =
+    "Send this summary and the synthetic case to the Dutchman team? [y/N]";
+
 /// Whether the summary is sent.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Consent {
@@ -70,6 +74,10 @@ pub struct Settings {
     pub compare: bool,
     /// The longest one of those builds may take to convert the design.
     pub compare_time_limit: Duration,
+    /// Try to make a synthetic case of the first SolidCraft refusal.
+    pub synthetic: bool,
+    /// The longest the synthetic case may take.
+    pub synthetic_time_limit: Duration,
     /// The conversion's choices, for a design converted here.
     pub options: ConvertOptions,
 }
@@ -84,6 +92,8 @@ impl Default for Settings {
             step_time_limit: None,
             compare: true,
             compare_time_limit: compare::DEFAULT_TIME_LIMIT,
+            synthetic: true,
+            synthetic_time_limit: synthetic::DEFAULT_TIME_LIMIT,
             options: ConvertOptions::default(),
         }
     }
@@ -142,7 +152,10 @@ pub fn run(
         "summary_path": out.join(SUMMARY).display().to_string(),
         "report": state.get("report").cloned().unwrap_or(Value::Null),
         "narrowed": state.get("narrowed").cloned().unwrap_or(Value::Null),
-        "synthetic": false,
+        "synthetic": state
+            .pointer("/synthetic/made")
+            .cloned()
+            .unwrap_or(Value::Bool(false)),
         "builds": state.get("builds").cloned().unwrap_or(Value::Null),
         "private": [
             out.join("local-key.json").display().to_string(),
@@ -160,10 +173,12 @@ pub fn run(
         .and_then(Value::as_str)
         .unwrap_or("unknown")
         .to_owned();
+    let made = state.pointer("/synthetic/made") == Some(&Value::Bool(true));
+    let question = if made { QUESTION_WITH_CASE } else { QUESTION };
     let send = match settings.send {
         Consent::Yes => true,
         Consent::No => false,
-        Consent::Ask if std::io::stdin().is_terminal() => ask(QUESTION),
+        Consent::Ask if std::io::stdin().is_terminal() => ask(question),
         Consent::Ask => {
             set(
                 &mut result,
@@ -192,11 +207,17 @@ pub fn run(
         );
         return Ok(result);
     }
+    let case = if made {
+        synthetic::files(&out.join("synthetic"))?
+    } else {
+        Vec::new()
+    };
     let sent = send_summary(
         &out,
         &report_id,
         &format,
         &summary,
+        &case,
         report_send::endpoint().as_deref(),
     )?;
     let ok = sent.get("sent") == Some(&Value::Bool(true));
@@ -405,11 +426,22 @@ fn investigate(
     } else {
         None
     };
+    let made = settings.synthetic.then(|| {
+        synthetic::make(
+            input,
+            out,
+            &report,
+            &settings.options,
+            settings.synthetic_time_limit,
+            on_progress,
+        )
+    });
     let md = summary(
         &report,
         &anonymous,
         narrowed.as_ref(),
         deltas.as_deref(),
+        made.as_ref(),
         &scrub,
     );
     check(
@@ -417,6 +449,7 @@ fn investigate(
         &report,
         &anonymous,
         deltas.as_deref().unwrap_or(&[]),
+        made.as_ref(),
         &scrub,
     )?;
     let summary = md.text;
@@ -428,6 +461,7 @@ fn investigate(
         "format": report.pointer("/input/format").and_then(Value::as_str).unwrap_or("unknown"),
         "report": source,
         "narrowed": narrowed.as_ref().map(|n| n.is_ok()),
+        "synthetic": made.as_ref().map(synthetic::Synthetic::json),
         "builds": deltas.as_ref().map(|deltas| deltas.iter().map(|d| json!({
             "label": d.label,
             "title": d.title,
@@ -548,6 +582,7 @@ fn summary(
     anonymous: &Value,
     narrowed: Option<&Result<Value, String>>,
     deltas: Option<&[compare::Delta]>,
+    made: Option<&synthetic::Synthetic>,
     scrub: &Scrubber,
 ) -> Md {
     let mut md = Md::default();
@@ -608,7 +643,7 @@ fn summary(
         md.num(count(report, "/history/needing").unwrap_or(total));
         md.fixed(" features that need rebuilding were rebuilt\n");
     }
-    md.fixed("- Synthetic case: none made\n");
+    synthetic_line(&mut md, made);
     builds(&mut md, deltas);
 
     let features: Vec<&Value> = report
@@ -745,6 +780,31 @@ fn word(text: &str) -> String {
     }
 }
 
+/// Whether a synthetic case was made, how long the step took, and why there is none.
+fn synthetic_line(md: &mut Md, made: Option<&synthetic::Synthetic>) {
+    let Some(made) = made else {
+        md.fixed("- Synthetic case: not tried\n");
+        return;
+    };
+    if made.made() {
+        md.fixed("- Synthetic case: made, ");
+        md.num(made.steps.unwrap_or(0) as u64);
+        md.fixed(" steps on invented dimensions, in synthetic/ (took ");
+    } else {
+        md.fixed("- Synthetic case: none made: ");
+        md.fixed(made.reason.unwrap_or("no reason was recorded"));
+        if made
+            .reason
+            .is_some_and(|r| r.contains("export a design with components"))
+        {
+            md.fixed(&format!(" ({})", synthetic::EXPORT_ISSUE));
+        }
+        md.fixed(" (took ");
+    }
+    md.num(made.seconds);
+    md.fixed(" s)\n");
+}
+
 /// What newer builds change, regressions first.
 fn builds(md: &mut Md, deltas: Option<&[compare::Delta]>) {
     let Some(deltas) = deltas else {
@@ -852,6 +912,7 @@ fn check(
     report: &Value,
     anonymous: &Value,
     deltas: &[compare::Delta],
+    made: Option<&synthetic::Synthetic>,
     scrub: &Scrubber,
 ) -> Result<(), String> {
     if scrub.holds_known(&md.designed) {
@@ -861,7 +922,7 @@ fn check(
                 .to_owned(),
         );
     }
-    let allowed = allowed_numbers(report, anonymous, deltas);
+    let allowed = allowed_numbers(report, anonymous, deltas, made);
     let stray: Vec<String> = numbers(&md.text)
         .into_iter()
         .filter(|n| !allowed.contains(n))
@@ -882,8 +943,12 @@ fn allowed_numbers(
     report: &Value,
     anonymous: &Value,
     deltas: &[compare::Delta],
+    made: Option<&synthetic::Synthetic>,
 ) -> BTreeSet<String> {
     let mut md = Md::default();
+    if let Some(made) = made {
+        synthetic_line(&mut md, Some(made));
+    }
     for delta in deltas {
         md.fixed(&delta.label);
         md.fixed(&title_text(&delta.title));
@@ -950,18 +1015,29 @@ fn allowed_numbers(
     md.allowed
 }
 
-/// What a sent summary carries: the summary alone.
-struct SummarySource<'a>(&'a str);
+/// What a sent summary carries: the summary, and the synthetic case's files when one was made.
+struct SummarySource<'a>(&'a str, &'a [(String, Vec<u8>)]);
 
 impl report_send::BundleSource for SummarySource<'_> {
     fn parts(&self) -> Result<Vec<report_send::BundlePart>, String> {
-        Ok(vec![report_send::BundlePart {
+        let mut parts = vec![report_send::BundlePart {
             role: "summary".to_owned(),
             bytes: self.0.as_bytes().to_vec(),
-        }])
+        }];
+        parts.extend(self.1.iter().map(|(role, bytes)| report_send::BundlePart {
+            role: role.clone(),
+            bytes: bytes.clone(),
+        }));
+        Ok(parts)
     }
     fn manifest(&self) -> Value {
-        json!([{"role": "summary", "kind": "markdown"}])
+        let mut manifest = vec![json!({"role": "summary", "kind": "markdown"})];
+        manifest.extend(
+            self.1
+                .iter()
+                .map(|(role, _)| json!({"role": role, "kind": "synthetic"})),
+        );
+        Value::Array(manifest)
     }
 }
 
@@ -971,6 +1047,7 @@ fn send_summary(
     report_id: &str,
     format: &str,
     summary: &str,
+    case: &[(String, Vec<u8>)],
     endpoint: Option<&str>,
 ) -> Result<Value, String> {
     let folder = report_send::local_folder(out, report_id);
@@ -986,7 +1063,7 @@ fn send_summary(
             report_id,
             format,
             SIGNATURE,
-            Some(&SummarySource(summary)),
+            Some(&SummarySource(summary, case)),
             &folder,
         )?
     };
@@ -1005,6 +1082,7 @@ pub fn ask_on_terminal(question: &str) -> bool {
 }
 
 pub mod compare;
+pub mod synthetic;
 
 #[cfg(test)]
 mod tests;

@@ -113,6 +113,12 @@ enum Command {
         /// The longest one newer build may take to convert the design (default 30m).
         #[arg(long, value_name = "TIME", value_parser = dutchman::diagnose::parse_duration)]
         compare_time_limit: Option<std::time::Duration>,
+        /// Don't try to make a synthetic case of the first SolidCraft refusal.
+        #[arg(long)]
+        no_synthetic: bool,
+        /// The longest the synthetic case may take (default 20m).
+        #[arg(long, value_name = "TIME", value_parser = dutchman::diagnose::parse_duration)]
+        synthetic_time_limit: Option<std::time::Duration>,
         /// Print one machine-readable result on stdout instead of the summary.
         #[arg(long)]
         json: bool,
@@ -529,6 +535,8 @@ fn main() -> ExitCode {
             step_time_limit,
             no_compare,
             compare_time_limit,
+            no_synthetic,
+            synthetic_time_limit,
             json: as_json,
             options,
         } => {
@@ -554,6 +562,9 @@ fn main() -> ExitCode {
                 compare: !no_compare,
                 compare_time_limit: compare_time_limit
                     .unwrap_or(investigate::compare::DEFAULT_TIME_LIMIT),
+                synthetic: !no_synthetic,
+                synthetic_time_limit: synthetic_time_limit
+                    .unwrap_or(investigate::synthetic::DEFAULT_TIME_LIMIT),
                 options,
             };
             let progress = |text: &str| {
