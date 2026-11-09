@@ -3077,6 +3077,83 @@ fn slice(
             }
         }
     }
+    // A sketch another component builds that a feature of this one uses (designing in the
+    // context of an assembly): carry its sketch feature in, with the sketch's plane moved from
+    // that component's coordinates into this one's. That move exists only where each of the
+    // two components has a single instance; otherwise the sketch stays out and the history
+    // stops at the feature that uses it.
+    let mut carried: BTreeMap<String, Placement3x4> = BTreeMap::new();
+    let mut carried_features: BTreeSet<String> = BTreeSet::new();
+    if history && !bodies.is_empty() {
+        let occurrences = wire
+            .get("occurrences")
+            .and_then(Value::as_array)
+            .map_or(&[][..], Vec::as_slice);
+        let here = match owner {
+            HistoryOwner::Definition(id) => single_world(occurrences, Some(id)),
+            HistoryOwner::Root => Some(IDENTITY),
+            HistoryOwner::Unknown => None,
+        };
+        // Sketches this component's own features use (a profile, a path), not every sketch
+        // its rows happen to reach.
+        let mut used: BTreeSet<String> = BTreeSet::new();
+        for id in keep.keys() {
+            let Some(entry) = rows.get(*id).filter(|entry| entry.arena == "features") else {
+                continue;
+            };
+            let value = entry.row.value()?;
+            let row = value.as_ref();
+            if !owned(row) || sketched(row).is_some() {
+                continue;
+            }
+            let mut refs = Vec::new();
+            strings(row.get("definition").unwrap_or(&Value::Null), &mut refs);
+            used.extend(
+                refs.into_iter()
+                    .filter(|id| rows.get(*id).is_some_and(|entry| entry.arena == "sketches"))
+                    .map(str::to_owned),
+            );
+        }
+        for sketch in used.iter().map(String::as_str) {
+            let Some(here) = here else { break };
+            let Some(builders) = binders.get(sketch) else {
+                continue;
+            };
+            if builders.iter().any(|id| keep.contains_key(id)) {
+                continue;
+            }
+            let mut owners = BTreeSet::new();
+            for id in builders {
+                if let Some(entry) = rows.get(*id) {
+                    owners
+                        .insert(product_definition(entry.row.value()?.as_ref()).map(str::to_owned));
+                }
+            }
+            let owners: Vec<Option<String>> = owners.into_iter().collect();
+            let [there] = owners.as_slice() else {
+                continue;
+            };
+            let Some(there) = single_world(occurrences, there.as_deref()) else {
+                continue;
+            };
+            let resolved = rows
+                .get(sketch)
+                .map(|entry| entry.row.value())
+                .transpose()?;
+            let movable = resolved.as_ref().is_some_and(|row| {
+                row.pointer("/placement/kind").and_then(Value::as_str) == Some("resolved")
+                    && row.pointer("/placement/frame").is_some()
+            });
+            if !movable {
+                continue;
+            }
+            carried.insert(sketch.to_owned(), compose(&inverse(&here), &there));
+            for id in builders {
+                keep.insert(id, ());
+                carried_features.insert((*id).to_owned());
+            }
+        }
+    }
     // Bindings point to topology, rather than topology pointing to its bindings.
     // Keep that reverse edge and the appearance asset in each definition's slice.
     let bindings: Vec<_> = keep
@@ -3110,6 +3187,21 @@ fn slice(
         let row = if entry.arena == "features" {
             let mut row = entry.row.value()?.into_owned();
             if let Some(fields) = row.as_object_mut() {
+                // A sketch feature carried in from another component is this one's now.
+                if fields
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .is_some_and(|id| carried_features.contains(id))
+                {
+                    match definition {
+                        Some(id) => {
+                            fields.insert("product_definition".to_owned(), Value::from(id));
+                        }
+                        None => {
+                            fields.remove("product_definition");
+                        }
+                    }
+                }
                 // A predecessor outside this slice is not part of its timeline.
                 if fields
                     .get("regeneration_parent")
@@ -3132,6 +3224,19 @@ fn slice(
                     {
                         properties.remove("body_centers");
                     }
+                }
+            }
+            slicing::Selected::Value(std::borrow::Cow::Owned(row))
+        } else if entry.arena == "sketches" && !carried.is_empty() {
+            let mut row = entry.row.value()?.into_owned();
+            let moved = row
+                .get("id")
+                .and_then(Value::as_str)
+                .and_then(|id| carried.get(id))
+                .copied();
+            if let Some(by) = moved {
+                if let Some(frame) = row.pointer_mut("/placement/frame") {
+                    move_frame(frame, &by).ok_or("a carried sketch's plane is malformed")?;
                 }
             }
             slicing::Selected::Value(std::borrow::Cow::Owned(row))
@@ -3192,6 +3297,72 @@ pub(crate) fn strings<'v>(value: &'v Value, out: &mut Vec<&'v str>) {
         Value::Object(fields) => fields.values().for_each(|v| strings(v, out)),
         _ => {}
     }
+}
+
+/// Where the one instance of component `definition` sits in the world, when the design has
+/// exactly one: one local occurrence places it, and one places each component around it.
+/// `None` for a component placed more than once (or not at all), whose instances differ, or
+/// for a placement that is not rigid. The design's root (`None`) is the world itself.
+fn single_world(occurrences: &[Value], definition: Option<&str>) -> Option<Placement3x4> {
+    let Some(definition) = definition else {
+        return Some(IDENTITY);
+    };
+    let local = || occurrences.iter().filter(|row| scope(row) == Some("local"));
+    let placed = |definition: &str| {
+        local()
+            .filter(|row| definition_key(row) == Some(definition))
+            .count()
+    };
+    let mut row = {
+        let mut rows = local().filter(|row| definition_key(row) == Some(definition));
+        let row = rows.next()?;
+        rows.next().is_none().then_some(row)?
+    };
+    let mut world = transform(row).ok()?;
+    for _ in 0..MAX_DEPTH {
+        let Some(parent) = row.pointer("/parent/occurrence").and_then(Value::as_str) else {
+            return Some(world);
+        };
+        // The design's own root occurrence, when the file stores one, places nothing else.
+        let Some(above) = occurrences
+            .iter()
+            .find(|row| row.get("id").and_then(Value::as_str) == Some(parent))
+        else {
+            return Some(world);
+        };
+        if let Some(key) = definition_key(above) {
+            if placed(key) != 1 {
+                return None;
+            }
+        }
+        world = compose(&transform(above).ok()?, &world);
+        row = above;
+    }
+    None
+}
+
+/// `frame` (a sketch placement's `origin`, `normal` and `u_axis`) moved by `by`.
+fn move_frame(frame: &mut Value, by: &Placement3x4) -> Option<()> {
+    let read = |value: &Value| -> Option<[f64; 3]> {
+        Some([
+            value.get("x")?.as_f64()?,
+            value.get("y")?.as_f64()?,
+            value.get("z")?.as_f64()?,
+        ])
+    };
+    let apply = |[x, y, z]: [f64; 3], translate: bool| -> Value {
+        let at = |[a, b, c, t]: [f64; 4]| a * x + b * y + c * z + if translate { t } else { 0.0 };
+        let [first, second, third] = *by;
+        serde_json::json!({"x": at(first), "y": at(second), "z": at(third)})
+    };
+    let origin = read(frame.get("origin")?)?;
+    let normal = read(frame.get("normal")?)?;
+    let u_axis = read(frame.get("u_axis")?)?;
+    let fields = frame.as_object_mut()?;
+    fields.insert("origin".to_owned(), apply(origin, true));
+    fields.insert("normal".to_owned(), apply(normal, false));
+    fields.insert("u_axis".to_owned(), apply(u_axis, false));
+    Some(())
 }
 
 /// The file name in a stored path, whichever separators the saving machine used.
@@ -3980,6 +4151,115 @@ mod tests {
         );
         assert_eq!(other.ir.model.sketches.len(), 1);
         assert_eq!(other.ir.model.bodies.len(), 1);
+    }
+
+    /// The fixture's history split between component `Layout`, which builds the sketch, and
+    /// `Block`, which owns the body and every other feature (designing in the context of an
+    /// assembly). Block is at the origin; Layout is placed at x = 30, then at x = 60 for each
+    /// of its `extra` further instances.
+    fn with_layout_sketch(extra: usize) -> (Model, String) {
+        let part = crate::read(
+            Format::FusionArchive,
+            &fixture("design_sketch_constraints.f3d"),
+            &mut Report::default(),
+        )
+        .unwrap();
+        let mut wire = serde_json::to_value(&part.ir).unwrap();
+        let body = wire["model"]["bodies"][0]["id"].clone();
+        let mut builder = String::new();
+        for feature in wire["model"]["features"].as_array_mut().unwrap() {
+            let sketch = feature["definition"]["definition"] == "sketch";
+            if sketch {
+                builder = feature["id"].as_str().unwrap().to_owned();
+            }
+            let owner = if sketch { "layout" } else { "block" };
+            feature["product_definition"] = json!(format!("f3d:model:component#{owner}"));
+            feature["outputs"] = json!([]);
+        }
+        assert!(!builder.is_empty());
+        // Block's feature that uses Layout's sketch.
+        let sketch = wire["model"]["sketches"][0]["id"].clone();
+        wire["model"]["features"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({
+                "id": "synthetic:block:feature#extrude",
+                "ordinal": 100,
+                "name": "Extrude",
+                "suppressed": false,
+                "product_definition": "f3d:model:component#block",
+                "definition": {
+                    "definition": "extrude",
+                    "profile": {"kind": "sketch", "value": sketch},
+                    "direction": {"kind": "profile_normal"},
+                    "start": {"kind": "profile_plane"},
+                    "extent": {"kind": "one_sided",
+                        "side": {"termination": {"kind": "blind", "length": 5.0}}},
+                    "op": "new_body",
+                },
+            }));
+        wire["model"]["product_definitions"] = json!([
+            {"id": "f3d:model:component#block", "kind": "part", "label": "Block", "bodies": [body]},
+            {"id": "f3d:model:component#layout", "kind": "part", "label": "Layout", "bodies": []},
+        ]);
+        let mut occurrences = vec![
+            placed(0, "block", root(), 0.0),
+            placed(1, "layout", root(), 30.0),
+        ];
+        for key in 0..extra {
+            occurrences.push(placed(2 + key as u32, "layout", root(), 60.0));
+        }
+        wire["model"]["occurrences"] = json!(occurrences);
+        let model = Model {
+            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ..part
+        };
+        (model, builder)
+    }
+
+    #[test]
+    fn a_sketch_another_component_builds_is_carried_in_at_its_place() {
+        let source = |model: &Model| {
+            serde_json::to_value(&model.ir).unwrap()["model"]["sketches"][0]["placement"]["frame"]
+                .clone()
+        };
+        let (model, builder) = with_layout_sketch(0);
+        let before = source(&model);
+        let assembly = local_assembly(&model).unwrap().unwrap();
+        let block = assembly
+            .parts
+            .iter()
+            .find(|part| part.name == "Block")
+            .unwrap();
+        // The sketch feature comes along as Block's own, so Block's history has its sketch.
+        let wire = serde_json::to_value(&block.ir).unwrap();
+        let carried = wire["model"]["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["id"] == builder.as_str())
+            .expect("the sketch feature is carried in");
+        assert_eq!(carried["product_definition"], "f3d:model:component#block");
+        // Its plane is where Layout puts it, in Block's coordinates: 30 along x.
+        let after = &wire["model"]["sketches"][0]["placement"]["frame"];
+        let x = |frame: &Value| frame["origin"]["x"].as_f64().unwrap();
+        assert!(
+            (x(after) - x(&before) - 30.0).abs() < 1e-9,
+            "{before} {after}"
+        );
+        assert_eq!(after["normal"], before["normal"]);
+        assert_eq!(after["u_axis"], before["u_axis"]);
+
+        // Placed twice, Layout has no one place relative to Block: the sketch feature stays
+        // out, and the history stops at the feature that uses it, as before.
+        let (model, builder) = with_layout_sketch(1);
+        let assembly = local_assembly(&model).unwrap().unwrap();
+        let block = assembly
+            .parts
+            .iter()
+            .find(|part| part.name == "Block")
+            .unwrap();
+        assert!(!feature_ids(block).contains(&builder));
     }
 
     #[test]
