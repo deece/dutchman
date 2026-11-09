@@ -359,7 +359,9 @@ pub fn from_zip(bytes: &[u8], program: &str) -> Result<Vec<u8>, String> {
         zip::ZipArchive::new(std::io::Cursor::new(bytes)).map_err(|e| e.to_string())?;
     for i in 0..archive.len() {
         let mut file = archive.by_index(i).map_err(|e| e.to_string())?;
-        if is_program(file.name(), program) {
+        // An entry whose name doesn't decode is not the program.
+        let wanted = file.name().is_ok_and(|name| is_program(&name, program));
+        if wanted {
             let mut out = Vec::new();
             file.by_ref()
                 .take(MAX_ARCHIVE)
