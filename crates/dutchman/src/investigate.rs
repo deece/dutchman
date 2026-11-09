@@ -65,6 +65,11 @@ pub struct Settings {
     pub fresh: bool,
     /// The longest narrowing a failed conversion may take in all.
     pub step_time_limit: Option<Duration>,
+    /// Convert with the newest nightly and the listed candidate builds too, and say what
+    /// each changes.
+    pub compare: bool,
+    /// The longest one of those builds may take to convert the design.
+    pub compare_time_limit: Duration,
     /// The conversion's choices, for a design converted here.
     pub options: ConvertOptions,
 }
@@ -77,6 +82,8 @@ impl Default for Settings {
             send: Consent::Ask,
             fresh: false,
             step_time_limit: None,
+            compare: true,
+            compare_time_limit: compare::DEFAULT_TIME_LIMIT,
             options: ConvertOptions::default(),
         }
     }
@@ -136,6 +143,7 @@ pub fn run(
         "report": state.get("report").cloned().unwrap_or(Value::Null),
         "narrowed": state.get("narrowed").cloned().unwrap_or(Value::Null),
         "synthetic": false,
+        "builds": state.get("builds").cloned().unwrap_or(Value::Null),
         "private": [
             out.join("local-key.json").display().to_string(),
             out.join("convert").display().to_string(),
@@ -383,8 +391,34 @@ fn investigate(
         scrub.know_path(Path::new(path));
     }
     scrub.know_names_in(&report);
-    let md = summary(&report, &anonymous, narrowed.as_ref(), &scrub);
-    check(&md, &report, &anonymous, &scrub)?;
+    let deltas = if settings.compare {
+        on_progress("looking for newer builds to compare with");
+        let (builds, _) = compare::builds(compare::TARGET);
+        Some(compare::compare(
+            input,
+            out,
+            &report,
+            &builds,
+            settings.compare_time_limit,
+            on_progress,
+        ))
+    } else {
+        None
+    };
+    let md = summary(
+        &report,
+        &anonymous,
+        narrowed.as_ref(),
+        deltas.as_deref(),
+        &scrub,
+    );
+    check(
+        &md,
+        &report,
+        &anonymous,
+        deltas.as_deref().unwrap_or(&[]),
+        &scrub,
+    )?;
     let summary = md.text;
     private_file(&out.join(SUMMARY), summary.as_bytes())?;
     let state = json!({
@@ -394,6 +428,17 @@ fn investigate(
         "format": report.pointer("/input/format").and_then(Value::as_str).unwrap_or("unknown"),
         "report": source,
         "narrowed": narrowed.as_ref().map(|n| n.is_ok()),
+        "builds": deltas.as_ref().map(|deltas| deltas.iter().map(|d| json!({
+            "label": d.label,
+            "title": d.title,
+            "compared": d.skipped.is_none(),
+            "not_compared_because": d.skipped,
+            "regresses": d.regresses(),
+            "converts": d.ok_after,
+            "rebuilt": d.rebuilt_after,
+            "better": d.better.len(),
+            "worse": d.worse.len(),
+        })).collect::<Vec<_>>()),
     });
     private_file(
         &out.join(STATE),
@@ -502,6 +547,7 @@ fn summary(
     report: &Value,
     anonymous: &Value,
     narrowed: Option<&Result<Value, String>>,
+    deltas: Option<&[compare::Delta]>,
     scrub: &Scrubber,
 ) -> Md {
     let mut md = Md::default();
@@ -563,6 +609,7 @@ fn summary(
         md.fixed(" features that need rebuilding were rebuilt\n");
     }
     md.fixed("- Synthetic case: none made\n");
+    builds(&mut md, deltas);
 
     let features: Vec<&Value> = report
         .pointer("/history/features")
@@ -698,6 +745,74 @@ fn word(text: &str) -> String {
     }
 }
 
+/// What newer builds change, regressions first.
+fn builds(md: &mut Md, deltas: Option<&[compare::Delta]>) {
+    let Some(deltas) = deltas else {
+        md.fixed("- Newer builds: not compared\n");
+        return;
+    };
+    if deltas.is_empty() {
+        md.fixed("- Newer builds: none found for this platform\n");
+        return;
+    }
+    md.fixed("\n## Newer builds\n\n");
+    let mut ordered: Vec<&compare::Delta> = deltas.iter().collect();
+    ordered.sort_by_key(|d| (!d.regresses(), d.skipped.is_some()));
+    for delta in ordered {
+        md.fixed(&format!("- {} ({})", delta.label, title_text(&delta.title)));
+        if delta.skipped.is_some() {
+            md.fixed(": could not be compared\n");
+            continue;
+        }
+        md.fixed(": ");
+        md.fixed(match (delta.ok_before, delta.ok_after) {
+            (true, false) => "fails, where this version converts",
+            (false, true) => "converts, where this version fails",
+            (true, true) => "converts",
+            (false, false) => "fails too",
+        });
+        if delta.ok_after && delta.rebuilt_after != delta.rebuilt_before {
+            md.fixed(", rebuilds ");
+            md.num(delta.rebuilt_after);
+            md.fixed(" features (this version ");
+            md.num(delta.rebuilt_before);
+            md.fixed(")");
+        }
+        if delta.ok_before == delta.ok_after
+            && delta.worse.is_empty()
+            && delta.better.is_empty()
+            && delta.rebuilt_after == delta.rebuilt_before
+        {
+            md.fixed(", with the same result");
+        }
+        md.line();
+        for (ordinal, kind, now) in delta.worse.iter().take(10) {
+            md.fixed(&format!("  - worse: {kind}, feature "));
+            md.num(ordinal + 1);
+            md.fixed(&format!(
+                " in the timeline is now {now} (rebuilt in this version)\n"
+            ));
+        }
+        for (ordinal, kind, before) in delta.better.iter().take(10) {
+            md.fixed(&format!("  - better: {kind}, feature "));
+            md.num(ordinal + 1);
+            md.fixed(&format!(" in the timeline is rebuilt (here {before})\n"));
+        }
+    }
+}
+
+/// A build's title (`Nightly 2026-11-08`, a candidate's one-line note): letters, digits,
+/// spaces and plain punctuation, at most 80 characters.
+fn title_text(title: &str) -> String {
+    title
+        .chars()
+        .filter(|c| {
+            c.is_ascii_alphanumeric() || matches!(c, ' ' | '-' | '.' | ',' | ':' | '(' | ')')
+        })
+        .take(80)
+        .collect()
+}
+
 /// A place label from SolidCraft's search (`PATH`, `beside dutchman`, …): fixed labels, with
 /// anything else written `other`.
 fn label(text: &str) -> String {
@@ -732,7 +847,13 @@ fn position(md: &mut Md, feature: &Value) {
 
 /// Proves the summary holds no name or path the conversion met and no number it did not
 /// write itself. A failure is a bug in Dutchman, so nothing is written.
-fn check(md: &Md, report: &Value, anonymous: &Value, scrub: &Scrubber) -> Result<(), String> {
+fn check(
+    md: &Md,
+    report: &Value,
+    anonymous: &Value,
+    deltas: &[compare::Delta],
+    scrub: &Scrubber,
+) -> Result<(), String> {
     if scrub.holds_known(&md.designed) {
         return Err(
             "the summary would hold a name or path from the design, so it was not \
@@ -740,7 +861,7 @@ fn check(md: &Md, report: &Value, anonymous: &Value, scrub: &Scrubber) -> Result
                 .to_owned(),
         );
     }
-    let allowed = allowed_numbers(report, anonymous);
+    let allowed = allowed_numbers(report, anonymous, deltas);
     let stray: Vec<String> = numbers(&md.text)
         .into_iter()
         .filter(|n| !allowed.contains(n))
@@ -757,8 +878,22 @@ fn check(md: &Md, report: &Value, anonymous: &Value, scrub: &Scrubber) -> Result
 
 /// The numbers [`summary`] may write, worked out again from what Dutchman owns alone, so a
 /// design's text passed by mistake through [`Md::fixed`] is still caught.
-fn allowed_numbers(report: &Value, anonymous: &Value) -> BTreeSet<String> {
+fn allowed_numbers(
+    report: &Value,
+    anonymous: &Value,
+    deltas: &[compare::Delta],
+) -> BTreeSet<String> {
     let mut md = Md::default();
+    for delta in deltas {
+        md.fixed(&delta.label);
+        md.fixed(&title_text(&delta.title));
+        for n in [delta.rebuilt_after, delta.rebuilt_before, delta.needing] {
+            md.num(n);
+        }
+        for (ordinal, _, _) in delta.worse.iter().chain(&delta.better) {
+            md.num(ordinal + 1);
+        }
+    }
     md.fixed(crate::BUILD_VERSION);
     md.fixed(anon::CADMPEG_VERSION);
     md.fixed(std::env::consts::OS);
@@ -868,6 +1003,8 @@ pub fn ask_on_terminal(question: &str) -> bool {
     }
     matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes")
 }
+
+pub mod compare;
 
 #[cfg(test)]
 mod tests;

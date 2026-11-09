@@ -107,6 +107,12 @@ enum Command {
         /// The longest narrowing a failed conversion may take in all.
         #[arg(long, value_name = "TIME", value_parser = dutchman::diagnose::parse_duration)]
         step_time_limit: Option<std::time::Duration>,
+        /// Don't download the newest nightly and candidate builds to compare with.
+        #[arg(long)]
+        no_compare: bool,
+        /// The longest one newer build may take to convert the design (default 30m).
+        #[arg(long, value_name = "TIME", value_parser = dutchman::diagnose::parse_duration)]
+        compare_time_limit: Option<std::time::Duration>,
         /// Print one machine-readable result on stdout instead of the summary.
         #[arg(long)]
         json: bool,
@@ -521,6 +527,8 @@ fn main() -> ExitCode {
             no_send,
             fresh,
             step_time_limit,
+            no_compare,
+            compare_time_limit,
             json: as_json,
             options,
         } => {
@@ -543,6 +551,9 @@ fn main() -> ExitCode {
                 },
                 fresh,
                 step_time_limit,
+                compare: !no_compare,
+                compare_time_limit: compare_time_limit
+                    .unwrap_or(investigate::compare::DEFAULT_TIME_LIMIT),
                 options,
             };
             let progress = |text: &str| {

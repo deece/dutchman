@@ -20,7 +20,7 @@ or saved report. Nothing is sent without asking. See [desktop usage](desktop.md#
 ## Look into a conversion that went wrong: investigate
 
 ```sh
-dutchman investigate design.f3d [--out FOLDER] [--report FILE] [--yes | --no-send] [--json]
+dutchman investigate design.f3d [--out FOLDER] [--report FILE] [--no-compare] [--yes | --no-send] [--json]
 ```
 
 One command for the AI a user asks for help. It reads the report the desktop app saved beside
@@ -37,6 +37,16 @@ narrowing found, and what the conversion lost. It is built from the
 [anonymous report](report-anon.md) data and checked in code before it is written: it holds no
 file, part or feature name, no path and no number from the design. If that check fails,
 nothing is written and the error says so.
+
+It also converts the design with newer builds and says what each changes: the newest
+[nightly](install.md) and every candidate build in [`docs/candidates.toml`](candidates.toml)
+made for this platform. They are downloaded from this project's GitHub releases, checked
+against the SHA-256 published beside each, and kept in the cache folder (`~/.cache/dutchman/builds`,
+`~/Library/Caches/dutchman/builds` or `%LOCALAPPDATA%\dutchman\builds`), so a second run
+downloads nothing. No Rust toolchain is needed and nothing about the design is sent.
+The summary lists, regressions first, whether each converts, how many features it rebuilds,
+and each feature it rebuilds that this version doesn't, or the reverse. `--no-compare` skips
+this; `--compare-time-limit` (default 30m) bounds each build's conversion.
 
 Then it asks once: `Send this summary to the Dutchman team? [y/N]`. Yes sends `summary.md`,
 and nothing else, through the anonymous report endpoint with the signature `investigate`,

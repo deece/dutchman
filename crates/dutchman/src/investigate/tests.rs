@@ -75,8 +75,8 @@ fn the_summary_keeps_kinds_and_positions_but_no_names_or_sizes() {
     let report = report(&input);
     let scrub = scrubber(&report, &input);
     let anonymous = anonymous(&report, &input, dir.path());
-    let md = summary(&report, &anonymous, None, &scrub);
-    check(&md, &report, &anonymous, &scrub).unwrap();
+    let md = summary(&report, &anonymous, None, None, &scrub);
+    check(&md, &report, &anonymous, &[], &scrub).unwrap();
     let text = &md.text;
     for private in [
         "Secret",
@@ -126,7 +126,7 @@ fn a_number_from_the_design_written_as_fixed_text_is_caught() {
     let anonymous = json!({});
     let mut md = Md::default();
     md.fixed("a size of 182.1342 slipped through\n");
-    let error = check(&md, &report, &anonymous, &scrub).unwrap_err();
+    let error = check(&md, &report, &anonymous, &[], &scrub).unwrap_err();
     assert!(error.contains("number from the design"), "{error}");
 }
 
@@ -139,7 +139,7 @@ fn a_name_from_the_design_is_caught() {
     // As if the scrubbing had been skipped.
     md.text.push_str("Lid Mount");
     md.designed.push_str("Lid Mount");
-    let error = check(&md, &report, &json!({}), &scrub).unwrap_err();
+    let error = check(&md, &report, &json!({}), &[], &scrub).unwrap_err();
     assert!(error.contains("name or path"), "{error}");
 }
 
@@ -155,6 +155,7 @@ fn a_given_report_is_summarised_kept_private_and_reused() {
         out: Some(out.clone()),
         report: Some(saved.clone()),
         send: Consent::No,
+        compare: false,
         ..Settings::default()
     };
     let asked = std::cell::Cell::new(false);
@@ -208,4 +209,67 @@ fn sending_without_a_service_keeps_the_summary_locally() {
     // The same consent is reused on a retry.
     let again = send_summary(&out, &id, "fusion_design", "# summary\n", None).unwrap();
     assert_eq!(again["sent"], false);
+}
+
+#[test]
+fn newer_builds_are_summarised_regressions_first_and_pass_the_check() {
+    let input = Path::new("/somewhere/Gearbox 4471.f3d");
+    let report = report(input);
+    let scrub = scrubber(&report, input);
+    let anonymous = json!({});
+    let deltas = [
+        compare::Delta {
+            label: "fix-12".to_owned(),
+            title: "Fillets on closed edges".to_owned(),
+            ok_before: true,
+            ok_after: true,
+            rebuilt_before: 2,
+            rebuilt_after: 3,
+            needing: 5,
+            better: vec![(2, "fillet".to_owned(), "blocked".to_owned())],
+            ..compare::Delta::default()
+        },
+        compare::Delta {
+            label: "nightly".to_owned(),
+            title: "Nightly 2026-11-08".to_owned(),
+            ok_before: true,
+            ok_after: true,
+            rebuilt_before: 2,
+            rebuilt_after: 1,
+            needing: 5,
+            worse: vec![(1, "extrude".to_owned(), "blocked".to_owned())],
+            ..compare::Delta::default()
+        },
+        compare::Delta {
+            label: "fix-13".to_owned(),
+            title: "x".to_owned(),
+            skipped: Some("/home/someone/.cache: no space".to_owned()),
+            ..compare::Delta::default()
+        },
+    ];
+    let md = summary(&report, &anonymous, None, Some(&deltas), &scrub);
+    check(&md, &report, &anonymous, &deltas, &scrub).unwrap();
+    let text = &md.text;
+    let nightly = text.find("- nightly (Nightly 2026-11-08)").unwrap();
+    let fix = text.find("- fix-12 (Fillets on closed edges)").unwrap();
+    assert!(nightly < fix, "{text}");
+    assert!(
+        text.contains("  - worse: extrude, feature 2 in the timeline is now blocked"),
+        "{text}"
+    );
+    assert!(
+        text.contains("  - better: fillet, feature 3 in the timeline is rebuilt"),
+        "{text}"
+    );
+    assert!(
+        text.contains("rebuilds 3 features (this version 2)"),
+        "{text}"
+    );
+    assert!(
+        text.contains("- fix-13 (x): could not be compared"),
+        "{text}"
+    );
+    assert!(!text.contains("someone"), "{text}");
+    // Without the deltas the build numbers are not allowed.
+    assert!(check(&md, &report, &anonymous, &[], &scrub).is_err());
 }

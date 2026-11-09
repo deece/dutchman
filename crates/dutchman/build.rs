@@ -14,6 +14,11 @@ fn main() {
             break;
         }
     }
+    // The target the archives of newer builds are named by (`dutchman investigate`).
+    println!(
+        "cargo:rustc-env=DUTCHMAN_TARGET={}",
+        std::env::var("TARGET").unwrap_or_default()
+    );
     println!(
         "cargo:rustc-env=DUTCHMAN_CADMPEG_VERSION={}",
         version.unwrap_or_else(|| "unknown".to_owned())

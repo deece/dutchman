@@ -1046,6 +1046,7 @@ local. A conversion failure still has `ok: true` when the kit was written. MCP i
 | `report` | Where the conversion report came from: `saved` (beside the design), `given` (`--report`) or `converted` (converted here, into `convert/` in the folder). |
 | `narrowed` | Null when the conversion succeeded; else whether narrowing found the first failing feature. |
 | `synthetic` | Whether a synthetic case was made (always false in this version). |
+| `builds` | Null with `--no-compare`; else one entry per newer build compared: `label` (`nightly` or the candidate's name), `title`, `compared`, `not_compared_because` (local wording, may name local paths), `regresses`, `converts`, `rebuilt`, `better` and `worse` (feature counts). Local only, like the rest of this result. |
 | `asked` | Whether the user was asked on the terminal. |
 | `sent` | Whether the summary was sent. |
 | `receipt` | The receipt id, when it was sent. |

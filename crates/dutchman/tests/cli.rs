@@ -3730,6 +3730,7 @@ fn investigate_writes_a_summary_with_nothing_from_the_design_and_sends_nothing_u
         input.to_str().unwrap(),
         "--out",
         out.to_str().unwrap(),
+        "--no-compare",
         "--json",
     ];
     // No terminal and no answer given: nothing is sent and nothing is asked.

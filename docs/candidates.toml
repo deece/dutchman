@@ -1,0 +1,15 @@
+# Candidate builds `dutchman investigate` compares a design against, besides the newest
+# nightly: Dutchman at one commit, built against cadmpeg at one commit, for a few targets.
+# A change to this file on main builds every candidate (.github/workflows/candidates.yml) with
+# the release profile and publishes them on the rolling `candidates` pre-release, with
+# candidates.json listing what was built. An empty list publishes none.
+#
+# [[candidate]]
+# name = "fillet-closed-edges"   # lower-case letters, digits and dashes, at most 40
+# note = "Fillets on closed edges"  # one line, shown in the summary
+# dutchman = "<40-hex commit in dutchman-cad/dutchman>"
+# cadmpeg = "<40-hex commit>"
+# cadmpeg_repo = "https://github.com/cadmpeg/cadmpeg"  # optional; a fork of it also works
+# targets = ["x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu"]  # optional; the default
+
+candidate = []

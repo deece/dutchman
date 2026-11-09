@@ -211,6 +211,16 @@ stable release, starting with 0.3.0, builds with a slower, fully optimised profi
 All cadmpeg crates, including cadmpeg-registry, come directly from the pinned git revision.
 `scripts/use-cadmpeg-main.sh <sha>` updates the dependencies and checks their lockfile sources.
 
+## Candidate builds
+
+`docs/candidates.toml` lists builds that are neither stable nor nightly: one Dutchman commit
+against one cadmpeg commit (a fix not yet merged, say), for a few targets (by default
+Windows x86_64 and Linux x86_64). A change to the file on `main` runs
+`.github/workflows/candidates.yml`, which builds each with the `release` profile and replaces
+the rolling `candidates` pre-release with the archives, their SHA-256 files and
+`candidates.json`. `dutchman investigate` compares a user's design against them and the
+nightly. Remove an entry once its fix is released; an empty list publishes an empty release.
+
 ## Container image
 
 The Linux archive builds run in Debian bookworm so their glibc requirements fit the
