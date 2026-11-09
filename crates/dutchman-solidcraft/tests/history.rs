@@ -3783,7 +3783,14 @@ fn a_selected_crossed_loop_maps_to_its_atomic_regions() {
             .as_array()
             .unwrap();
         assert_eq!(curves.len(), 10);
-        assert!(curves.iter().all(|curve| curve["construction"] == false));
+        // Selected as a region, the separate square (curves 7 to 10) bounds nothing the
+        // extrude takes, so it is construction; the crossed loop's curves stay solid. A
+        // profile-list selection infers nothing, so every curve stays solid.
+        for curve in curves {
+            let id = curve["id"].as_str().unwrap();
+            let unused = region && ["l7", "l8", "l9", "l10"].contains(&id);
+            assert_eq!(curve["construction"] == true, unused, "{region} {id}");
+        }
         assert!(!document["features"][0]["sketch"]["constraints"]
             .as_array()
             .unwrap()

@@ -226,7 +226,11 @@ pub(super) fn trimmed_region_curves(sketch: &Value, features: &[Value]) -> BTree
 /// The curves that the sketch's consumers (every feature naming it) select whole-loop regions
 /// from, when every consumer is such a selection: the source entities of the selected loops.
 /// `None` when some consumer needs the sketch's curves as geometry, or nothing selects a region.
-fn whole_loop_uses(sketch: &Value, features: &[Value]) -> Option<BTreeSet<String>> {
+fn whole_loop_uses(
+    sketch: &Value,
+    entities: &[&Value],
+    features: &[Value],
+) -> Option<BTreeSet<String>> {
     let id = sketch.get("id").and_then(Value::as_str)?;
     let mut identities = vec![id];
     identities.extend(features.iter().filter_map(|feature| {
@@ -248,7 +252,7 @@ fn whole_loop_uses(sketch: &Value, features: &[Value]) -> Option<BTreeSet<String
         if definition.get("definition").and_then(Value::as_str) == Some("sketch") {
             continue;
         }
-        let found = region_uses(definition, id, &identities, sketch, &mut used, 0)?;
+        let found = region_uses(definition, id, &identities, sketch, entities, &mut used, 0)?;
         if !found
             && feature
                 .get("dependencies")
@@ -277,7 +281,8 @@ pub(super) fn stray_curves(
     entities: &[&Value],
     features: &[Value],
 ) -> BTreeSet<String> {
-    let Some(used) = whole_loop_uses(sketch, features).filter(|used| !used.is_empty()) else {
+    let Some(used) = whole_loop_uses(sketch, entities, features).filter(|used| !used.is_empty())
+    else {
         return BTreeSet::new();
     };
     let strays: BTreeSet<String> = entities
@@ -337,7 +342,7 @@ pub(super) fn region_lines(
     entities: &[&Value],
     features: &[Value],
 ) -> BTreeSet<String> {
-    let Some(used) = whole_loop_uses(sketch, features) else {
+    let Some(used) = whole_loop_uses(sketch, entities, features) else {
         return BTreeSet::new();
     };
     if entities.len() > MAX_EDGES {
@@ -409,6 +414,7 @@ fn region_uses(
     id: &str,
     identities: &[&str],
     sketch: &Value,
+    entities: &[&Value],
     used: &mut BTreeSet<String>,
     depth: usize,
 ) -> Option<bool> {
@@ -436,7 +442,8 @@ fn region_uses(
                     let rings = std::iter::once(region.get("outer_boundary")?).chain(holes);
                     for ring in rings {
                         let ring = ring.as_array()?;
-                        if ring.is_empty() {
+                        // A boundary that doesn't close leaves the curves finishing it unknown.
+                        if ring.is_empty() || trimmed_ring(ring, entities).is_none() {
                             return None;
                         }
                         members = members.checked_add(ring.len())?;
@@ -484,10 +491,10 @@ fn region_uses(
     match value {
         Value::String(s) if identities.contains(&s.as_str()) => None,
         Value::Array(values) => values.iter().try_fold(false, |found, value| {
-            Some(region_uses(value, id, identities, sketch, used, depth + 1)? || found)
+            Some(region_uses(value, id, identities, sketch, entities, used, depth + 1)? || found)
         }),
         Value::Object(fields) => fields.values().try_fold(false, |found, value| {
-            Some(region_uses(value, id, identities, sketch, used, depth + 1)? || found)
+            Some(region_uses(value, id, identities, sketch, entities, used, depth + 1)? || found)
         }),
         _ => Some(false),
     }
@@ -1786,20 +1793,30 @@ mod tests {
     #[test]
     fn the_curves_of_a_trimmed_region_taken_stay_solid() {
         let (sketch, entities) = square_and_tab();
+        // Line ranges are distances along the line: the tab's three outer sides whole, and
+        // the stretch of the square's side between them.
         let trimmed = json!({"region": "trimmed", "outer_boundary": [
-            {"entity": "t1", "parameter_range": [0.0, 1.0]},
-            {"entity": "t2", "parameter_range": [0.0, 1.0]},
-            {"entity": "t3", "parameter_range": [0.0, 1.0]},
-            {"entity": "b", "parameter_range": [0.3, 0.7]}]});
+            {"entity": "t1", "parameter_range": [0.0, 4.0]},
+            {"entity": "t2", "parameter_range": [0.0, 4.0]},
+            {"entity": "t3", "parameter_range": [0.0, 4.0]},
+            {"entity": "b", "parameter_range": [3.0, 7.0]}]});
         let features = [
             extrude(json!([{"region": "loops", "outer": 0}])),
             extrude(json!([trimmed])),
         ];
         assert_eq!(strays(&sketch, &entities, &features), ["t4", "x"]);
-        // A trimmed region with no boundary says nothing about which curves it needs.
-        let features = [extrude(
-            json!([{"region": "trimmed", "outer_boundary": []}]),
-        )];
-        assert!(strays(&sketch, &entities, &features).is_empty());
+        // A trimmed region with no boundary, or one that doesn't close (the curves finishing
+        // it are not named), says nothing about which curves it needs.
+        for boundary in [
+            json!([]),
+            json!([{"entity": "t1", "parameter_range": [0.0, 4.0]},
+                   {"entity": "t2", "parameter_range": [0.0, 4.0]}]),
+        ] {
+            let features = [
+                extrude(json!([{"region": "loops", "outer": 0}])),
+                extrude(json!([{"region": "trimmed", "outer_boundary": boundary}])),
+            ];
+            assert!(strays(&sketch, &entities, &features).is_empty());
+        }
     }
 }
