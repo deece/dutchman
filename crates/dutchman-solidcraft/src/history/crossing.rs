@@ -630,17 +630,17 @@ fn use_samples(use_: &Value, entities: &[&Value], reading: fn(f64) -> f64) -> Op
     let geometry = entity.get("geometry")?;
     let (from, to) = range(use_)?;
     match geometry.get("kind")?.as_str()? {
+        // A line's parameter is the fraction of the way from its stored start to its end
+        // (cadmpeg: start + t·(end − start)), not a distance.
         "line" => {
             let start = super::sketch::p2(geometry.get("start"))?;
             let end = super::sketch::p2(geometry.get("end"))?;
             let length = super::sketch::distance(start, end);
-            if length <= 0.0 || from < -RING_CLOSES || to > length + RING_CLOSES {
+            let slack = RING_CLOSES / length;
+            if length <= 0.0 || from < -slack || to > 1.0 + slack {
                 return None;
             }
-            Some(vec![
-                along(start, end, from / length),
-                along(start, end, to / length),
-            ])
+            Some(vec![along(start, end, from), along(start, end, to)])
         }
         "arc" | "circle" => {
             let center = super::sketch::p2(geometry.get("center"))?;
@@ -1793,13 +1793,13 @@ mod tests {
     #[test]
     fn the_curves_of_a_trimmed_region_taken_stay_solid() {
         let (sketch, entities) = square_and_tab();
-        // Line ranges are distances along the line: the tab's three outer sides whole, and
-        // the stretch of the square's side between them.
+        // Line ranges are fractions of the line: the tab's three outer sides whole, and the
+        // stretch of the square's side between them.
         let trimmed = json!({"region": "trimmed", "outer_boundary": [
-            {"entity": "t1", "parameter_range": [0.0, 4.0]},
-            {"entity": "t2", "parameter_range": [0.0, 4.0]},
-            {"entity": "t3", "parameter_range": [0.0, 4.0]},
-            {"entity": "b", "parameter_range": [3.0, 7.0]}]});
+            {"entity": "t1", "parameter_range": [0.0, 1.0]},
+            {"entity": "t2", "parameter_range": [0.0, 1.0]},
+            {"entity": "t3", "parameter_range": [0.0, 1.0]},
+            {"entity": "b", "parameter_range": [0.3, 0.7]}]});
         let features = [
             extrude(json!([{"region": "loops", "outer": 0}])),
             extrude(json!([trimmed])),
@@ -1809,8 +1809,8 @@ mod tests {
         // it are not named), says nothing about which curves it needs.
         for boundary in [
             json!([]),
-            json!([{"entity": "t1", "parameter_range": [0.0, 4.0]},
-                   {"entity": "t2", "parameter_range": [0.0, 4.0]}]),
+            json!([{"entity": "t1", "parameter_range": [0.0, 1.0]},
+                   {"entity": "t2", "parameter_range": [0.0, 1.0]}]),
         ] {
             let features = [
                 extrude(json!([{"region": "loops", "outer": 0}])),
@@ -1818,5 +1818,22 @@ mod tests {
             ];
             assert!(strays(&sketch, &entities, &features).is_empty());
         }
+    }
+
+    #[test]
+    fn a_line_range_is_a_fraction_of_the_line() {
+        let (_, entities) = square_and_tab();
+        let refs: Vec<&Value> = entities.iter().collect();
+        let tab = |piece: [f64; 2]| {
+            json!([{"entity": "t1", "parameter_range": [0.0, 1.0]},
+                   {"entity": "t2", "parameter_range": [0.0, 1.0]},
+                   {"entity": "t3", "parameter_range": [0.0, 1.0]},
+                   {"entity": "b", "parameter_range": piece}])
+        };
+        // 30% to 70% of the square's 10 mm side closes the 4 mm tab.
+        let ring = trimmed_ring(tab([0.3, 0.7]).as_array().unwrap(), &refs).unwrap();
+        assert!((ring_area(&ring).abs() - 16.0).abs() < 1e-6, "{ring:?}");
+        // Read as millimetres, the same stretch would run past the line's end.
+        assert!(trimmed_ring(tab([3.0, 7.0]).as_array().unwrap(), &refs).is_none());
     }
 }
