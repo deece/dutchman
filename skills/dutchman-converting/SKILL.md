@@ -799,5 +799,7 @@ and `holder_conflicts`; `bound_displayed` and `derived_holders` partition `displ
 
 CLI and desktop progress includes the running part or stage and its elapsed time. “Still …”
 means the usual duration has passed, not a deadline. A check-limit notice states the actual
-retention or stop policy. Names in progress are private local text; do not copy them into
+retention or stop policy in a full sentence. Durations use a single format such as `1 min 1 s`
+or `2 min`. Desktop folder runs keep the longest-running file, stage and step visible below
+the completed count, with the number of other active files. Names in progress are private local text; do not copy them into
 anonymous diagnostic reports. See docs/command-line.md for per-step limits.

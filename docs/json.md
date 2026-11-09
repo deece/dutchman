@@ -109,9 +109,10 @@ A nested check replaces preparation on that worker until it finishes. Its fields
 | `consequence` | Plain local explanation of what happens past the limit, or `null` when none applies. |
 
 For example, `"running":{"kind":"checking","name":"Bracket","elapsed_ms":12000,
-"usual_ms":60000,"limit_ms":120000,"consequence":"the check is stopped; history is kept unverified"}`.
-Local text progress and desktop cards format the same fields. Names and consequence text
-are excluded from anonymous reports and diagnostic logs. Passing a limit emits a final step
+"usual_ms":60000,"limit_ms":120000,"consequence":"the check stopped, and the history is kept unverified"}`.
+Local text progress and desktop cards format the same fields using a single duration
+(`45 s`, `1 min 1 s`, `2 min`, `1 h 5 min`, or `1 h`); numeric milliseconds are unchanged.
+Names and consequence text are excluded from anonymous reports and diagnostic logs. Passing a limit emits a final step
 snapshot before the guard ends, even when it happens between five-second heartbeats.
 See [progress during conversion](command-line.md#progress-during-conversion) for thresholds
 and the outcomes of each limit. None of these fields changes the final conversion report.

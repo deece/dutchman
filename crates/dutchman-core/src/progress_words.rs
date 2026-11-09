@@ -1,5 +1,5 @@
 //! Local progress wording, kept together for a future message catalog.
-use crate::{ProgressEvent, RunningStep, StepKind};
+use crate::{ProgressEvent, RunningStep, Stage, StepKind};
 
 pub fn counts(read: u64, total: Option<u64>) -> String {
     match total {
@@ -24,6 +24,27 @@ pub fn summary(event: &ProgressEvent) -> String {
     text
 }
 
+/// The oldest active file stays visible even when its card is offscreen.
+pub fn running_file(name: &str, event: &ProgressEvent, others: usize) -> String {
+    let stage = match event.stage {
+        Stage::Input => "opening",
+        Stage::Decode => "reading",
+        Stage::Project => "checking the decoded model",
+        Stage::Map => "mapping",
+        Stage::Write => "writing",
+        Stage::SolidCraft => "checking in SolidCraft",
+    };
+    let mut text = format!("{name} — {stage}");
+    if others > 0 {
+        text.push_str(&format!(
+            "; {others} other{} running",
+            if others == 1 { "" } else { "s" }
+        ));
+    }
+    text.push_str(&format!("\n{}", event.running_line()));
+    text
+}
+
 pub fn running(step: &RunningStep) -> String {
     let name = step.name.as_deref().unwrap_or(match step.kind {
         StepKind::Opening => "input",
@@ -41,7 +62,7 @@ pub fn running(step: &RunningStep) -> String {
     if let (Some(limit), Some(consequence)) = (step.limit_ms, &step.consequence) {
         if step.elapsed_ms >= limit {
             return format!(
-                "{name} passed the {} {} limit: {consequence}",
+                "{name} took longer than the {} {} limit: {consequence}.",
                 crate::elapsed(limit / 1000),
                 if step.kind.is_check() {
                     "check"
@@ -87,33 +108,84 @@ pub fn running(step: &RunningStep) -> String {
 /// Consequences follow the writer's history retention policy.
 pub fn history_limit(pattern: bool, hidden: bool) -> &'static str {
     if pattern {
-        "the check is stopped; imported geometry is kept with any retained history"
+        "the check stopped, and the imported geometry is kept with any retained history"
     } else if hidden {
-        "the check is stopped; history is kept unverified and hidden beside the imported geometry"
+        "the check stopped, and the history is kept unverified and hidden beside the imported geometry"
     } else {
-        "the check is stopped; history is kept unverified"
+        "the check stopped, and the history is kept unverified"
     }
 }
 pub fn prefix_limit() -> &'static str {
-    "the check is stopped; retained history is unverified and imported geometry stays visible"
+    "the check stopped, and the retained history is kept unverified while the imported geometry stays visible"
 }
 pub fn blend_limit() -> &'static str {
-    "the check is stopped; the unproven feature is left out of the editable history and imported geometry is kept"
+    "the check stopped, and the unproven feature was left out of the editable history while the imported geometry is kept"
 }
 pub fn geometry_limit() -> &'static str {
-    "the check is stopped; converted geometry is kept unchecked"
+    "the check stopped, and the converted geometry is kept unchecked"
 }
 pub fn headless_limit(save: bool) -> &'static str {
     if save {
-        "conversion is stopped; no output document is written"
+        "conversion stopped, and no output document was written"
     } else {
-        "the check is stopped; the macro is kept unverified"
+        "the check stopped, and the macro is kept unverified"
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn all_check_limits_state_the_actual_outcome_and_end_in_a_full_stop() {
+        for (consequence, expected) in [
+            (history_limit(false, false), "the check stopped, and the history is kept unverified"),
+            (history_limit(false, true), "the check stopped, and the history is kept unverified and hidden beside the imported geometry"),
+            (history_limit(true, false), "the check stopped, and the imported geometry is kept with any retained history"),
+            (prefix_limit(), "the check stopped, and the retained history is kept unverified while the imported geometry stays visible"),
+            (blend_limit(), "the check stopped, and the unproven feature was left out of the editable history while the imported geometry is kept"),
+            (geometry_limit(), "the check stopped, and the converted geometry is kept unchecked"),
+            (headless_limit(false), "the check stopped, and the macro is kept unverified"),
+            (headless_limit(true), "conversion stopped, and no output document was written"),
+        ] {
+            let step = RunningStep {
+                kind: StepKind::Checking,
+                name: Some("Bracket".into()),
+                elapsed_ms: 121_000,
+                usual_ms: 60_000,
+                limit_ms: Some(120_000),
+                consequence: Some(consequence.into()),
+            };
+            assert_eq!(running(&step), format!("Bracket took longer than the 2 min check limit: {expected}."));
+        }
+    }
+
+    #[test]
+    fn cli_summary_uses_the_same_single_duration_format_as_the_step() {
+        let mut event = ProgressEvent {
+            stage: Stage::Map,
+            elapsed_ms: 61_000,
+            designs_read: 261,
+            designs_total: Some(264),
+            heartbeat: true,
+            running: Some(RunningStep {
+                kind: StepKind::Checking,
+                name: Some("Bracket".into()),
+                elapsed_ms: 61_000,
+                usual_ms: 60_000,
+                limit_ms: None,
+                consequence: None,
+            }),
+        };
+        assert_eq!(
+            event.to_string(),
+            "Still checking Bracket: 1 min 1 s; 261 of 264 designs read; 1 min 1 s elapsed"
+        );
+        event.elapsed_ms = 120_000;
+        assert_eq!(total_elapsed(event.elapsed_ms), "2 min elapsed");
+        event.elapsed_ms = 3_900_000;
+        assert_eq!(total_elapsed(event.elapsed_ms), "1 h 5 min elapsed");
+    }
+
     #[test]
     fn usual_notice_is_strict_and_limit_notice_matches_timeout_boundary() {
         let mut step = RunningStep {
@@ -132,6 +204,6 @@ mod tests {
         step.elapsed_ms = 119_999;
         assert!(running(&step).starts_with("Still checking"));
         step.elapsed_ms = 120_000;
-        assert_eq!(running(&step), "Bracket passed the 120 s (2 min 0 s) check limit: the check is stopped; history is kept unverified and hidden beside the imported geometry");
+        assert_eq!(running(&step), "Bracket took longer than the 2 min check limit: the check stopped, and the history is kept unverified and hidden beside the imported geometry.");
     }
 }

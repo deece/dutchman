@@ -160,16 +160,22 @@ impl Drop for StepGuard<'_, '_> {
     }
 }
 
-/// `seconds` as people read it: the seconds, and past a minute also hours and minutes, as
-/// "45 s", "125 s (2 min 5 s)" or "7261 s (2 h 1 min)".
+/// `seconds` as one duration: "45 s", "2 min 5 s" or "2 h 1 min".
+/// Below an hour, retain seconds; from an hour on, retain minutes.
 pub fn elapsed(seconds: u64) -> String {
     let (hours, minutes, rest) = (seconds / 3600, seconds % 3600 / 60, seconds % 60);
     if seconds < 60 {
         format!("{seconds} s")
     } else if hours == 0 {
-        format!("{seconds} s ({minutes} min {rest} s)")
+        if rest == 0 {
+            format!("{minutes} min")
+        } else {
+            format!("{minutes} min {rest} s")
+        }
+    } else if minutes == 0 {
+        format!("{hours} h")
     } else {
-        format!("{seconds} s ({hours} h {minutes} min)")
+        format!("{hours} h {minutes} min")
     }
 }
 
@@ -465,11 +471,24 @@ mod elapsed_tests {
     use super::elapsed;
 
     #[test]
-    fn long_runs_also_read_in_hours_and_minutes() {
-        assert_eq!(elapsed(45), "45 s");
-        assert_eq!(elapsed(125), "125 s (2 min 5 s)");
-        assert_eq!(elapsed(7261), "7261 s (2 h 1 min)");
-        assert_eq!(elapsed(3600), "3600 s (1 h 0 min)");
+    fn durations_have_one_format_and_omit_zero_units() {
+        for (seconds, text) in [
+            (0, "0 s"),
+            (45, "45 s"),
+            (59, "59 s"),
+            (60, "1 min"),
+            (61, "1 min 1 s"),
+            (120, "2 min"),
+            (125, "2 min 5 s"),
+            (151, "2 min 31 s"),
+            (3599, "59 min 59 s"),
+            (3600, "1 h"),
+            (3601, "1 h"),
+            (3900, "1 h 5 min"),
+            (7261, "2 h 1 min"),
+        ] {
+            assert_eq!(elapsed(seconds), text);
+        }
     }
 }
 

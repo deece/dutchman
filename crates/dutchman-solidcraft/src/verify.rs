@@ -932,13 +932,11 @@ fn newest_cli(
     candidates.into_iter().max_by_key(|cli| version(cli))
 }
 
-/// Compares `history` (the design as written) with `original` (the same design with the
-/// history suppressed and the original geometry live).
 /// Replays `history` and compares it with `original` (the same design with its original
 /// geometry live), whose model has `solids` solid bodies. When SolidCraft opens the original
 /// unsoundly (solids without a volume, bodies inside out), there is nothing sound to compare
 /// with, and a replay that runs is kept unverified, saying why.
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub(crate) fn compare(
     cli: &Path,
     timeout: Duration,
@@ -2597,8 +2595,9 @@ mod cli_tests {
             .is_some_and(|s| s.name.as_deref() == Some("Bracket")
                 && s.kind == dutchman_core::StepKind::CheckingOriginal
                 && s.elapsed_ms >= 20)
-            && e.running_line()
-                .contains("history is kept unverified and hidden beside the imported geometry")));
+            && e.running_line().contains(
+                "the history is kept unverified and hidden beside the imported geometry."
+            )));
         assert!(events
             .last()
             .unwrap()

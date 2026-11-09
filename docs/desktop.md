@@ -33,7 +33,14 @@ to that step and updates every five seconds, even while the count stays at, for 
 261 of 264. Parallel conversion shows the current step that has run longest. Reading,
 checking the decoded model, and saving also have their own stage lines.
 
-Past the usual duration the line says **Still checking Bracket: 61 s (1 min 1 s)**.
+During a folder run, the bottom bar keeps the longest-running file visible below the
+completed-file count, even when its card is offscreen. It shows the filename, stage and
+current step on two lines, for example **Assembly.iam — mapping; 2 others running** above
+**Still checking Bracket (rebuilt history): 1 min 1 s**. The other-running count excludes queued and finished files;
+selection follows total file time, even when a part's step clock resets.
+
+Times use one format throughout: **45 s**, **1 min 1 s**, **2 min**, **1 h 5 min**, or **1 h**.
+Past the usual duration the line says **Still checking Bracket: 1 min 1 s**.
 A target check that reaches its enforced limit says what happens next: the check stops,
 and history stays unverified, imported geometry stays visible, or document conversion
 stops, according to the output and check being run. Usual durations are notices rather

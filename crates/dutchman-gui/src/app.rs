@@ -34,6 +34,42 @@ pub struct Row {
     pub size: Option<u64>,
 }
 
+/// Select by whole-file elapsed time, independently of each part's current clock.
+fn running_file_line(rows: &[Row]) -> Option<String> {
+    let active: Vec<_> = rows
+        .iter()
+        .filter(|row| row.status == Status::Converting)
+        .collect();
+    let row = active
+        .iter()
+        .enumerate()
+        .max_by_key(|(index, row)| {
+            (
+                row.progress.as_ref().map_or(0, |event| event.elapsed_ms),
+                std::cmp::Reverse(*index),
+            )
+        })?
+        .1;
+    let opening = dutchman_core::ProgressEvent {
+        stage: dutchman_core::Stage::Input,
+        elapsed_ms: 0,
+        designs_read: 0,
+        designs_total: None,
+        heartbeat: false,
+        running: None,
+    };
+    let name = row
+        .input
+        .file_name()
+        .unwrap_or(row.input.as_os_str())
+        .to_string_lossy();
+    Some(dutchman_core::progress_words::running_file(
+        &name,
+        row.progress.as_ref().unwrap_or(&opening),
+        active.len() - 1,
+    ))
+}
+
 /// The "last shown" Part positions choice, naming the program when every queued design comes from one.
 fn last_shown_label(inputs: &[PathBuf]) -> String {
     let mut families = inputs
@@ -564,6 +600,18 @@ impl App {
         self.inputs = vec![row.input.clone()];
         self.out_dir = Some(PathBuf::from("converted"));
         self.rows = vec![row];
+        self.run = Some(Run::preview());
+    }
+
+    /// Supplies a folder run with multiple files through the normal results and bottom bar.
+    #[cfg(feature = "test-support")]
+    pub fn preview_folder_running_for_test(&mut self, folder: PathBuf, rows: Vec<Row>) {
+        self.inputs = vec![folder];
+        self.project_summary = format!("{} files", rows.len());
+        self.size_inputs = Some(self.inputs.clone());
+        self.estimate_key = Some(self.current_estimate_key());
+        self.out_dir = Some(PathBuf::from("converted"));
+        self.rows = rows;
         self.run = Some(Run::preview());
     }
 
@@ -2087,6 +2135,11 @@ impl App {
                 }
             });
         });
+        if self.running() && self.rows.len() > 1 {
+            if let Some(line) = running_file_line(&self.rows) {
+                ui.label(line);
+            }
+        }
         if let Some(notice) = &self.notice {
             let colour = if notice == present::REPORT_COPIED || notice == present::SEND_COPIED {
                 p.spectre
@@ -3892,12 +3945,62 @@ mod tests {
     }
 
     #[test]
+    fn folder_progress_selects_the_oldest_file_and_counts_only_active_others() {
+        let row = |name: &str, status, elapsed_ms, step_ms| Row {
+            input: PathBuf::from(name),
+            output: None,
+            status,
+            report: None,
+            job: None,
+            size: None,
+            progress: Some(dutchman_core::ProgressEvent {
+                stage: dutchman_core::Stage::Map,
+                elapsed_ms,
+                designs_read: 261,
+                designs_total: Some(264),
+                heartbeat: true,
+                running: Some(dutchman_core::RunningStep {
+                    kind: dutchman_core::StepKind::CheckingHistory,
+                    name: Some("Bracket".into()),
+                    elapsed_ms: step_ms,
+                    usual_ms: 60_000,
+                    limit_ms: None,
+                    consequence: None,
+                }),
+            }),
+        };
+        let mut rows = vec![
+            row("finished.iam", Status::Converted, 999_000, 999_000),
+            row("newer.iam", Status::Converting, 120_000, 90_000),
+            row("Assembly.iam", Status::Converting, 151_000, 61_000),
+            row("waiting.iam", Status::Waiting, 999_000, 999_000),
+        ];
+        assert_eq!(running_file_line(&rows).unwrap(), "Assembly.iam — mapping; 1 other running\nStill checking Bracket (rebuilt history): 1 min 1 s");
+        rows.push(row("another.iam", Status::Converting, 10_000, 10_000));
+        assert!(running_file_line(&rows)
+            .unwrap()
+            .contains("; 2 others running\n"));
+        rows[2].status = Status::Converted;
+        assert!(running_file_line(&rows)
+            .unwrap()
+            .starts_with("newer.iam — mapping;"));
+        rows[1].status = Status::Converted;
+        rows[4].progress = None;
+        assert_eq!(
+            running_file_line(&rows).unwrap(),
+            "another.iam — opening\nOpening input: 0 s"
+        );
+        rows[4].status = Status::Converted;
+        assert!(running_file_line(&rows).is_none());
+    }
+
+    #[test]
     fn converting_cards_show_stage_counts_and_elapsed_time() {
         use egui_kittest::kittest::Queryable;
         for total in [Some(4), None] {
             let event = dutchman_core::ProgressEvent {
                 stage: dutchman_core::Stage::Decode,
-                elapsed_ms: 15_000,
+                elapsed_ms: 61_000,
                 designs_read: 2,
                 designs_total: total,
                 heartbeat: true,
@@ -3932,6 +4035,7 @@ mod tests {
                 });
             harness.run_steps(2);
             assert!(harness.query_by_label(&event.running_line()).is_some());
+            assert!(harness.query_by_label("1 min 1 s elapsed").is_some());
         }
     }
 

@@ -199,8 +199,11 @@ blocked one), and the loss report. `inspect --json` prints the same as a
 ## Progress during conversion
 
 `convert`, `convert-all`, `inspect`, and `watch` show the current stage, designs read, and
-elapsed time, including the running part or stage and its own elapsed time, on stderr, in seconds and, past a minute, also in hours and minutes, such as
-`7261 s (2 h 1 min)`; the desktop app shows the same. A terminal gets one updating line. When stderr is redirected or piped, text mode prints no
+elapsed time, including the running part or stage and its own elapsed time, on stderr.
+Durations use seconds below a minute, minutes and seconds below an hour, and hours and
+minutes thereafter, omitting zero units: `45 s`, `1 min 1 s`, `2 min`, `1 h 5 min`, or `1 h`.
+The desktop app shows the same. A terminal gets one updating line.
+When stderr is redirected or piped, text mode prints no
 progress, so logs and scripts see only errors and warnings; `--verbose` asks for a line at
 each stage or design completion and a running-step update every five seconds there. `--quiet`
 suppresses progress everywhere. With `--json`, stderr contains `dutchman.progress/1` JSON lines; stdout
@@ -217,7 +220,7 @@ The fallback keeps geometry and assembly structure, and drops history, sketches,
 A heartbeat confirms the worker is running; it does not measure decoder activity.
 
 A running step reads **Checking Bracket: 12 s**. Once it takes longer than its usual
-time it reads **Still checking Bracket: 61 s (1 min 1 s)**. This is elapsed time,
+time it reads **Still checking Bracket: 1 min 1 s**. This is elapsed time,
 not an estimate of time left. With parallel workers the oldest current step is shown;
 a check takes the place of preparation on its worker until it ends. Completed-read counts
 can stay unchanged while parts are prepared or checked.
@@ -237,13 +240,28 @@ history)**, so a fresh clock identifies the next evaluation. Blend proofs, retai
 history and converted geometry also identify their check. Blend proofs
 share that budget across their two runs; retained-prefix checking shares it across repair
 attempts. Past a limit the line names the consequence, for example:
-**Bracket passed the 120 s (2 min 0 s) check limit: the check is stopped; history is kept
-unverified**. Writers configured to hide unverified history keep it hidden beside the
+**Bracket took longer than the 2 min check limit: the check stopped, and the history is kept
+unverified.** Writers configured to hide unverified history keep it hidden beside the
 visible import. A pattern that needs replay proof falls back to imported geometry, with
 any retained history kept separately. A timed-out blend proof
 leaves the unproven feature out of the editable history. A timed-out prefix check keeps
 retained history unverified beside the visible import. A geometry check that times
 out keeps the converted geometry unchecked. The final report records the actual outcome.
+
+The limit line always ends in a full stop. The name and limit (2 min for SolidCraft,
+5 min for FreeCAD by default) are followed by the applicable outcome:
+
+| Check | Outcome text |
+|---|---|
+| History | the check stopped, and the history is kept unverified. |
+| Hidden history | the check stopped, and the history is kept unverified and hidden beside the imported geometry. |
+| Pattern proof | the check stopped, and the imported geometry is kept with any retained history. |
+| Retained prefix | the check stopped, and the retained history is kept unverified while the imported geometry stays visible. |
+| Blend proof | the check stopped, and the unproven feature was left out of the editable history while the imported geometry is kept. |
+| Converted geometry | the check stopped, and the converted geometry is kept unchecked. |
+| FreeCAD macro (5 min) | the check stopped, and the macro is kept unverified. |
+| FreeCAD document (5 min) | conversion stopped, and no output document was written. |
+
 
 FreeCAD's `--freecad-timeout` defaults to 300 s for its headless run. A native document
 conversion stops without writing an output document; a macro-only check keeps the macro

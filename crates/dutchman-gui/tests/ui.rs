@@ -3474,3 +3474,83 @@ fn running_step_screenshots() {
         }
     }
 }
+
+#[cfg(feature = "test-support")]
+#[test]
+fn folder_run_keeps_the_oldest_file_visible_below_the_counts() {
+    for (theme, label, width) in [
+        (ThemePreference::Light, "Day", 1100.0),
+        (ThemePreference::Dark, "Night", 1100.0),
+        (ThemePreference::Light, "Day", 520.0),
+        (ThemePreference::Dark, "Night", 520.0),
+    ] {
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(width, 800.0))
+            .build_eframe(|cc| test_app(cc));
+        harness.ctx.set_theme(theme);
+        harness.state_mut().preview_solidcraft(Some("0.30.0"));
+        harness.state_mut().set_checker_for_test(true);
+        let rows = (0..1293)
+            .map(|index| {
+                let active = (1261..1264).contains(&index);
+                dutchman_gui::app::Row {
+                    input: PathBuf::from(if index == 1261 {
+                        "Assembly.iam".into()
+                    } else {
+                        format!("Part-{index}.ipt")
+                    }),
+                    output: None,
+                    status: if index < 1261 {
+                        Status::Converted
+                    } else if active {
+                        Status::Converting
+                    } else {
+                        Status::Waiting
+                    },
+                    report: None,
+                    job: None,
+                    size: None,
+                    progress: active.then(|| dutchman_core::ProgressEvent {
+                        stage: dutchman_core::Stage::Map,
+                        elapsed_ms: if index == 1261 { 151_000 } else { 30_000 },
+                        designs_read: 261,
+                        designs_total: Some(264),
+                        heartbeat: true,
+                        running: Some(dutchman_core::RunningStep {
+                            kind: dutchman_core::StepKind::CheckingHistory,
+                            name: Some("Bracket".into()),
+                            elapsed_ms: 61_000,
+                            usual_ms: 60_000,
+                            limit_ms: Some(120_000),
+                            consequence: Some(
+                                dutchman_core::progress_words::history_limit(false, false).into(),
+                            ),
+                        }),
+                    }),
+                }
+            })
+            .collect();
+        harness
+            .state_mut()
+            .preview_folder_running_for_test(PathBuf::from("Project"), rows);
+        harness.run_steps(8);
+        assert!(harness.query_by_label("1261 of 1293 done").is_some());
+        assert!(harness.query_by_label("Assembly.iam — mapping; 2 others running\nStill checking Bracket (rebuilt history): 1 min 1 s").is_some());
+        let line = harness.get_by_label("Assembly.iam — mapping; 2 others running\nStill checking Bracket (rebuilt history): 1 min 1 s").rect();
+        let count = harness.get_by_label("1261 of 1293 done").rect();
+        assert!(line.top() >= count.bottom());
+        assert!(
+            egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, 800.0))
+                .contains_rect(line)
+        );
+        if let Some(dir) = std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS") {
+            let dir = PathBuf::from(dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            harness
+                .render()
+                .unwrap()
+                .save(dir.join(format!("folder-1261-of-1293-{width:.0}-{label}.png")))
+                .unwrap();
+        }
+    }
+}

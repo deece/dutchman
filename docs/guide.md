@@ -603,6 +603,8 @@ everything inside it) when a part below it would leave the bounds grown by 10%. 
 and `holder_conflicts`; `bound_displayed` and `derived_holders` partition `displayed`, preserving the displayed/current/first-placement total.
 
 Local CLI and desktop progress names the running part or stage and its elapsed time,
-including “Still …” notices and check-limit consequences. See
+including “Still …” notices and full-sentence check-limit consequences. Durations use one
+format, such as `1 min 1 s` or `2 min`. Desktop folder runs keep the longest-running file,
+its stage and step visible below the completed count, with the number of other active files. See
 [progress during conversion](command-line.md#progress-during-conversion). MCP final reports
 are unchanged; running names are excluded from anonymous diagnostic logs.
