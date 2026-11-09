@@ -421,7 +421,65 @@ fn region_uses(
     if depth > MAX_SELECTION_DEPTH {
         return None;
     }
-    if value.get("kind").and_then(Value::as_str) == Some("sketch_regions")
+    // A list of the sketch's profile loops, or the whole sketch (every loop): the curves of
+    // those loops are used.
+    let kind = value.get("kind").and_then(Value::as_str);
+    let listed: Option<Vec<usize>> = match kind {
+        Some("sketch_profiles")
+            if value.pointer("/value/sketch").and_then(Value::as_str) == Some(id) =>
+        {
+            Some(
+                value
+                    .pointer("/value/profiles")?
+                    .as_array()?
+                    .iter()
+                    .map(|index| index.as_u64().and_then(|i| usize::try_from(i).ok()))
+                    .collect::<Option<Vec<usize>>>()?,
+            )
+        }
+        Some("sketch") if value.get("value").and_then(Value::as_str) == Some(id) => {
+            Some((0..sketch.get("profiles")?.as_array()?.len()).collect())
+        }
+        _ => None,
+    };
+    if let Some(indices) = listed {
+        let profiles = sketch.get("profiles")?.as_array()?;
+        if indices.is_empty() || indices.len() > MAX_LINES {
+            return None;
+        }
+        let mut members = 0usize;
+        for index in indices {
+            let profile = profiles.get(index)?;
+            // A profile is its loop, or (in some files) an object listing several loops.
+            let boundaries: Vec<&Vec<Value>> = match profile {
+                Value::Array(members) => vec![members],
+                Value::Object(fields) => fields
+                    .get("loops")?
+                    .as_array()?
+                    .iter()
+                    .map(Value::as_array)
+                    .collect::<Option<Vec<_>>>()?,
+                _ => return None,
+            };
+            for boundary in boundaries {
+                if boundary.is_empty() {
+                    return None;
+                }
+                members = members.checked_add(boundary.len())?;
+                if members > MAX_EDGES {
+                    return None;
+                }
+                for member in boundary {
+                    used.insert(member.get("entity")?.as_str()?.to_owned());
+                    if used.len() > MAX_EDGES {
+                        return None;
+                    }
+                }
+            }
+        }
+        return Some(true);
+    }
+    if kind == Some("sketch_regions")
         && value.get("value")?.get("sketch").and_then(Value::as_str) == Some(id)
     {
         let regions = value.get("value")?.get("regions")?.as_array()?;
