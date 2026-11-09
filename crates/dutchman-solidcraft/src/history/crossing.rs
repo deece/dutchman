@@ -421,8 +421,10 @@ fn region_uses(
     if depth > MAX_SELECTION_DEPTH {
         return None;
     }
-    // A list of the sketch's profile loops, or the whole sketch (every loop): the curves of
-    // those loops are used.
+    // A list of the sketch's profile loops: the curves of those loops are used. A feature that
+    // takes the whole sketch takes every region its curves bound, which the profile table may
+    // not list in full, so it says nothing about which curves are unused (it is left to the
+    // identity check below, which keeps every curve).
     let kind = value.get("kind").and_then(Value::as_str);
     let listed: Option<Vec<usize>> = match kind {
         Some("sketch_profiles")
@@ -436,9 +438,6 @@ fn region_uses(
                     .map(|index| index.as_u64().and_then(|i| usize::try_from(i).ok()))
                     .collect::<Option<Vec<usize>>>()?,
             )
-        }
-        Some("sketch") if value.get("value").and_then(Value::as_str) == Some(id) => {
-            Some((0..sketch.get("profiles")?.as_array()?.len()).collect())
         }
         _ => None,
     };
@@ -1855,6 +1854,22 @@ mod tests {
             json!([{"region": "loops", "outer": 0}, {"region": "loops", "outer": 1}]),
         )];
         assert_eq!(strays(&sketch, &entities, &features), ["x"]);
+    }
+
+    #[test]
+    fn a_list_of_loops_counts_its_loops_and_the_whole_sketch_keeps_every_curve() {
+        let (sketch, entities) = square_and_tab();
+        let listed = json!({"id": "e", "definition": {"definition": "extrude", "profile": {
+            "kind": "sketch_profiles", "value": {"sketch": "s", "profiles": [0]}}}});
+        assert_eq!(
+            strays(&sketch, &entities, &[listed]),
+            ["t1", "t2", "t3", "t4", "x"]
+        );
+        // The whole sketch takes every region its curves bound, which the profile table may
+        // not list in full: nothing is inferred.
+        let whole = json!({"id": "e", "definition": {"definition": "extrude", "profile": {
+            "kind": "sketch", "value": "s"}}});
+        assert!(strays(&sketch, &entities, &[whole]).is_empty());
     }
 
     #[test]
