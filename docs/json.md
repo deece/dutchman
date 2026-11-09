@@ -1032,6 +1032,27 @@ creation succeeded), `summary`, `paths` (`anonymous`, `local_key`, `next_steps`)
 local. A conversion failure still has `ok: true` when the kit was written. MCP includes
 `local_key` content only with explicit `include_local_key: true`; keep that response local.
 
+## `dutchman.investigate/1`
+
+`dutchman investigate INPUT [--out FOLDER] [--json]` prints one object.
+
+| Field | Meaning |
+|---|---|
+| `schema` | `dutchman.investigate/1`. |
+| `ok` | True when the summary was made. A failure prints the usual failure object instead. |
+| `input` | The design, as in `dutchman.convert/1`. |
+| `out` | The private folder. |
+| `summary_path` | `summary.md`, the one file made to be shared. |
+| `report` | Where the conversion report came from: `saved` (beside the design), `given` (`--report`) or `converted` (converted here, into `convert/` in the folder). |
+| `narrowed` | Null when the conversion succeeded; else whether narrowing found the first failing feature. |
+| `synthetic` | Whether a synthetic case was made (always false in this version). |
+| `asked` | Whether the user was asked on the terminal. |
+| `sent` | Whether the summary was sent. |
+| `receipt` | The receipt id, when it was sent. |
+| `send` | The [`dutchman.report-send/1`](#report-preview-and-sending-dutchmanreport-send1) result, when sending was tried. |
+| `private` | Files in the folder that are never sent: `local-key.json` (the salt and the design's path), `convert/` and `anonymous.json`. |
+| `summary` | One sentence on what happened and what to do next. |
+
 ## Recipes and known failures
 
 `dutchman.narrow/1` adds `recipe` (Markdown text, or null without a signature) and

@@ -36,6 +36,9 @@ pub const REPORT_SEND: &str = "dutchman.report-send/1";
 /// The schema of a minimum-reproduction kit.
 pub const REPRO: &str = "dutchman.repro/1";
 
+/// The schema of `dutchman investigate`'s result.
+pub const INVESTIGATE: &str = "dutchman.investigate/1";
+
 /// Shareable reproduction facts; callers supply only allowlisted failure facts and fixed
 /// anonymous narrowing categories, never a model, private key or raw conversion report.
 pub(crate) fn repro_anonymous(

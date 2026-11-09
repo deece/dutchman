@@ -280,6 +280,31 @@ pub fn write_one(
 }
 
 impl Run {
+    /// What a conversion's own report `report` says about its run, for a report saved earlier
+    /// (by the desktop app, say). The SolidCraft search is made now, with `options`, only when
+    /// the report found no SolidCraft.
+    pub(crate) fn of_report(report: &Value, options: &crate::ConvertOptions) -> Run {
+        let solidcraft = report
+            .pointer("/solidcraft/found")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        let solidcraft_search = (solidcraft.is_none() && options.searches_for_solidcraft())
+            .then(|| options.solidcraft_search(false));
+        Run {
+            verify: solidcraft.is_some()
+                && report
+                    .pointer("/verification/status")
+                    .and_then(Value::as_str)
+                    .is_some_and(|status| status != "none"),
+            solidcraft_search,
+            solidcraft,
+            import_only: options.import_only,
+            jobs: 1,
+            timeout_s: None,
+            max_memory_mb: None,
+        }
+    }
+
     /// What a run with `options` and `settings` (none: a single file, converted here) says
     /// about itself.
     fn of(options: &crate::ConvertOptions, settings: Option<&crate::batch::Settings>) -> Run {
@@ -919,6 +944,12 @@ impl Scrubber {
         }
         out.push_str(text.get(kept..).unwrap_or(""));
         out
+    }
+
+    /// Whether `text` holds a path or name this scrubber knows, where [`Scrubber::text`] would
+    /// take it out.
+    pub fn holds_known(&self, text: &str) -> bool {
+        self.known(text) != text
     }
 
     /// `text` with every name taken out.

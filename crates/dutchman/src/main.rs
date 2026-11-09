@@ -85,6 +85,34 @@ enum Command {
         #[command(flatten)]
         options: ConvertOptions,
     },
+    /// Look into a conversion that went wrong, for the user's AI: reads the report saved beside
+    /// the design (or converts once), narrows a failure, writes one shareable summary.md and
+    /// asks once whether to send it to the Dutchman team.
+    Investigate {
+        /// The design file the conversion was made from.
+        input: PathBuf,
+        /// Private folder for everything it makes (default: <design>.investigate beside it).
+        #[arg(long, value_name = "FOLDER")]
+        out: Option<PathBuf>,
+        /// A saved conversion report to use instead of the one beside the design.
+        #[arg(long, value_name = "FILE")]
+        report: Option<PathBuf>,
+        /// Don't send the summary and don't ask; with --yes (the user already agreed) it is sent
+        /// without asking.
+        #[arg(long)]
+        no_send: bool,
+        /// Start again even when the folder holds a summary of this design.
+        #[arg(long)]
+        fresh: bool,
+        /// The longest narrowing a failed conversion may take in all.
+        #[arg(long, value_name = "TIME", value_parser = dutchman::diagnose::parse_duration)]
+        step_time_limit: Option<std::time::Duration>,
+        /// Print one machine-readable result on stdout instead of the summary.
+        #[arg(long)]
+        json: bool,
+        #[command(flatten)]
+        options: ConvertOptions,
+    },
     /// Make a private local reproduction kit; only kit/anonymous.json is safe to share.
     Repro {
         input: PathBuf,
@@ -485,6 +513,74 @@ fn main() -> ExitCode {
                 json,
                 quiet,
             )
+        }
+        Command::Investigate {
+            input,
+            out,
+            report,
+            no_send,
+            fresh,
+            step_time_limit,
+            json: as_json,
+            options,
+        } => {
+            use dutchman::investigate::{self, Consent};
+            if no_send && yes {
+                eprintln!(
+                    "dutchman: --yes and --no-send answer the same question two ways; give one"
+                );
+                return ExitCode::from(2);
+            }
+            let settings = investigate::Settings {
+                out,
+                report,
+                send: if yes {
+                    Consent::Yes
+                } else if no_send {
+                    Consent::No
+                } else {
+                    Consent::Ask
+                },
+                fresh,
+                step_time_limit,
+                options,
+            };
+            let progress = |text: &str| {
+                if !quiet && !as_json {
+                    eprintln!("dutchman: {text}");
+                }
+            };
+            match investigate::run(&input, &settings, &investigate::ask_on_terminal, &progress) {
+                Ok(result) => {
+                    if as_json {
+                        print_json(&result);
+                    } else {
+                        if let Some(path) = result.get("summary_path").and_then(Value::as_str) {
+                            println!("The summary to share: {path}");
+                        }
+                        println!(
+                            "{}",
+                            result
+                                .get("summary")
+                                .and_then(Value::as_str)
+                                .unwrap_or_default()
+                        );
+                    }
+                    ExitCode::SUCCESS
+                }
+                Err(error) => {
+                    if as_json {
+                        print_json(&json::failure(
+                            investigate::SCHEMA,
+                            json::input(&input),
+                            &error,
+                        ));
+                    } else {
+                        eprintln!("dutchman: {error}");
+                    }
+                    ExitCode::FAILURE
+                }
+            }
         }
         Command::Repro {
             input,

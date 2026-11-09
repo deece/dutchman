@@ -17,6 +17,35 @@ and 0 tries stored shape only. Once diagnosis has identified a failing part,
 Do not run a whole-file conversion again or overwrite the original, converted design,
 or saved report. Nothing is sent without asking. See [desktop usage](desktop.md#ask-your-ai-about-this-file).
 
+## Look into a conversion that went wrong: investigate
+
+```sh
+dutchman investigate design.f3d [--out FOLDER] [--report FILE] [--yes | --no-send] [--json]
+```
+
+One command for the AI a user asks for help. It reads the report the desktop app saved beside
+the design (`design.report.json` or `design.failed.json`), or converts the design once into
+the private folder when there is none. A conversion that failed is then narrowed to its
+first failing feature, as `diagnose --narrow` does. Everything goes into one private folder,
+`design.f3d.investigate` beside the design unless `--out` names another.
+
+The one file made to be shared is `summary.md`: versions, format and outcome, the replays that
+may be wrong (a kept feature whose profile the check did not confirm, or a profile region that
+doesn't match the source), the first blocked feature of each kind with its place in the
+timeline, SolidCraft's own refusals with where they are tracked, the failure and what the
+narrowing found, and what the conversion lost. It is built from the
+[anonymous report](report-anon.md) data and checked in code before it is written: it holds no
+file, part or feature name, no path and no number from the design. If that check fails,
+nothing is written and the error says so.
+
+Then it asks once: `Send this summary to the Dutchman team? [y/N]`. Yes sends `summary.md`,
+and nothing else, through the anonymous report endpoint with the signature `investigate`,
+and prints the receipt id. No leaves everything where it is. `--yes` and `--no-send` give the
+answer in advance, for an AI the user has already answered. Without a terminal and without
+either flag, nothing is sent; the result says to ask the user and run again with one of them.
+That second run reuses the summary the first one made instead of converting again; `--fresh`
+starts over. `--json` prints [`dutchman.investigate/1`](json.md#dutchmaninvestigate1).
+
 ## Project inputs
 
 Files whose names start with `~$` are lock files. They are ignored in project planning

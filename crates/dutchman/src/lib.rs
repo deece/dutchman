@@ -19,6 +19,7 @@ pub mod diagnostics;
 pub mod doctor;
 pub mod dxf;
 pub mod formats;
+pub mod investigate;
 pub mod issue;
 pub mod json;
 pub mod mcp;

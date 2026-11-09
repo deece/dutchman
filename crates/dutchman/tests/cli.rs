@@ -3716,3 +3716,63 @@ fn convert_writes_the_anonymous_report_of_one_file() {
         serde_json::from_str(&std::fs::read_to_string(&key).unwrap()).unwrap();
     assert_eq!(key["files"].as_object().unwrap().len(), 1);
 }
+
+#[test]
+fn investigate_writes_a_summary_with_nothing_from_the_design_and_sends_nothing_unasked() {
+    let dir = tempfile::tempdir().unwrap();
+    let folder = dir.path().join("Private Client 5521");
+    std::fs::create_dir_all(&folder).unwrap();
+    let input = folder.join("Secret Widget 9137.f3d");
+    std::fs::copy(fixture("container_metadata_only.f3d"), &input).unwrap();
+    let out = dir.path().join("Scratch Area 8810");
+    let args = [
+        "investigate",
+        input.to_str().unwrap(),
+        "--out",
+        out.to_str().unwrap(),
+        "--json",
+    ];
+    // No terminal and no answer given: nothing is sent and nothing is asked.
+    let output = dutchman(&args);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(result["schema"], "dutchman.investigate/1");
+    assert_eq!(result["sent"], false);
+    assert_eq!(result["asked"], false);
+    assert_eq!(result["report"], "converted");
+    let summary = std::fs::read_to_string(out.join("summary.md")).unwrap();
+    assert!(summary.contains("- Outcome: failed"), "{summary}");
+    for private in [
+        "Secret",
+        "Widget",
+        "9137",
+        "Private",
+        "Client",
+        "5521",
+        "Scratch",
+        "8810",
+        dir.path().to_str().unwrap(),
+    ] {
+        assert!(!summary.contains(private), "{private} in:\n{summary}");
+    }
+    assert!(out.join("local-key.json").is_file());
+    // Answered no in advance: the earlier summary is reused, still nothing sent.
+    let mut no = args.to_vec();
+    no.push("--no-send");
+    let output = dutchman(&no);
+    assert!(output.status.success());
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(result["sent"], false);
+    assert_eq!(
+        std::fs::read_to_string(out.join("summary.md")).unwrap(),
+        summary
+    );
+    // Both answers at once are refused.
+    let mut both = no.clone();
+    both.push("--yes");
+    assert_eq!(dutchman(&both).status.code(), Some(2));
+}
