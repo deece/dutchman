@@ -204,7 +204,12 @@ transform, and each component as a product definition.
   that make its bodies and the sketches it owns with their building features. Referenced
   features come along, but timeline predecessors alone do not. A feature explicitly owned by
   another component stays out; without ownership, the existing body and sketch links still
-  select history. Root-owned history goes to the design's loose-body component when it exists.
+  select history. A sketch another component builds that a feature of this one uses (designed
+  in the context of the assembly) is the exception: when each of the two components has a single
+  instance, its sketch feature comes in as this component's, with the sketch's plane moved into
+  this component's coordinates. A component placed more than once has no single place relative
+  to the other, so the history stops at the feature that uses it.
+  Root-owned history goes to the design's loose-body component when it exists.
   Each sketch is written under the part that owns it, once per part however often it is
   placed, and a sketch owned by a component that holds no bodies goes under that component;
   only sketches with no owner, or whose owner component is not written, stay in the assembly
