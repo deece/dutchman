@@ -939,6 +939,15 @@ pub(super) fn crossed_loop(members: &[Value], entities: &[&Value]) -> bool {
     polygon(members, entities).is_some_and(|ring| self_crossing(&ring))
 }
 
+/// Whether two closed rings cross or run along each other: some edge of one meets an edge of
+/// the other. Two holes of one region that do (a nut pocket drawn over a bolt hole) bound one
+/// hole together, so neither ring is a boundary SolidCraft finds on its own.
+pub(super) fn rings_cross(a: &[P2], b: &[P2]) -> bool {
+    edges(a).any(|(p, q)| {
+        edges(b).any(|(r, s)| !intersection(p, q, r, s).is_ok_and(|hit| hit.is_none()))
+    })
+}
+
 fn self_crossing(ring: &[P2]) -> bool {
     for (i, (a, b)) in edges(ring).enumerate() {
         for (j, (c, d)) in edges(ring).enumerate().skip(i + 1) {

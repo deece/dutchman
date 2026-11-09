@@ -4017,6 +4017,66 @@ fn solidcraft_replays_loops_that_share_part_of_an_edge() {
     assert!((volume[0] - 1160.0).abs() < 1e-6, "{volume:?}");
 }
 
+/// The 10 mm square taken with two holes that cross: a 2 mm circle and a 3.4 mm square, both
+/// centred in it, so the square's corners stick out of the circle (a nut pocket over a bolt hole).
+fn crossing_holes_history() -> Model {
+    let profile = json!({"kind": "sketch_regions", "value": {"sketch": SKETCH,
+        "regions": [{"region": "loops", "outer": 0, "holes": [1, 2]}]}});
+    let mut model = cube_with_history(10.0, profile, None);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let id = |key: u32| json!({"entity": format!("f3d:model:sketch-entity#{key}")});
+    let source = &mut wire["model"];
+    source["sketch_entities"].as_array_mut().unwrap().extend([
+        circle(11, [5.0, 5.0], 2.0),
+        line(12, [3.3, 3.3], [6.7, 3.3]),
+        line(13, [6.7, 3.3], [6.7, 6.7]),
+        line(14, [6.7, 6.7], [3.3, 6.7]),
+        line(15, [3.3, 6.7], [3.3, 3.3]),
+    ]);
+    source["sketches"][0]["profiles"]
+        .as_array_mut()
+        .unwrap()
+        .extend([json!([id(11)]), json!([id(12), id(13), id(14), id(15)])]);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+#[test]
+fn a_region_whose_holes_cross_is_named_by_a_point() {
+    let (document, report) = convert(
+        &crossing_holes_history(),
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(history_line(&report).starts_with("2 of 2 features rebuilt"));
+    let profiles = &document["features"][1]["profiles"];
+    assert_eq!(profiles["type"], "points", "{profiles}");
+    assert_eq!(
+        profiles["points"].as_array().unwrap().len(),
+        1,
+        "{profiles}"
+    );
+}
+
+#[test]
+fn solidcraft_replays_a_region_whose_holes_cross() {
+    let Some(cli) = solidcraft() else { return };
+    let volume = volumes(&cli, &written(&crossing_holes_history()).0);
+    assert_eq!(volume.len(), 1, "{volume:?}");
+    // The hole is the union: the circle and the square's corners outside it.
+    let (half, radius) = (1.7_f64, 2.0_f64);
+    let steps = 200_000;
+    let corners: f64 = (0..steps)
+        .map(|i| {
+            let x = -half + 2.0 * half * (f64::from(i) + 0.5) / f64::from(steps);
+            let inside = (radius * radius - x * x).max(0.0).sqrt();
+            2.0 * (half - inside).max(0.0) * 2.0 * half / f64::from(steps)
+        })
+        .sum();
+    let hole = std::f64::consts::PI * radius * radius + corners;
+    let expected = 10.0 * (100.0 - hole);
+    assert!((volume[0] - expected).abs() < 0.05, "{volume:?} {expected}");
+}
+
 #[test]
 fn a_curve_another_feature_names_stays_real_geometry() {
     // A sweep along curve 5 of the same sketch needs it as geometry, so nothing in the

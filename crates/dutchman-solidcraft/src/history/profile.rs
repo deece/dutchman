@@ -618,9 +618,10 @@ fn regions(
         }
         curves(outers)
     } else {
-        // A loop that runs along part of another solid line is split there in SolidCraft, so
-        // its own curves bound none of SolidCraft's profiles: name each region by a point.
-        if shares_an_edge(regions, ctx, sketch) {
+        // A loop that runs along part of another solid line is split there in SolidCraft, and
+        // loops of one region that cross bound it by their union: either way its own curves
+        // bound none of SolidCraft's profiles, so name each region by a point.
+        if shares_an_edge(regions, ctx, sketch) || loops_cross(regions, ctx, sketch) {
             if let Some(points) = region_points(regions, ctx, sketch, mapped, true) {
                 return Ok(json!({"type": "points", "points": points}));
             }
@@ -652,6 +653,32 @@ fn shares_an_edge(regions: &[Value], ctx: &Context, sketch: &str) -> bool {
             .chain(holes)
             .filter_map(|index| source_members(ctx, sketch, index).ok())
             .any(|members| super::crossing::shares_an_edge(members, &entities, &demoted))
+    })
+}
+
+/// Whether two loops of one whole-loop region (outer or holes) cross each other. SolidCraft
+/// then bounds the region by their union, which no single loop of the source is.
+fn loops_cross(regions: &[Value], ctx: &Context, sketch: &str) -> bool {
+    let entities = sketch_entities(ctx, sketch);
+    regions.iter().any(|region| {
+        let holes = region
+            .get("holes")
+            .and_then(Value::as_array)
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        let rings: Vec<Vec<P2>> = region
+            .get("outer")
+            .into_iter()
+            .chain(holes)
+            .filter_map(|index| source_members(ctx, sketch, index).ok())
+            .filter_map(|members| super::crossing::loop_ring(members, &entities))
+            .collect();
+        rings.iter().enumerate().any(|(i, a)| {
+            rings
+                .iter()
+                .skip(i + 1)
+                .any(|b| super::crossing::rings_cross(a, b))
+        })
     })
 }
 
