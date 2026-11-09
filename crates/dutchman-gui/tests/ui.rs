@@ -2293,6 +2293,10 @@ fn ask_ai_copies_a_short_prompt_naming_files_that_exist() {
         assert!(prompt.contains(&dutchman_gui::app::agents_url(dutchman::BUILD_VERSION)));
     }
     assert!(prompt.contains("Don't send any files anywhere without asking me"));
+    assert!(
+        prompt.contains("`dutchman investigate` on the original file"),
+        "{prompt}"
+    );
     // Short apart from the paths it names (these are long temporary ones).
     let paths: usize = [&row.input, output, &report, &log]
         .iter()

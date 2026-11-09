@@ -14,10 +14,12 @@ under the button (about five lines tall, scrolling inside), with **Copy** to cop
 assistant.** shows for about two seconds after each copy. The box stays until you close it or
 the card is replaced by a new conversion. The prompt names the original file, the converted
 design (not for a failed file), the saved report (`<stem>.report.json`, or `<stem>.failed.json`)
-and the log of that run, and tells the assistant to start with the `AGENTS.md` beside the app
-(on GitHub for a source build). That guide, with the bundled conversion skill, explains how
-to read the report and the log and which `dutchman` commands to use in a fresh scratch
-folder, leaving the original, design and report untouched. Nothing is sent and no server
+and the log of that run. It tells the assistant to start by running
+[`dutchman investigate`](command-line.md#look-into-a-conversion-that-went-wrong-investigate) on
+the original file, as the `AGENTS.md` beside the app explains (on GitHub for a source build),
+and to explain the `summary.md` it writes. That guide asks you one question, whether to send
+that summary, and explains how to go further in a fresh scratch folder, leaving the original,
+design and report untouched. Nothing is sent and no server
 connection or extra setup is needed. Use an assistant that can read local files and run
 local commands. The prompt says to ask before sending anything anywhere; pasting it into an
 assistant is your choice, so check that assistant's privacy settings before sharing private

@@ -736,6 +736,11 @@ the summary or bundle reviewed in the consent screen; the log stays local.
 
 ## Start from an existing desktop result
 
+When the person wants to know what went wrong, start with `dutchman investigate ORIGINAL`
+and follow the procedure in the installed `AGENTS.md`: read the `summary.md` it writes,
+explain it, ask the one question whether to send it, then run it again with `--yes` or
+`--no-send`. The rest of this section is for going further when they ask.
+
 The desktop **Ask your AI about this file** button copies a short prompt naming the original
 file, the converted design, the saved `<stem>.report.json` (`<stem>.failed.json` when the
 file did not convert, with no design) and the log of that run, plus this app's `AGENTS.md`.

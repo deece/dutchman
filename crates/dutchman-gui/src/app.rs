@@ -2611,7 +2611,7 @@ fn ai_prompt(
         None => text.push('.'),
     }
     text.push_str(&format!(
-        " Start by reading {agents}, which explains how to read them and which Dutchman commands to use. Don't send any files anywhere without asking me."
+        " Start by running `dutchman investigate` on the original file, as {agents} explains, then explain its summary.md to me. Don't send any files anywhere without asking me."
     ));
     Ok(text)
 }
