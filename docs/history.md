@@ -214,10 +214,16 @@ names which.
 Whole-sketch hole placements exclude construction entities; explicit entity selections
 can still use construction points or circle centres.
 
-When every feature using a sketch selects whole-loop regions, curves that no closed loop of the
-sketch's profiles uses (open segments, lines laid across a region) are written as construction,
-so they do not divide the selected region; the report counts them. A curve a feature names, and
-any sketch another kind of feature uses, keep their curves as real geometry.
+When every feature using a sketch selects regions (whole loops or trimmed), curves that bound
+none of the selected regions are written as construction, so they do not divide them; the report
+counts them. That covers open segments and lines laid across a region, and also closed loops no
+feature takes: a tab along part of a selected region's edge, or a ring around a hole the region
+keeps. A curve a feature names, and any sketch another kind of feature uses, keep their curves
+as real geometry.
+
+Selected loops that share part of an edge with another solid line (a tab taken together with
+the plate it sits on) are named by a point inside each region, since SolidCraft splits the
+shared edge and the loop's own curves no longer bound one of its profiles.
 
 A feature that takes a whole sketch, or a list of its profile loops, treats loops inside loops
 as holes (even-odd nesting), as Fusion does: two concentric circles are a ring, not a disc. The
