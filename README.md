@@ -54,14 +54,14 @@ Every download holds the desktop app (`dutchman-gui`), the `dutchman` command, a
 
    <a href="https://dutchman-cad.github.io/view.html?src=https://raw.githubusercontent.com/dutchman-cad/dutchman/main/docs/images/readme-result-day.png&alt=The%20CC0%20bracket%27s%20result%3A%20mapped%20feature%20history%20and%20Open%20in%20SolidCraft"><img alt="The CC0 bracket's result: mapped feature history and Open in SolidCraft" src="docs/images/readme-result-day.png" width="100%"></a>
 
-## What's new in 0.2.7
+## What's new in 0.2.8
 
-- **Smart part positions:** Fusion assemblies come in posed the way Fusion last showed them, where the joints and the model agree. A robot arm arrives folded, not stretched out.
-- **Faster, lighter big assemblies:** the Voron Trident converts in 3:18 instead of 8:16 with 10.5 GB instead of 17.2 GB, and all three big Vorons now fit on a 16 GB computer.
-- **Windows installer:** installs without administrator rights, with a Start menu shortcut and the commands on your PATH, and updates itself.
-- **Everything on one screen:** the main window opens at a size that shows all of it, with Results beside Designs in a wide window.
-- **Ask your AI about a converted file:** copy a prompt from a result card, and your assistant explains what was lost and why from the saved report, with no setup.
-- **Report converted files that came out wrong:** review the exact anonymous details, then send them from the result card.
+- **Right shapes, or none:** a shape Dutchman can't prove is refused or marked, not kept wrong. Fusion extrudes use the sketch region their end face proves, a rebuilt history is checked against the bodies Fusion stored, and the result card says when they don't match.
+- **More kinds of features kept:** extrudes from or to a face, holes at several points, counterbores and countersinks with a drill point, fillets with several radii, Move Face, Inventor plates attached at 90 degrees, and placed cylinders and cones (SolidCraft 0.24.1 or newer). A Fusion Canvas image no longer stops a part's history.
+- **Honest counts:** results count only features actually rebuilt and confirmed. The Voron V1.8 shows 253 of its 1,102 features that need rebuilding; 0.2.7 counted 290, including features it couldn't confirm.
+- **Less memory, measured not guessed:** the Voron Trident peaks at 5.6 GB instead of 10.5 GB, the V1.8 at 8.5 GB instead of 11.7 GB, and a large Fusion archive at 17.5 GB instead of 21.5 GB. A conversion isn't refused on an estimate any more; it stops with a clear message only when the computer really runs low, and keeps the design.
+- **No terminal windows on Windows:** converting in the desktop app no longer opens a terminal window for each SolidCraft check, and each file converts in its own process, so a crash ends that file and not the app.
+- **Cards that fit:** result cards fit the window, any result with a loss has **Report this file…**, and **Ask your AI about this file** gives a short prompt every time.
 
 [Release notes](https://github.com/dutchman-cad/dutchman/releases/latest) · [Changelog](CHANGELOG.md)
 
