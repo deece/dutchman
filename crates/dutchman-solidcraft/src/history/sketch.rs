@@ -123,7 +123,7 @@ pub(crate) fn map(
         y,
     } = frame;
     let super::crossing::Demoted {
-        crossing: mut crossing,
+        mut crossing,
         stray,
     } = super::crossing::demoted(sketch, &entities, ctx.arena("features"));
     let stray_count = stray.difference(&crossing).count();
