@@ -225,7 +225,9 @@ feature uses, keep their curves as real geometry.
 
 Selected loops that share part of an edge with another solid line (a tab taken together with
 the plate it sits on) are named by a point inside each region, since SolidCraft splits the
-shared edge and the loop's own curves no longer bound one of its profiles.
+shared edge and the loop's own curves no longer bound one of its profiles. So is a region two of
+whose loops cross (a nut pocket drawn over a bolt hole, both holes of the region): its hole is
+their union, and the point lies outside both.
 
 A feature that takes a whole sketch, or a list of its profile loops, treats loops inside loops
 as holes (even-odd nesting), as Fusion does: two concentric circles are a ring, not a disc. The
