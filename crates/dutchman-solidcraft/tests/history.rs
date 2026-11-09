@@ -3783,12 +3783,12 @@ fn a_selected_crossed_loop_maps_to_its_atomic_regions() {
             .as_array()
             .unwrap();
         assert_eq!(curves.len(), 10);
-        // Selected as a region, the separate square (curves 7 to 10) bounds nothing the
-        // extrude takes, so it is construction; the crossed loop's curves stay solid. A
-        // profile-list selection infers nothing, so every curve stays solid.
+        // The separate square (curves 7 to 10) bounds nothing the extrude takes, whether it
+        // selects a region or a list of loops, so it is construction; the crossed loop's
+        // curves stay solid.
         for curve in curves {
             let id = curve["id"].as_str().unwrap();
-            let unused = region && ["l7", "l8", "l9", "l10"].contains(&id);
+            let unused = ["l7", "l8", "l9", "l10"].contains(&id);
             assert_eq!(curve["construction"] == true, unused, "{region} {id}");
         }
         assert!(!document["features"][0]["sketch"]["constraints"]
@@ -4077,6 +4077,58 @@ fn solidcraft_replays_a_region_whose_holes_cross() {
     assert!((volume[0] - expected).abs() < 0.05, "{volume:?} {expected}");
 }
 
+/// The square taken through a list of profile loops, with two circles about (5, 5), 3 mm and
+/// 1.75 mm, that no feature takes, and a line from the corner to their centre in no loop.
+fn listed_square_history() -> Model {
+    let profile = json!({"kind": "sketch_profiles", "value": {"sketch": SKETCH,
+        "profiles": [0]}});
+    let mut model = cube_with_history(10.0, profile, None);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let id = |key: u32| json!({"entity": format!("f3d:model:sketch-entity#{key}")});
+    let source = &mut wire["model"];
+    source["sketch_entities"].as_array_mut().unwrap().extend([
+        circle(11, [5.0, 5.0], 3.0),
+        circle(12, [5.0, 5.0], 1.75),
+        line(13, [0.0, 0.0], [5.0, 5.0]),
+    ]);
+    source["sketches"][0]["profiles"]
+        .as_array_mut()
+        .unwrap()
+        .extend([json!([id(11)]), json!([id(12)])]);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+#[test]
+fn a_list_of_profile_loops_leaves_unused_curves_construction() {
+    let (document, report) = convert(
+        &listed_square_history(),
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(
+        history_line(&report).starts_with("2 of 2 features rebuilt"),
+        "{}",
+        history_line(&report)
+    );
+    // The circles and the line to their centre bound nothing the extrude takes; the square's
+    // four sides stay solid. (Written curves are numbered by kind: circles c*, lines l*.)
+    let flags = construction_flags(&document);
+    assert_eq!(flags.len(), 7, "{flags:?}");
+    for (id, construction) in &flags {
+        let unused = id.starts_with('c') || id == "l5";
+        assert_eq!(*construction, unused, "{flags:?}");
+    }
+}
+
+#[test]
+fn solidcraft_replays_a_listed_loop_beside_curves_no_feature_takes() {
+    let Some(cli) = solidcraft() else { return };
+    let volume = volumes(&cli, &written(&listed_square_history()).0);
+    assert_eq!(volume.len(), 1, "{volume:?}");
+    // Solid, the circles and the line split the square, and no profile has its boundary.
+    assert!((volume[0] - 1000.0).abs() < 1e-6, "{volume:?}");
+}
+
 #[test]
 fn a_curve_another_feature_names_stays_real_geometry() {
     // A sweep along curve 5 of the same sketch needs it as geometry, so nothing in the
@@ -4112,10 +4164,18 @@ fn a_curve_another_feature_names_stays_real_geometry() {
 fn overlapping_crossing_curves_keep_the_refusal() {
     let mut model = crossed_profile_history(false);
     let mut wire = serde_json::to_value(&model.ir).unwrap();
+    // A second line along a diagonal, in the crossed loop too: a line in no loop would bound
+    // nothing selected and be construction.
     wire["model"]["sketch_entities"]
         .as_array_mut()
         .unwrap()
         .push(line(11, [0.0, 0.0], [10.0, 10.0]));
+    let member =
+        |reversed: bool| json!({"entity": "f3d:model:sketch-entity#11", "reversed": reversed});
+    let crossed = wire["model"]["sketches"][0]["profiles"][0]
+        .as_array_mut()
+        .unwrap();
+    crossed.extend([member(false), member(true)]);
     model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
     let (document, report) = convert(
         &model,
