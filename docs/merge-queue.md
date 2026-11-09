@@ -87,6 +87,11 @@ gh api repos/dutchman-cad/dutchman/rulesets -X POST --input ruleset.json
   request, so requiring them would block it forever), `solidcraft-roundtrip` (informational),
   and the CodeQL checks (they do not run in the queue).
 - Windows and ARM tests are the slowest required checks (ARM took 34 minutes on one run).
+- GitHub's ARM runners are sometimes shut down mid-job (exit code 143, "The runner has received
+  a shutdown signal"). The ARM tests run as their own job, `test (ubuntu-24.04-arm)`; when it
+  fails, `test (ubuntu-24.04-arm, again)` checks the failed job's annotations and, only after
+  such a shutdown, runs the tests once more. `ci-result` then counts the second try in place of
+  the first. Any other failure is not retried and still fails `ci-result`.
 
 ## Enqueue
 

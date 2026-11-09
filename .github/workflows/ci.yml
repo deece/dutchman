@@ -132,7 +132,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest]
+        # ARM64 is test-arm below, which gets a second try when its runner is shut down.
+        os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     env:
       # Debug info is most of a cold Windows build's time and is not needed to run the tests.
@@ -164,6 +165,76 @@ jobs:
       # the platform, and on another OS it would rebuild every crate a second time.
       - if: matrix.os == 'ubuntu-latest'
         run: cargo test --locked -p dutchman --no-default-features
+
+  # The tests on Linux ARM64, as test runs them. GitHub's ARM runners are sometimes shut down
+  # mid-job (exit code 143, "The runner has received a shutdown signal"); test-arm-again then
+  # runs them once more, and ci-result counts that second try in place of the first.
+  test-arm:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    name: test (ubuntu-24.04-arm)
+    runs-on: ubuntu-24.04-arm
+    env:
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+    steps:
+      - name: Free disk space
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: test-ubuntu-24.04-arm-debug
+          cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo test --workspace --locked
+      - run: cargo test --locked -p dutchman-gui --features test-support
+
+  # A second try of test-arm, only when its runner was shut down; a real failure is not retried.
+  test-arm-again:
+    needs: [changes, test-arm]
+    if: always() && needs.changes.outputs.code == 'true' && needs.test-arm.result == 'failure'
+    name: test (ubuntu-24.04-arm, again)
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+      actions: read
+      checks: read
+    env:
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+    steps:
+      - name: Retry only after a runner shutdown
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          job=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}/jobs" --paginate \
+            -q '.jobs[] | select(.name == "test (ubuntu-24.04-arm)") | .id' | head -1)
+          [ -n "$job" ] || { echo "test (ubuntu-24.04-arm) not found in this run" >&2; exit 1; }
+          notes=$(gh api "repos/${GITHUB_REPOSITORY}/check-runs/${job}/annotations" -q '.[].message')
+          echo "$notes"
+          if grep -qE 'exit code 143|shutdown signal' <<<"$notes"; then
+            echo "The ARM runner was shut down; trying the tests once more."
+          else
+            echo "test (ubuntu-24.04-arm) failed on its own; not retried." >&2
+            exit 1
+          fi
+      - name: Free disk space
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: test-ubuntu-24.04-arm-debug
+          save-if: false
+      - run: cargo test --workspace --locked
+      - run: cargo test --locked -p dutchman-gui --features test-support
 
   # Docs-only changes skip the build jobs above; the tests that read README.md and docs/formats.md
   # still check them against the program.
@@ -339,7 +410,7 @@ jobs:
   # failed or was cancelled. Jobs a change skips (a docs-only change skips the builds and tests)
   # count as passed, so a required check never waits for a job that never starts.
   ci-result:
-    needs: [changes, fmt, release-notes, clippy, test, docs, test-macos, docker, msrv, solidcraft-roundtrip]
+    needs: [changes, fmt, release-notes, clippy, test, test-arm, test-arm-again, docs, test-macos, docker, msrv, solidcraft-roundtrip]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -351,6 +422,10 @@ jobs:
           import json, sys
           needs = json.load(sys.stdin)
           bad = {job: need["result"] for job, need in needs.items() if need["result"] in ("failure", "cancelled")}
+          # test-arm-again runs only when test-arm failed, and passes only after a runner
+          # shutdown and a passing second try: then the first try does not count.
+          if needs.get("test-arm-again", {}).get("result") == "success":
+              bad.pop("test-arm", None)
           for job, need in sorted(needs.items()):
               print(job + ": " + need["result"])
           sys.exit(f"failed or cancelled: {bad}" if bad else 0)
