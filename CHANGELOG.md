@@ -8,7 +8,7 @@ Unreleased changes live in [changelog.d/](changelog.d/).
 
 [Semantic Versioning]: https://semver.org/spec/v2.0.0.html
 
-## 0.2.8 (2026-11-05)
+## 0.2.8 (2026-11-08)
 
 ### History
 
@@ -54,6 +54,25 @@ Unreleased changes live in [changelog.d/](changelog.d/).
 - An extrude whose region is part of a circle crossed by another keeps its history: two crossing
   circles bound several regions with the same curves, so the region is now selected by a point
   inside it, taken from the stored boundary. A boundary that doesn't close stays refused.
+- cadmpeg gives a Fusion Base Feature's body only as the design ends. Joins and cuts after it
+  re-apply to that body without changing the shape, so they are kept but no longer counted as
+  rebuilt: the report's `history.reapplied` counts them, and the result card says editing them
+  may not change the shape. A Base Feature whose body any other later feature changes, such as a
+  Move, is refused, naming that feature; it had replayed the body where the later features leave
+  it, then applied them again.
+- The SolidCraft replay that finds a blend's or a face profile's input stops at the last step it
+  inspects, so a slow feature later in the history no longer slows each replay. On the public
+  RailCore II 300ZLT this was one part with a 20 s extrude, replayed twice.
+- Fusion cylinder and cone primitives keep their history, placed by their feature frame: a whole
+  cylinder becomes a SolidCraft cylinder, and a whole cone a SolidCraft cone on SolidCraft 0.24.1
+  and newer. They used to be refused as having no placement, which stopped the history of three
+  public designs (a parametric pin, a T8 leadscrew and the Salad Fork's captive pins).
+- A Fusion Canvas (a reference image) no longer stops a history: it builds no geometry, so it is
+  counted as not needed. On the public Voron V1.8 it stopped the history of parts holding 810
+  features.
+- A feature whose profile is the whole of a sketch with several profiles is kept only when
+  SolidCraft's check confirms it; otherwise the history stops before it. Such a cut could remove
+  the whole body where Fusion keeps one.
 
 ### Assemblies
 
@@ -103,6 +122,12 @@ Unreleased changes live in [changelog.d/](changelog.d/).
 - Dismissing "The last run didn't finish." keeps it dismissed after a relaunch, until another run
   doesn't finish.
 - On Windows, converting no longer opens a terminal window for each SolidCraft or FreeCAD check.
+- The result card says when a partial history's rebuilt features don't match the original where
+  the history stops, and that the final shape is still correct, so check the rebuilt features
+  before editing them. Until now only the JSON report had it, with `history/body-mismatch`.
+- The result card says how many rebuilt extrudes may use the wrong sketch region, because it couldn't
+  be checked against the source. Until now only the JSON report marked them, with
+  `profile_unverified`.
 
 ### Command line and install
 
@@ -153,6 +178,15 @@ Unreleased changes live in [changelog.d/](changelog.d/).
 - The result card and summaries count features rebuilt, out of those that need one. `history.rebuilt`
   and `history.needing` are new in the JSON report; `history.mapped` also counts features that need
   nothing, such as component inserts and joints, so it overstated editable history.
+- A partial history that replays but whose bodies differ from what the source stores at the same
+  point, fewer of them or one away from where the source has it, is now reported, with the loss code
+  `history/body-mismatch`, rather than counted as replaying cleanly. Fusion files store this.
+  In a design with components, a stored list that features of more than one component carry is
+  not used, since it isn't any one component's state.
+  A base feature written with its body as the design ends isn't compared, since the source's
+  state after it is the body before later features changed it.
+- Where a Fusion file marks a history state's body box as exact, the partial-history body check
+  compares its centre within 0.5 mm or 1% of the body's size, rather than half its size.
 
 ### cadmpeg
 
@@ -211,6 +245,10 @@ Unreleased changes live in [changelog.d/](changelog.d/).
 
 - Falling back to geometry alone no longer fails when a component's definition names sketches
   that the fallback removed.
+- A Fusion body an active Remove feature deletes is left out of the converted design. Fusion
+  keeps such a body in the file without showing it, and it used to come out as part of the
+  design. An Info note on the Remove gives the count. A Remove whose bodies cadmpeg doesn't
+  resolve is left as it is.
 
 ## 0.2.7 (2026-11-04)
 
