@@ -11,8 +11,8 @@ they ask:
 1. Run `"$D" investigate "ORIGINAL FILE"` (how to set `D` is below). It reads the report the
    app saved beside the file, or converts once into a private folder when there is none. It
    narrows a failed conversion to its first failing feature, and writes one file made to be
-   shared: `summary.md`, in `ORIGINAL FILE.investigate/` beside the file. Nothing is sent: run
-   from here, with no terminal to ask on, it doesn't send.
+   shared: `summary.md`, in `ORIGINAL FILE.investigate/` beside the file. It sends nothing on
+   this first run.
 2. Read `summary.md` and explain it plainly: what converted, which features were not rebuilt
    and why, which replays may be wrong, and what a newer build would change, if it lists any.
 3. Ask the person one question: may Dutchman send that summary to the Dutchman team? It holds

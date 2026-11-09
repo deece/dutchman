@@ -55,7 +55,7 @@ class InstalledGuides(unittest.TestCase):
         guide = (ROOT / "assets/install/AGENTS.md").read_text()
         source = (ROOT / "crates/dutchman/src/main.rs").read_text()
         commands = re.findall(r'"\$D" ([a-z-]+)', guide)
-        self.assertEqual(set(commands), {"formats", "inspect", "convert", "convert-all"})
+        self.assertEqual(set(commands), {"formats", "inspect", "convert", "convert-all", "investigate"})
         for command in commands:
             variant = "".join(part.title() for part in command.split("-"))
             self.assertRegex(source, rf"(?m)^    {variant} \{{")
