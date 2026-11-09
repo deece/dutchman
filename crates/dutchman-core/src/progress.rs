@@ -545,7 +545,7 @@ mod running_tests {
             assert_eq!(running.name.as_deref(), Some("Bracket"));
             assert_eq!(running.kind, StepKind::Preparing);
             assert!(running.elapsed_ms >= 15);
-            assert!(event.to_string().contains("Preparing Bracket"));
+            assert!(event.to_string().contains("Building history for Bracket"));
         });
         drop(step);
         assert!(receive

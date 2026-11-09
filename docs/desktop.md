@@ -28,14 +28,14 @@ paths or reports.
 Each file converts in its own process, so running low on memory or a crash ends that file and not the app, and closing the app ends what is still converting. A file stopped because it ran out of memory alongside others converts again on its own at the end of the run, and its card says so. On Windows these processes open no terminal windows.
 
 While a file converts, its card shows the design-read count and a separate running-step
-line beneath it: **Preparing Bracket: 12 s** or **Checking Bracket: 12 s**. The time belongs
+line beneath it: **Building history for Bracket: 12 s** or **Checking Bracket: 12 s**. The time belongs
 to that step and updates every five seconds, even while the count stays at, for example,
 261 of 264. Parallel conversion shows the current step that has run longest. Reading,
 checking the decoded model, and saving also have their own stage lines.
 
 During a folder run, the bottom bar keeps the longest-running file visible below the
 completed-file count, even when its card is offscreen. It shows the filename, stage and
-current step on two lines, for example **Assembly.iam — mapping; 2 others running** above
+current step on two lines, for example **Assembly.iam: building history (2 other files running)** above
 **Still checking Bracket (rebuilt history): 1 min 1 s**. The other-running count excludes queued and finished files;
 selection follows total file time, even when a part's step clock resets.
 

@@ -3535,8 +3535,8 @@ fn folder_run_keeps_the_oldest_file_visible_below_the_counts() {
             .preview_folder_running_for_test(PathBuf::from("Project"), rows);
         harness.run_steps(8);
         assert!(harness.query_by_label("1261 of 1293 done").is_some());
-        assert!(harness.query_by_label("Assembly.iam — mapping; 2 others running\nStill checking Bracket (rebuilt history): 1 min 1 s").is_some());
-        let line = harness.get_by_label("Assembly.iam — mapping; 2 others running\nStill checking Bracket (rebuilt history): 1 min 1 s").rect();
+        assert!(harness.query_by_label("Assembly.iam: building history (2 other files running)\nStill checking Bracket (rebuilt history): 1 min 1 s").is_some());
+        let line = harness.get_by_label("Assembly.iam: building history (2 other files running)\nStill checking Bracket (rebuilt history): 1 min 1 s").rect();
         let count = harness.get_by_label("1261 of 1293 done").rect();
         assert!(line.top() >= count.bottom());
         assert!(

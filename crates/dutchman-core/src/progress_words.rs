@@ -24,20 +24,22 @@ pub fn summary(event: &ProgressEvent) -> String {
     text
 }
 
+/// A stage in plain words: reading, building history, checking or writing.
+pub fn stage(stage: Stage) -> &'static str {
+    match stage {
+        Stage::Input | Stage::Decode => "reading",
+        Stage::Project | Stage::SolidCraft => "checking",
+        Stage::Map => "building history",
+        Stage::Write => "writing",
+    }
+}
+
 /// The oldest active file stays visible even when its card is offscreen.
 pub fn running_file(name: &str, event: &ProgressEvent, others: usize) -> String {
-    let stage = match event.stage {
-        Stage::Input => "opening",
-        Stage::Decode => "reading",
-        Stage::Project => "checking the decoded model",
-        Stage::Map => "mapping",
-        Stage::Write => "writing",
-        Stage::SolidCraft => "checking in SolidCraft",
-    };
-    let mut text = format!("{name} — {stage}");
+    let mut text = format!("{name}: {}", stage(event.stage));
     if others > 0 {
         text.push_str(&format!(
-            "; {others} other{} running",
+            " ({others} other file{} running)",
             if others == 1 { "" } else { "s" }
         ));
     }
@@ -47,22 +49,22 @@ pub fn running_file(name: &str, event: &ProgressEvent, others: usize) -> String 
 
 pub fn running(step: &RunningStep) -> String {
     let name = step.name.as_deref().unwrap_or(match step.kind {
-        StepKind::Opening => "input",
-        StepKind::Reading => "design",
-        StepKind::Preparing => "design",
-        StepKind::Checking
-        | StepKind::CheckingOriginal
-        | StepKind::CheckingHistory
-        | StepKind::CheckingBlends
-        | StepKind::CheckingPrefix
-        | StepKind::CheckingGeometry => "design",
-        StepKind::Writing => "output",
-        StepKind::Projecting => "decoded model",
+        StepKind::Opening => "the file",
+        StepKind::Writing => "the output",
+        _ => "the design",
     });
     if let (Some(limit), Some(consequence)) = (step.limit_ms, &step.consequence) {
         if step.elapsed_ms >= limit {
+            // A part's own name stays as the file has it; a stand-in starts the sentence.
+            let mut subject = name.to_owned();
+            if step.name.is_none() {
+                if let Some(first) = subject.get(..1) {
+                    let upper = first.to_uppercase();
+                    subject.replace_range(..1, &upper);
+                }
+            }
             return format!(
-                "{name} took longer than the {} {} limit: {consequence}.",
+                "{subject} took longer than the {} {} limit: {consequence}.",
                 crate::elapsed(limit / 1000),
                 if step.kind.is_check() {
                     "check"
@@ -73,9 +75,8 @@ pub fn running(step: &RunningStep) -> String {
         }
     }
     let verb = match step.kind {
-        StepKind::Opening => "Opening",
-        StepKind::Reading => "Reading",
-        StepKind::Preparing => "Preparing",
+        StepKind::Opening | StepKind::Reading => "Reading",
+        StepKind::Preparing => "Building history for",
         StepKind::Checking
         | StepKind::CheckingOriginal
         | StepKind::CheckingHistory
@@ -91,7 +92,6 @@ pub fn running(step: &RunningStep) -> String {
         verb.to_owned()
     };
     let target = match step.kind {
-        StepKind::Projecting if step.name.is_some() => format!("decoded model for {name}"),
         StepKind::CheckingOriginal => format!("{name} (original geometry)"),
         StepKind::CheckingHistory => format!("{name} (rebuilt history)"),
         StepKind::CheckingBlends => format!("{name} (blend proof)"),

@@ -115,7 +115,7 @@ fn verbose_plain_cli_progress_contains_the_running_part() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("Preparing Bracket:"), "{stderr}");
+    assert!(stderr.contains("Building history for Bracket:"), "{stderr}");
 }
 
 #[cfg(debug_assertions)]

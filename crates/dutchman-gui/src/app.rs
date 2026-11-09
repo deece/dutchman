@@ -3975,20 +3975,20 @@ mod tests {
             row("Assembly.iam", Status::Converting, 151_000, 61_000),
             row("waiting.iam", Status::Waiting, 999_000, 999_000),
         ];
-        assert_eq!(running_file_line(&rows).unwrap(), "Assembly.iam — mapping; 1 other running\nStill checking Bracket (rebuilt history): 1 min 1 s");
+        assert_eq!(running_file_line(&rows).unwrap(), "Assembly.iam: building history (1 other file running)\nStill checking Bracket (rebuilt history): 1 min 1 s");
         rows.push(row("another.iam", Status::Converting, 10_000, 10_000));
         assert!(running_file_line(&rows)
             .unwrap()
-            .contains("; 2 others running\n"));
+            .contains(" (2 other files running)\n"));
         rows[2].status = Status::Converted;
         assert!(running_file_line(&rows)
             .unwrap()
-            .starts_with("newer.iam — mapping;"));
+            .starts_with("newer.iam: building history ("));
         rows[1].status = Status::Converted;
         rows[4].progress = None;
         assert_eq!(
             running_file_line(&rows).unwrap(),
-            "another.iam — opening\nOpening input: 0 s"
+            "another.iam: reading\nReading the file: 0 s"
         );
         rows[4].status = Status::Converted;
         assert!(running_file_line(&rows).is_none());
