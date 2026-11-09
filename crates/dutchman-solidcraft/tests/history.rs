@@ -3835,7 +3835,7 @@ fn construction_flags(document: &Value) -> Vec<(String, bool)> {
 }
 
 #[test]
-fn curves_outside_every_profile_loop_are_written_as_construction() {
+fn curves_bounding_no_profile_a_feature_uses_are_written_as_construction() {
     let (document, report) = convert(
         &stray_curve_history(|_| {}),
         &SolidCraftWriter::new().verification(Verification::Off),
@@ -3855,7 +3855,7 @@ fn curves_outside_every_profile_loop_are_written_as_construction() {
     }
     assert!(
         report.losses().iter().any(|loss| loss.detail
-            == "2 sketch curves outside every profile loop written as construction"),
+            == "2 sketch curves bounding no profile a feature uses written as construction"),
         "{report:?}"
     );
     // With the strays construction, the square's four curves are all the sketch has.
@@ -3875,6 +3875,139 @@ fn solidcraft_replays_a_region_beside_curves_no_loop_uses() {
     let volume = volumes(&cli, &written(&only_open).0);
     assert_eq!(volume.len(), 1);
     assert!((volume[0] - 1000.0).abs() < 1e-6, "{volume:?}");
+}
+
+fn circle(key: u32, center: [f64; 2], radius: f64) -> Value {
+    entity(
+        key,
+        json!({"kind": "circle", "center": {"u": center[0], "v": center[1]}, "radius": radius}),
+    )
+}
+
+/// The 10 mm square loop taken by its extrude, beside loops no feature takes: with `tab`, a
+/// 4 by 4 mm tab whose inner edge lies along part of the square's right side; else a 1 mm
+/// hole the region keeps (loop 1) inside a 2 mm ring (loop 2).
+fn unused_loop_history(tab: bool) -> Model {
+    let region = if tab {
+        json!({"region": "loops", "outer": 0})
+    } else {
+        json!({"region": "loops", "outer": 0, "holes": [1]})
+    };
+    let profile =
+        json!({"kind": "sketch_regions", "value": {"sketch": SKETCH, "regions": [region]}});
+    let mut model = cube_with_history(10.0, profile, None);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let id = |key: u32| json!({"entity": format!("f3d:model:sketch-entity#{key}")});
+    let (entities, loops) = if tab {
+        (
+            vec![
+                line(7, [10.0, 3.0], [14.0, 3.0]),
+                line(8, [14.0, 3.0], [14.0, 7.0]),
+                line(9, [14.0, 7.0], [10.0, 7.0]),
+                line(10, [10.0, 7.0], [10.0, 3.0]),
+            ],
+            vec![json!([id(7), id(8), id(9), id(10)])],
+        )
+    } else {
+        (
+            vec![circle(11, [5.0, 5.0], 1.0), circle(12, [5.0, 5.0], 2.0)],
+            vec![json!([id(11)]), json!([id(12)])],
+        )
+    };
+    let source = &mut wire["model"];
+    source["sketch_entities"]
+        .as_array_mut()
+        .unwrap()
+        .extend(entities);
+    source["sketches"][0]["profiles"]
+        .as_array_mut()
+        .unwrap()
+        .extend(loops);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+#[test]
+fn a_loop_no_feature_takes_is_written_as_construction() {
+    for (tab, unused) in [(true, 4), (false, 1)] {
+        let (document, report) = convert(
+            &unused_loop_history(tab),
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert!(
+            history_line(&report).starts_with("2 of 2 features rebuilt"),
+            "{tab}"
+        );
+        let flags = construction_flags(&document);
+        let construction = flags
+            .iter()
+            .filter(|(_, construction)| *construction)
+            .count();
+        assert_eq!(construction, unused, "{tab}: {flags:?}");
+        let noun = if unused == 1 { "curve" } else { "curves" };
+        let detail = format!(
+            "{unused} sketch {noun} bounding no profile a feature uses written as construction"
+        );
+        assert!(
+            report.losses().iter().any(|loss| loss.detail == detail),
+            "{tab}: {report:?}"
+        );
+    }
+}
+
+#[test]
+fn solidcraft_replays_a_region_beside_a_loop_no_feature_takes() {
+    let Some(cli) = solidcraft() else { return };
+    // The tab shares part of the square's side: solid, SolidCraft splits that side and finds
+    // no profile bounded by the square's four curves.
+    let volume = volumes(&cli, &written(&unused_loop_history(true)).0);
+    assert_eq!(volume.len(), 1);
+    assert!((volume[0] - 1000.0).abs() < 1e-6, "{volume:?}");
+    // The ring around the hole: solid, the square's face ends at the ring, not at the hole.
+    let volume = volumes(&cli, &written(&unused_loop_history(false)).0);
+    assert_eq!(volume.len(), 1);
+    // The hole's 1 mm circle, measured on SolidCraft's mesh; the ring's 2 mm would leave 874.
+    let expected = 10.0 * (100.0 - std::f64::consts::PI);
+    assert!((volume[0] - expected).abs() < 0.05, "{volume:?}");
+}
+
+/// The square and the tab beside it, both taken by the extrude.
+fn tab_taken_history() -> Model {
+    let mut model = unused_loop_history(true);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["features"][1]["definition"]["profile"]["value"]["regions"] =
+        json!([{"region": "loops", "outer": 0}, {"region": "loops", "outer": 1}]);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+#[test]
+fn loops_that_share_part_of_an_edge_are_named_by_points() {
+    let (document, report) = convert(
+        &tab_taken_history(),
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(history_line(&report).starts_with("2 of 2 features rebuilt"));
+    // Both loops are taken, so their curves stay solid.
+    assert!(construction_flags(&document)
+        .iter()
+        .all(|(_, construction)| !construction));
+    let profiles = &document["features"][1]["profiles"];
+    assert_eq!(profiles["type"], "points", "{profiles}");
+    assert_eq!(
+        profiles["points"].as_array().unwrap().len(),
+        2,
+        "{profiles}"
+    );
+}
+
+#[test]
+fn solidcraft_replays_loops_that_share_part_of_an_edge() {
+    let Some(cli) = solidcraft() else { return };
+    // The square's 1000 mm³ and the tab's 160, as one body.
+    let volume = volumes(&cli, &written(&tab_taken_history()).0);
+    assert_eq!(volume.len(), 1, "{volume:?}");
+    assert!((volume[0] - 1160.0).abs() < 1e-6, "{volume:?}");
 }
 
 #[test]
@@ -3905,7 +4038,7 @@ fn a_curve_another_feature_names_stays_real_geometry() {
     assert!(!report
         .losses()
         .iter()
-        .any(|loss| loss.detail.contains("outside every profile loop")));
+        .any(|loss| loss.detail.contains("bounding no profile")));
 }
 
 #[test]

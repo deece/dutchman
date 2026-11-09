@@ -122,18 +122,10 @@ pub(crate) fn map(
         x,
         y,
     } = frame;
-    let mut crossing = super::crossing::crossing(sketch, &entities);
-    crossing.extend(super::crossing::region_lines(
-        sketch,
-        &entities,
-        ctx.arena("features"),
-    ));
-    let mut stray = super::crossing::stray_curves(sketch, &entities, ctx.arena("features"));
-    // A trimmed region is bounded by pieces of these curves: SolidCraft finds it only when
-    // they stay solid and split the sketch there.
-    let trimmed = super::crossing::trimmed_region_curves(sketch, ctx.arena("features"));
-    crossing.retain(|id| !trimmed.contains(id));
-    stray.retain(|id| !trimmed.contains(id));
+    let super::crossing::Demoted {
+        crossing: mut crossing,
+        stray,
+    } = super::crossing::demoted(sketch, &entities, ctx.arena("features"));
     let stray_count = stray.difference(&crossing).count();
     let crossing_count = crossing.len();
     crossing.extend(stray);
@@ -164,7 +156,8 @@ pub(crate) fn map(
             Severity::Info,
             format!("sketch \"{name}\""),
             format!(
-                "{stray_count} sketch curve{} outside every profile loop written as construction",
+                "{stray_count} sketch curve{} bounding no profile a feature uses written as \
+                 construction",
                 if stray_count == 1 { "" } else { "s" },
             ),
         );

@@ -1,5 +1,7 @@
 //! Which closed profiles of a sketch a feature uses, as a SolidCraft profile selection.
 
+use std::collections::BTreeSet;
+
 use serde_json::{json, Value};
 
 use super::sketch::{Curve, Mapped, Shape, P2};
@@ -611,27 +613,59 @@ fn regions(
         }
     }
     if trimmed {
-        if let Some(points) = region_points(regions, ctx, sketch, mapped) {
+        if let Some(points) = region_points(regions, ctx, sketch, mapped, false) {
             return Ok(json!({"type": "points", "points": points}));
         }
         curves(outers)
     } else {
+        // A loop that runs along part of another solid line is split there in SolidCraft, so
+        // its own curves bound none of SolidCraft's profiles: name each region by a point.
+        if shares_an_edge(regions, ctx, sketch) {
+            if let Some(points) = region_points(regions, ctx, sketch, mapped, true) {
+                return Ok(json!({"type": "points", "points": points}));
+            }
+        }
         Ok(sorted_whole(
             json!({"type": "whole_boundaries", "profiles": whole}),
         ))
     }
 }
 
-/// Regions that use part of a whole circle, each named by a point inside it. Two crossing closed
-/// curves bound several profiles with the same curves, so curves can't tell them apart; a stored
-/// region's boundary can. `None` when no region trims a closed curve, or some region's boundary
-/// doesn't close into one shape, or leaves no point: those stay selected by their curves, where
-/// SolidCraft refuses what stays ambiguous.
+/// Whether a loop of these whole-loop regions (outer or hole) runs along part of a line of the
+/// sketch that is written solid.
+fn shares_an_edge(regions: &[Value], ctx: &Context, sketch: &str) -> bool {
+    let Some(row) = ctx.row("sketches", sketch) else {
+        return false;
+    };
+    let entities = sketch_entities(ctx, sketch);
+    let demoted = super::crossing::demoted(row, &entities, ctx.arena("features"));
+    let demoted: BTreeSet<String> = demoted.crossing.into_iter().chain(demoted.stray).collect();
+    regions.iter().any(|region| {
+        let holes = region
+            .get("holes")
+            .and_then(Value::as_array)
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        region
+            .get("outer")
+            .into_iter()
+            .chain(holes)
+            .filter_map(|index| source_members(ctx, sketch, index).ok())
+            .any(|members| super::crossing::shares_an_edge(members, &entities, &demoted))
+    })
+}
+
+/// Regions that use part of a whole circle (or, with `any`, any regions), each named by a point
+/// inside it. Two crossing closed curves bound several profiles with the same curves, so curves
+/// can't tell them apart; a stored region's boundary can. `None` when no region trims a closed
+/// curve and not `any`, or some region's boundary doesn't close into one shape, or leaves no
+/// point: those stay selected by their curves, where SolidCraft refuses what stays ambiguous.
 fn region_points(
     regions: &[Value],
     ctx: &Context,
     sketch: &str,
     mapped: &Mapped,
+    any: bool,
 ) -> Option<Vec<P2>> {
     let entities = sketch_entities(ctx, sketch);
     fn boundary(region: &Value) -> Option<&[Value]> {
@@ -640,9 +674,12 @@ fn region_points(
             .and_then(Value::as_array)
             .map(Vec::as_slice)
     }
-    if !regions.iter().any(|region| {
-        boundary(region).is_some_and(|uses| super::crossing::trims_a_closed_curve(uses, &entities))
-    }) {
+    if !any
+        && !regions.iter().any(|region| {
+            boundary(region)
+                .is_some_and(|uses| super::crossing::trims_a_closed_curve(uses, &entities))
+        })
+    {
         return None;
     }
     let mut rings = Vec::with_capacity(regions.len());
