@@ -49,13 +49,18 @@ fn conversion_scrubs_report_names_and_paths_and_finishes_jsonl() {
         no_verify: true,
         ..Default::default()
     };
+    let local_names = std::sync::Mutex::new(Vec::new());
     let report = dutchman::convert_options_with_progress(
         &input,
         &dir.path().join("out.solidcraft"),
         &options,
         true,
         &Default::default(),
-        &|_| {},
+        &|event| {
+            if let Some(name) = event.running.and_then(|s| s.name) {
+                local_names.lock().unwrap().push(name);
+            }
+        },
     );
     assert_eq!(report["ok"], true, "{report}");
     let names = report["names"].as_array().unwrap();
@@ -69,6 +74,15 @@ fn conversion_scrubs_report_names_and_paths_and_finishes_jsonl() {
     for name in names.iter().filter_map(Value::as_str) {
         assert!(!text.contains(name), "name {name:?} leaked into {text}");
     }
+    let local_names = local_names.into_inner().unwrap();
+    assert!(local_names
+        .iter()
+        .any(|name| name.contains("ZebraWidgetSecret")));
+    assert!(local_names.iter().any(|name| name == "ZebraWidgetSecret"));
+    for name in local_names {
+        assert!(!text.contains(&name), "running name leaked: {name}");
+    }
+    assert!(!text.contains("running"));
     assert!(!text.contains("ZebraWidgetSecret"));
     assert!(!text.contains(dir.path().to_str().unwrap()));
     let lines = records(&path);

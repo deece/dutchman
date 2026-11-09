@@ -78,7 +78,7 @@ These use the existing loss fields; no report schema or field changes.
 as one JSON object per line on stderr.
 Stdout remains the existing final report (or watch-event stream), with no progress objects
 embedded or appended.
-`--quiet` suppresses progress. Stage changes and design completions emit events immediately;
+`--quiet` suppresses progress. Stage changes, running-step changes and design completions emit events immediately;
 a running read or conversion also emits a heartbeat every five seconds. Events are ordered per file;
 files in a batch may interleave. No completion event is promised after a process is stopped.
 
@@ -94,6 +94,27 @@ successfully read unique documents, including assembly documents, rather than pl
 entities. `designs_total` is an integer when known, otherwise `null`. `heartbeat` is true for
 timer updates and false for stage or count changes. A geometry-only retry does not count the
 same document twice. Counts describe reading only, not the percentage of total conversion time.
+
+`running` is an additive, nullable object. Older workers may omit it; consumers should
+fall back to `stage`. It describes the longest-running current step across part workers.
+A nested check replaces preparation on that worker until it finishes. Its fields are:
+
+| Field | Meaning |
+|---|---|
+| `kind` | `opening`, `reading`, `projecting` (checking the decoded model), `preparing`, `checking` (target application), `checking_original`, `checking_history`, `checking_blends`, `checking_prefix`, `checking_geometry`, or `writing`. Independent of the coarse `stage`. |
+| `name` | Local part, design or output name, or `null` for a whole stage. Display names are bounded to 240 characters, with control characters replaced by spaces. Treat as private text, like `input.path`. |
+| `elapsed_ms` | Unsigned milliseconds since this step began; resets when the running step changes. |
+| `usual_ms` | Existing estimate for a whole stage when available, otherwise the documented threshold for this unit of work; a longer duration displays “Still …”. |
+| `limit_ms` | Unsigned milliseconds for this step's enforced limit, or `null` when none applies. A whole-file timeout is separate. |
+| `consequence` | Plain local explanation of what happens past the limit, or `null` when none applies. |
+
+For example, `"running":{"kind":"checking","name":"Bracket","elapsed_ms":12000,
+"usual_ms":60000,"limit_ms":120000,"consequence":"the check is stopped; history is kept unverified"}`.
+Local text progress and desktop cards format the same fields. Names and consequence text
+are excluded from anonymous reports and diagnostic logs. Passing a limit emits a final step
+snapshot before the guard ends, even when it happens between five-second heartbeats.
+See [progress during conversion](command-line.md#progress-during-conversion) for thresholds
+and the outcomes of each limit. None of these fields changes the final conversion report.
 
 The current cadmpeg API owns the Fusion `.f3z` member loop: its counts remain zero and `null`
 respectively, even when the archive finishes reading. Separate assembly files report their

@@ -1,5 +1,4 @@
 //! Command-line progress presentation on stderr only.
-use std::fmt::Write as _;
 use std::io::{IsTerminal, Write};
 use std::path::Path;
 use std::sync::Mutex;
@@ -43,19 +42,7 @@ impl StderrProgress {
                     .unwrap_or(input.as_os_str())
                     .to_string_lossy();
                 let name: String = name.chars().take(20).collect();
-                let mut text = format!(
-                    "{name}: {} | {} elapsed",
-                    event.stage.id(),
-                    dutchman_core::elapsed(event.elapsed_ms / 1000)
-                );
-                if let Some(total) = event.designs_total {
-                    let _ = write!(text, " | {}/{total} designs", event.designs_read);
-                } else if event.designs_read > 0 {
-                    let _ = write!(text, " | {} designs read", event.designs_read);
-                }
-                if event.heartbeat {
-                    let _ = write!(text, " | still working");
-                }
+                let text = format!("{name}: {event}");
                 let width = line.unwrap_or(0).max(text.chars().count());
                 // Padding clears the previous update without console-specific escapes.
                 let _ = write!(err, "\r{text:<width$}");

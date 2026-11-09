@@ -857,3 +857,8 @@ Missing assembly holder poses are inferred bottom-up from displayed children onl
 their world-pose estimates agree within 0.001 mm and 1e-6 rotation entries. Conflicts keep
 the existing placement source and are reported. JSON `part_positions` adds `derived_holders`
 and `holder_conflicts`; `bound_displayed` and `derived_holders` partition `displayed`, preserving the displayed/current/first-placement total.
+
+Local CLI and desktop progress names the running part or stage and its elapsed time,
+including “Still …” notices and check-limit consequences. See
+[progress during conversion](command-line.md#progress-during-conversion). MCP final reports
+are unchanged; running names are excluded from anonymous diagnostic logs.

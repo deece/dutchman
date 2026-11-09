@@ -27,6 +27,20 @@ paths or reports.
 
 Each file converts in its own process, so running low on memory or a crash ends that file and not the app, and closing the app ends what is still converting. A file stopped because it ran out of memory alongside others converts again on its own at the end of the run, and its card says so. On Windows these processes open no terminal windows.
 
+While a file converts, its card shows the design-read count and a separate running-step
+line beneath it: **Preparing Bracket: 12 s** or **Checking Bracket: 12 s**. The time belongs
+to that step and updates every five seconds, even while the count stays at, for example,
+261 of 264. Parallel conversion shows the current step that has run longest. Reading,
+checking the decoded model, and saving also have their own stage lines.
+
+Past the usual duration the line says **Still checking Bracket: 61 s (1 min 1 s)**.
+A target check that reaches its enforced limit says what happens next: the check stops,
+and history stays unverified, imported geometry stays visible, or document conversion
+stops, according to the output and check being run. Usual durations are notices rather
+than deadlines. See [progress during conversion](command-line.md#progress-during-conversion)
+for each threshold and limit. Part and design names in this area are local text and do
+not enter the anonymous diagnostic log.
+
 Every desktop run keeps a local diagnostic log in the diagnostics folder (**Open diagnostics
 folder** opens it), never beside your designs. It holds no names or contents from your file
 and stays on your computer. The folder keeps the newest 50 logs.

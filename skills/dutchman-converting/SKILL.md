@@ -796,3 +796,8 @@ every displayed child. A conflicted holder keeps its first placement, even insid
 that moves, and is reported. Smart also keeps the first placement of a displayed holder (and
 everything inside it) when a part below it would leave the bounds grown by 10%. JSON `part_positions` adds `derived_holders`
 and `holder_conflicts`; `bound_displayed` and `derived_holders` partition `displayed`, preserving the displayed/current/first-placement total.
+
+CLI and desktop progress includes the running part or stage and its elapsed time. “Still …”
+means the usual duration has passed, not a deadline. A check-limit notice states the actual
+retention or stop policy. Names in progress are private local text; do not copy them into
+anonymous diagnostic reports. See docs/command-line.md for per-step limits.

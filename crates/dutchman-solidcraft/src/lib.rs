@@ -44,6 +44,14 @@ pub use verify::{
 use document::Live;
 pub use replay::replay_script;
 
+/// Debug-only fixture hook; release builds never read this variable.
+#[cfg(debug_assertions)]
+fn slow_part(name: &str) {
+    if std::env::var("DUTCHMAN_TEST_SLOW_PART").ok().as_deref() == Some(name) {
+        std::thread::sleep(Duration::from_secs(6));
+    }
+}
+
 /// The SolidCraft design format this adapter writes: the first in which an Import may name a
 /// non-STEP source file whose geometry it keeps as restated STEP text. Every newer
 /// SolidCraft upgrades it on open. Keep this fixed for every target, including 0.28:
@@ -452,6 +460,7 @@ impl SolidCraftWriter {
         model: &Model,
         mapping: &mut history::Mapping,
         step: &str,
+        progress: Option<&dutchman_core::Progress<'_>>,
     ) -> Result<(), Error> {
         let mut failure = None;
         history::prove_blends(mapping, |history, after, faces| {
@@ -472,6 +481,14 @@ impl SolidCraftWriter {
                     return Err(why);
                 }
             };
+            let _checking = progress.map(|p| {
+                p.step(
+                    dutchman_core::StepKind::CheckingBlends,
+                    Some(&model.name),
+                    Some(self.timeout),
+                    Some(dutchman_core::progress_words::blend_limit()),
+                )
+            });
             verify::replay_edges(&cli, self.timeout, &design, after, faces)
         });
         match failure {
@@ -490,6 +507,7 @@ impl SolidCraftWriter {
         step: &str,
         why: Option<String>,
         report: &mut Report,
+        progress: Option<&dutchman_core::Progress<'_>>,
     ) -> Result<Check, Error> {
         if let Some(why) = why {
             let error = why
@@ -507,6 +525,14 @@ impl SolidCraftWriter {
         }
         let cli = verify::usable_cli(&self.verification);
         let started = std::time::Instant::now();
+        let _checking = progress.map(|p| {
+            p.step(
+                dutchman_core::StepKind::CheckingPrefix,
+                Some(&model.name),
+                Some(self.timeout),
+                Some(dutchman_core::progress_words::prefix_limit()),
+            )
+        });
         for _ in 0..64 {
             let Ok(history) = &mapping.result else { break };
             let summary = partial_summary(history);
@@ -679,6 +705,7 @@ impl SolidCraftWriter {
         history: &history::History,
         step: &str,
         written: &[u8],
+        progress: Option<&dutchman_core::Progress<'_>>,
     ) -> Result<verify::Outcome, Error> {
         if let Some(why) = self.memory_refusal() {
             return Ok(verify::Outcome::Unverified(why));
@@ -691,7 +718,7 @@ impl SolidCraftWriter {
         if let Some(why) = self.memory_refusal() {
             return Ok(verify::Outcome::Unverified(why));
         }
-        let result = verify::compare(
+        let result = verify::compare_with_progress(
             &cli,
             self.timeout,
             written,
@@ -700,6 +727,12 @@ impl SolidCraftWriter {
                 solids: solid_bodies(model),
                 sheets: sheet_bodies(model),
             },
+            progress,
+            &model.name,
+            dutchman_core::progress_words::history_limit(
+                history.pattern_replay_required,
+                self.keep_unverified_hidden(),
+            ),
         );
         Ok(match result {
             verify::Outcome::Unverified(why) if history.pattern_replay_required => {
@@ -911,15 +944,28 @@ impl SolidCraftWriter {
     /// Opens geometry written as an import in SolidCraft, when a SolidCraft CLI is found, and
     /// reports it as Degraded when SolidCraft shows less of it than the model holds: geometry
     /// that is wrong but opens would otherwise go unnoticed.
-    fn check_import(&self, model: &Model, design: &[u8], report: &mut Report) {
+    fn check_import(
+        &self,
+        model: &Model,
+        design: &[u8],
+        report: &mut Report,
+        progress: Option<&dutchman_core::Progress<'_>>,
+    ) {
         let expected = verify::Expected {
             solids: solid_bodies(model),
             sheets: sheet_bodies(model),
         };
-        self.check_geometry(design, expected, report);
+        self.check_geometry(design, expected, report, progress, &model.name);
     }
 
-    fn check_geometry(&self, design: &[u8], expected: verify::Expected, report: &mut Report) {
+    fn check_geometry(
+        &self,
+        design: &[u8],
+        expected: verify::Expected,
+        report: &mut Report,
+        progress: Option<&dutchman_core::Progress<'_>>,
+        name: &str,
+    ) {
         if let Some(why) = self.memory_refusal() {
             report.push(Severity::Info, HISTORY, why);
             return;
@@ -942,6 +988,14 @@ impl SolidCraftWriter {
             report.push(Severity::Info, HISTORY, why);
             return;
         }
+        let _checking = progress.map(|p| {
+            p.step(
+                dutchman_core::StepKind::CheckingGeometry,
+                Some(name),
+                Some(self.timeout),
+                Some(dutchman_core::progress_words::geometry_limit()),
+            )
+        });
         let shown = verify::check_import(&cli, self.timeout, design, expected);
         if expected.sheets > 0 && !matches!(shown, verify::Shown::Unchecked(_)) {
             report.push_at(
@@ -990,6 +1044,23 @@ impl Writer for SolidCraftWriter {
         out: &mut dyn std::io::Write,
         report: &mut Report,
     ) -> Result<(), Error> {
+        self.write_with_progress(model, out, report, None)
+    }
+
+    fn write_with_progress(
+        &self,
+        model: &Model,
+        out: &mut dyn std::io::Write,
+        report: &mut Report,
+        progress: Option<&dutchman_core::Progress<'_>>,
+    ) -> Result<(), Error> {
+        let _preparing = progress
+            .filter(|_| model.assembly.is_none())
+            .map(|p| p.stage_step(dutchman_core::StepKind::Preparing, Some(&model.name)));
+        #[cfg(debug_assertions)]
+        if model.assembly.is_none() {
+            slow_part(&model.name);
+        }
         report.set_threads(self.threads, 1);
         if empty_assembly(model) {
             report.push(
@@ -1005,13 +1076,13 @@ impl Writer for SolidCraftWriter {
                 .map_err(|err| Error::Encode(format!("cannot write the design: {err}")));
         }
         if let Some(assembly) = &model.assembly {
-            let bytes = assembly::write(self, model, assembly, report)?;
+            let bytes = assembly::write(self, model, assembly, report, progress)?;
             // Each part is placed any number of times, so only SolidCraft's own warnings count.
             let expected = verify::Expected {
                 sheets: placed_sheets(assembly, 0),
                 ..verify::Expected::default()
             };
-            self.check_geometry(&bytes, expected, report);
+            self.check_geometry(&bytes, expected, report, progress, &model.name);
             return out
                 .write_all(&bytes)
                 .map_err(|err| Error::Encode(format!("cannot write the design: {err}")));
@@ -1070,12 +1141,12 @@ impl Writer for SolidCraftWriter {
                     mapping.result = Err(why);
                 }
             }
-            self.prove_blends(model, &mut mapping, &step)?;
+            self.prove_blends(model, &mut mapping, &step, progress)?;
             let mut checked = None;
             if let Ok(history) = &mapping.result {
                 if history.stop.is_none() && !only_stored_geometry(&mapping.features) {
                     let written = self.history_design(model, history, &step, Live::History)?;
-                    checked = Some(self.check(model, history, &step, &written)?);
+                    checked = Some(self.check(model, history, &step, &written, progress)?);
                 }
             }
             let partial_check = if let Some(verify::Outcome::Differs(why)) = &checked {
@@ -1085,9 +1156,10 @@ impl Writer for SolidCraftWriter {
                     &step,
                     Some(format!("replay differs ({why})")),
                     report,
+                    progress,
                 )?)
             } else if mapping.result.as_ref().is_ok_and(|h| h.stop.is_some()) {
-                Some(self.partial(model, &mut mapping, &step, None, report)?)
+                Some(self.partial(model, &mut mapping, &step, None, report, progress)?)
             } else {
                 None
             };
@@ -1142,7 +1214,7 @@ impl Writer for SolidCraftWriter {
                     // Check the visible original separately: hidden editable bodies also
                     // appear in SolidCraft's numerical eval result.
                     let original = self.history_design(model, history, &step, Live::Original)?;
-                    self.check_import(model, &original, report);
+                    self.check_import(model, &original, report, progress);
                     (
                         written,
                         Outcome {
@@ -1239,7 +1311,7 @@ impl Writer for SolidCraftWriter {
             written
         };
         if outcome.mode == Mode::Import {
-            self.check_import(model, &bytes, report);
+            self.check_import(model, &bytes, report, progress);
         }
         report.set_outcome(outcome);
         out.write_all(&bytes)

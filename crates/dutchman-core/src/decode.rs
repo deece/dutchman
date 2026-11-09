@@ -174,6 +174,8 @@ fn decode_unguarded(
     if let Some(progress) = progress {
         progress.stage(Stage::Decode);
     }
+    let reading_name = path.file_name().map(|name| name.to_string_lossy());
+    let reading = progress.map(|p| p.stage_step(crate::StepKind::Reading, reading_name.as_deref()));
     let options = DecodeOptions { depth, policy };
     let decode = || codec.decode(&mut Cursor::new(bytes), &options);
     let members = progress.and_then(|p| p.members.clone()).map(|sink| {
@@ -195,6 +197,7 @@ fn decode_unguarded(
     };
     // Also closes preparation on a refusal before the first member callback.
     drop(members);
+    drop(reading);
     let decoded = decoded.map_err(|err| decode_failure(format, err))?;
     let (mut ir, decode_report, fidelity) = decoded.into_parts();
     // An assembly's geometry is in its parts' files, read afterwards.
@@ -213,6 +216,14 @@ fn decode_unguarded(
     if let Some(progress) = progress {
         progress.stage(Stage::Project);
     }
+    let _projecting = progress.map(|p| {
+        p.step(
+            crate::StepKind::Projecting,
+            reading_name.as_deref(),
+            None,
+            None,
+        )
+    });
     let _validation = Phase::new(
         progress.and_then(|p| p.members.clone()),
         "model_validation",

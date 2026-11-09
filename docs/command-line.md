@@ -199,10 +199,10 @@ blocked one), and the loss report. `inspect --json` prints the same as a
 ## Progress during conversion
 
 `convert`, `convert-all`, `inspect`, and `watch` show the current stage, designs read, and
-elapsed time on stderr, in seconds and, past a minute, also in hours and minutes, such as
+elapsed time, including the running part or stage and its own elapsed time, on stderr, in seconds and, past a minute, also in hours and minutes, such as
 `7261 s (2 h 1 min)`; the desktop app shows the same. A terminal gets one updating line. When stderr is redirected or piped, text mode prints no
 progress, so logs and scripts see only errors and warnings; `--verbose` asks for a line at
-each stage or design completion and a still-working line every five seconds there. `--quiet`
+each stage or design completion and a running-step update every five seconds there. `--quiet`
 suppresses progress everywhere. With `--json`, stderr contains `dutchman.progress/1` JSON lines; stdout
 stays one final report (or the existing watch-event stream for `watch`). Elapsed time starts
 with each file, including a separate assembly's part files.
@@ -215,6 +215,45 @@ Stage ids are `input` (opening the input and finding part files), `decode` (read
 (saving the output). A model-check fallback can return to `decode` to read geometry alone.
 The fallback keeps geometry and assembly structure, and drops history, sketches, parameters and what named them.
 A heartbeat confirms the worker is running; it does not measure decoder activity.
+
+A running step reads **Checking Bracket: 12 s**. Once it takes longer than its usual
+time it reads **Still checking Bracket: 61 s (1 min 1 s)**. This is elapsed time,
+not an estimate of time left. With parallel workers the oldest current step is shown;
+a check takes the place of preparation on its worker until it ends. Completed-read counts
+can stay unchanged while parts are prepared or checked.
+
+Available split reading, conversion and checking estimates supply usual times for whole
+stages, including a named whole-design read or preparation. A whole-file estimate is not
+assigned to each assembly part or selected-part conversion. Without a matching estimate,
+usual-time thresholds are 10 s for opening, checking the decoded model, and writing;
+30 s for reading a design or preparing a part; and 60 s for a target-application check.
+These per-step thresholds apply when the existing whole-file estimates cannot describe an
+individual part or subprocess. They are notices, not deadlines.
+
+SolidCraft's `--verify-timeout` defaults to 120 s per subprocess evaluation. Comparing a
+history with the original can run two evaluations, each with its own clock. The line
+distinguishes **Checking Bracket (original geometry)** and **Checking Bracket (rebuilt
+history)**, so a fresh clock identifies the next evaluation. Blend proofs, retained
+history and converted geometry also identify their check. Blend proofs
+share that budget across their two runs; retained-prefix checking shares it across repair
+attempts. Past a limit the line names the consequence, for example:
+**Bracket passed the 120 s (2 min 0 s) check limit: the check is stopped; history is kept
+unverified**. Writers configured to hide unverified history keep it hidden beside the
+visible import. A pattern that needs replay proof falls back to imported geometry, with
+any retained history kept separately. A timed-out blend proof
+leaves the unproven feature out of the editable history. A timed-out prefix check keeps
+retained history unverified beside the visible import. A geometry check that times
+out keeps the converted geometry unchecked. The final report records the actual outcome.
+
+FreeCAD's `--freecad-timeout` defaults to 300 s for its headless run. A native document
+conversion stops without writing an output document; a macro-only check keeps the macro
+unverified. Reading, mapping and writing have no independent wall-clock limit.
+`convert-all --timeout` is a separate whole-file limit (900 s by default): it stops that
+file's worker and reports failure. The desktop has no practical whole-file timeout. **Stop** starts no further files;
+files already converting finish. Closing the app ends its workers through their parent-exit
+guard. The shared CLI supervisor separately allows a 30 s grace period when a shutdown
+flag is supplied; the desktop does not supply that flag. CLI version queries stop after 3 s; a CLI that gives no version can still be used for
+checks. Memory guards remain independent of these time limits.
 
 Fusion `.f3z` archives are decoded in one call. Member decode attempts can repeat, so
 progress does not infer unique design counts or a percentage from them. Optional

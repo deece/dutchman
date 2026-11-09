@@ -3411,3 +3411,66 @@ fn the_guide_link_names_this_builds_version() {
         "https://github.com/dutchman-cad/dutchman/blob/abc1234/assets/install/AGENTS.md"
     );
 }
+
+#[cfg(feature = "test-support")]
+#[test]
+#[ignore = "renders running-step GPU screenshots; set DUTCHMAN_GUI_SCREENSHOTS"]
+fn running_step_screenshots() {
+    let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
+    std::fs::create_dir_all(&dir).unwrap();
+    for (theme, label) in [
+        (ThemePreference::Light, "Day"),
+        (ThemePreference::Dark, "Night"),
+    ] {
+        for seconds in [0, 61, 120, 121] {
+            let mut harness = screenshot_harness(theme);
+            harness.state_mut().preview_solidcraft(Some("0.30.0"));
+            harness.state_mut().set_checker_for_test(true);
+            harness
+                .state_mut()
+                .preview_running_for_test(dutchman_gui::app::Row {
+                    input: PathBuf::from("Assembly.iam"),
+                    output: None,
+                    status: Status::Converting,
+                    report: None,
+                    job: None,
+                    size: None,
+                    progress: Some(dutchman_core::ProgressEvent {
+                        stage: dutchman_core::Stage::Map,
+                        elapsed_ms: (seconds + 30) * 1000,
+                        designs_read: 261,
+                        designs_total: Some(264),
+                        heartbeat: true,
+                        running: Some(dutchman_core::RunningStep {
+                            kind: dutchman_core::StepKind::CheckingHistory,
+                            name: Some("Bracket".into()),
+                            elapsed_ms: seconds * 1000,
+                            usual_ms: dutchman_core::StepKind::Checking.usual_ms(),
+                            limit_ms: Some(dutchman_solidcraft::DEFAULT_TIMEOUT.as_secs() * 1000),
+                            consequence: Some(
+                                dutchman_core::progress_words::history_limit(false, false).into(),
+                            ),
+                        }),
+                    }),
+                });
+            harness.run_steps(8);
+            let caption = harness
+                .state()
+                .rows()
+                .first()
+                .unwrap()
+                .progress
+                .as_ref()
+                .unwrap()
+                .running_line();
+            assert!(harness.query_by_label(&caption).is_some());
+            assert!(harness.query_by_label("261 of 264 designs read").is_some());
+            assert!(harness.query_by_label("Stop").is_some());
+            harness
+                .render()
+                .unwrap()
+                .save(dir.join(format!("running-{seconds}s-{label}.png")))
+                .unwrap();
+        }
+    }
+}

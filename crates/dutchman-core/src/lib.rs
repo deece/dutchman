@@ -19,6 +19,7 @@ mod part_positions;
 pub mod parts;
 pub mod placement;
 mod progress;
+pub mod progress_words;
 mod refusal;
 pub use part_positions::{PartPositionCounts, PartPositions, PlacementAssumption};
 pub use refusal::{
@@ -38,7 +39,9 @@ pub use error::{CheckFacts, Error, FILE_DID_NOT_CONVERT, RELEASES};
 pub use format::Format;
 pub use locate::{PartSearch, MAX_SEARCHED};
 pub use memory::available_memory;
-pub use progress::{elapsed, MemberEvent, MemberObserver, Progress, ProgressEvent};
+pub use progress::{
+    elapsed, MemberEvent, MemberObserver, Progress, ProgressEvent, RunningStep, StepGuard, StepKind,
+};
 
 /// The neutral model every conversion passes through.
 #[derive(Clone, Debug)]
@@ -149,6 +152,17 @@ pub const MAX_INPUT_BYTES: u64 = 1 << 30;
 /// Encodes the neutral [`Model`] into a target format. This is the plugin seam: a target
 /// (SolidCraft today) implements it and depends on nothing else in Dutchman.
 pub trait Writer {
+    /// Writes with local running-step progress when a frontend requests it.
+    fn write_with_progress(
+        &self,
+        model: &Model,
+        out: &mut dyn std::io::Write,
+        report: &mut Report,
+        _progress: Option<&Progress<'_>>,
+    ) -> Result<(), Error> {
+        self.write(model, out, report)
+    }
+
     /// The file extension this writer produces, without the dot.
     fn extension(&self) -> &'static str;
 
@@ -429,12 +443,15 @@ fn decode_file(
     if let Some(progress) = progress {
         progress.stage(Stage::Input);
     }
+    let input_name = input.file_name().map(|name| name.to_string_lossy());
+    let opening = progress.map(|p| p.step(StepKind::Opening, input_name.as_deref(), None, None));
     names::saw_path(input, report);
     check_input(input)?;
     let bytes = std::fs::read(input).map_err(|source| Error::Io {
         path: input.to_path_buf(),
         source,
     })?;
+    drop(opening);
     decode_bytes(format, input, &bytes, report, progress)
 }
 
@@ -653,8 +670,10 @@ fn convert_impl(
     // Encode in memory so a failed conversion never leaves a partial file behind.
     let mut bytes = Vec::new();
     stage(Stage::Map);
-    writer.write(&model, &mut bytes, &mut report)?;
+    writer.write_with_progress(&model, &mut bytes, &mut report, progress)?;
     stage(Stage::Write);
+    let output_name = output.file_name().map(|name| name.to_string_lossy());
+    let _writing = progress.map(|p| p.step(StepKind::Writing, output_name.as_deref(), None, None));
     write_output(output, &bytes, replace)?;
     Ok(report)
 }

@@ -558,6 +558,15 @@ impl App {
         self.rows = vec![row];
     }
 
+    /// Supplies a held conversion through the normal card renderer, without a worker.
+    #[cfg(feature = "test-support")]
+    pub fn preview_running_for_test(&mut self, row: Row) {
+        self.inputs = vec![row.input.clone()];
+        self.out_dir = Some(PathBuf::from("converted"));
+        self.rows = vec![row];
+        self.run = Some(Run::preview());
+    }
+
     /// The folder this app keeps its run logs in under test.
     #[cfg(feature = "test-support")]
     pub fn diagnostics_folder_for_test(&self) -> Option<&Path> {
@@ -2368,8 +2377,21 @@ fn row_ui(
         });
     }
     if row.status == Status::Converting {
-        if let Some(event) = row.progress {
-            ui.label(event.to_string());
+        if let Some(event) = &row.progress {
+            ui.horizontal_wrapped(|ui| {
+                ui.label(dutchman_core::progress_words::counts(
+                    event.designs_read,
+                    event.designs_total,
+                ));
+                ui.label(
+                    RichText::new(dutchman_core::progress_words::total_elapsed(
+                        event.elapsed_ms,
+                    ))
+                    .small()
+                    .color(p.tide),
+                );
+            });
+            ui.label(event.running_line());
             if let Some(total) = event.designs_total.filter(|total| *total > 0) {
                 ui.add(
                     egui::ProgressBar::new(
@@ -3879,12 +3901,13 @@ mod tests {
                 designs_read: 2,
                 designs_total: total,
                 heartbeat: true,
+                running: None,
             };
             let row = Row {
                 input: PathBuf::from("assembly.f3z"),
                 output: None,
                 status: Status::Converting,
-                progress: Some(event),
+                progress: Some(event.clone()),
                 report: None,
                 job: None,
                 size: None,
@@ -3908,7 +3931,7 @@ mod tests {
                     );
                 });
             harness.run_steps(2);
-            assert!(harness.query_by_label(&event.to_string()).is_some());
+            assert!(harness.query_by_label(&event.running_line()).is_some());
         }
     }
 

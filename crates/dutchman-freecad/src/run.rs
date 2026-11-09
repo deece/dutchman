@@ -164,10 +164,32 @@ impl Writer for FreeCadRunner {
     }
 
     fn write(&self, model: &Model, out: &mut dyn Write, report: &mut Report) -> Result<(), Error> {
+        self.write_with_progress(model, out, report, None)
+    }
+
+    fn write_with_progress(
+        &self,
+        model: &Model,
+        out: &mut dyn Write,
+        report: &mut Report,
+        progress: Option<&dutchman_core::Progress<'_>>,
+    ) -> Result<(), Error> {
         let mut script = Vec::new();
+        let preparing =
+            progress.map(|p| p.stage_step(dutchman_core::StepKind::Preparing, Some(&model.name)));
         self.writer.write(model, &mut script, report)?;
+        drop(preparing);
         if self.save || self.verify {
+            let checking = progress.map(|p| {
+                p.step(
+                    dutchman_core::StepKind::Checking,
+                    Some(&model.name),
+                    Some(self.timeout),
+                    Some(dutchman_core::progress_words::headless_limit(self.save)),
+                )
+            });
             let result = self.execute(&script);
+            drop(checking);
             match result {
                 Ok((check, notes, saved)) => {
                     for note in notes {

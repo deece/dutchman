@@ -95,3 +95,60 @@ fn measure_fixed_reporting_overhead() {
     let micros = |index: usize| samples.get(index).unwrap().as_secs_f64() * 1_000_000.0;
     eprintln!("seven events plus timer startup/shutdown: median={:.3} us, p95={:.3} us, min={:.3} us, max={:.3} us", micros(50), micros(95), micros(0), micros(99));
 }
+
+#[test]
+fn verbose_plain_cli_progress_contains_the_running_part() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../dutchman-core/tests/fixtures/generated_unit_cube.f3d");
+    let local_input = dir.path().join("Bracket.f3d");
+    std::fs::copy(input, &local_input).unwrap();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_dutchman"))
+        .args(["convert", "--verbose", "--no-verify"])
+        .arg(local_input)
+        .arg(dir.path().join("cube.sc"))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Preparing Bracket:"), "{stderr}");
+}
+
+#[cfg(debug_assertions)]
+#[test]
+fn a_debug_slow_part_emits_a_named_heartbeat_through_the_cli() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../dutchman-core/tests/fixtures/generated_unit_cube.f3d");
+    let local_input = dir.path().join("Bracket.f3d");
+    std::fs::copy(input, &local_input).unwrap();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_dutchman"))
+        .args(["convert", "--json", "--no-verify"])
+        .env("DUTCHMAN_TEST_SLOW_PART", "Bracket")
+        .arg(local_input)
+        .arg(dir.path().join("cube.sc"))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let records: Vec<serde_json::Value> = String::from_utf8_lossy(&output.stderr)
+        .lines()
+        .filter_map(|line| serde_json::from_str(line).ok())
+        .collect();
+    assert!(
+        records.iter().any(|v| v["heartbeat"] == true
+            && v["running"]["kind"] == "preparing"
+            && v["running"]["name"] == "Bracket"
+            && v["running"]["elapsed_ms"]
+                .as_u64()
+                .is_some_and(|ms| ms >= 4_000)),
+        "{records:?}"
+    );
+}

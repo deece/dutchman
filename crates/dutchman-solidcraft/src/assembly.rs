@@ -105,6 +105,7 @@ pub(crate) fn write(
     model: &Model,
     assembly: &Assembly,
     report: &mut Report,
+    progress: Option<&dutchman_core::Progress<'_>>,
 ) -> Result<Vec<u8>, Error> {
     // Use the source catalog before mirrored definitions are added or repeats shared.
     for part in dutchman_core::parts::catalog(model) {
@@ -140,8 +141,9 @@ pub(crate) fn write(
             ),
         );
     }
-    let prepared = prepare_parts(writer, assembly, &repeats, report).into_iter();
+    let prepared = prepare_parts(writer, assembly, &repeats, report, progress).into_iter();
     let mut builder = Builder {
+        progress,
         writer,
         prepared,
         container: Container::empty(),
@@ -560,6 +562,7 @@ fn prepare_history(
     writer: &SolidCraftWriter,
     part: &Model,
     step: &str,
+    progress: Option<&dutchman_core::Progress<'_>>,
 ) -> Result<PreparedHistory, Error> {
     let mut part_report = Report::default();
     let mut mapping = history::map_with_sketches(
@@ -573,13 +576,13 @@ fn prepare_history(
             mapping.result = Err(why);
         }
     }
-    writer.prove_blends(part, &mut mapping, step)?;
+    writer.prove_blends(part, &mut mapping, step, progress)?;
     let checked = if let Ok(history) = &mapping.result {
         if history.stop.is_some() {
             None
         } else {
             let written = writer.history_design(part, history, step, Live::History)?;
-            Some(writer.check(part, history, step, &written)?)
+            Some(writer.check(part, history, step, &written, progress)?)
         }
     } else {
         None
@@ -591,9 +594,10 @@ fn prepare_history(
             step,
             Some(format!("replay differs ({why})")),
             &mut part_report,
+            progress,
         )?)
     } else if mapping.result.as_ref().is_ok_and(|h| h.stop.is_some()) {
-        Some(writer.partial(part, &mut mapping, step, None, &mut part_report)?)
+        Some(writer.partial(part, &mut mapping, step, None, &mut part_report, progress)?)
     } else {
         None
     };
@@ -602,7 +606,7 @@ fn prepare_history(
     if let Ok(history) = &mapping.result {
         if history.stop.is_some() {
             let original = writer.history_design(part, history, step, Live::Original)?;
-            writer.check_import(part, &original, &mut part_report);
+            writer.check_import(part, &original, &mut part_report, progress);
         }
     }
     Ok(PreparedHistory {
@@ -613,7 +617,21 @@ fn prepare_history(
     })
 }
 
-fn prepare_part(writer: &SolidCraftWriter, part: &Model) -> Result<PreparedPart, Error> {
+fn prepare_part(
+    writer: &SolidCraftWriter,
+    part: &Model,
+    progress: Option<&dutchman_core::Progress<'_>>,
+) -> Result<PreparedPart, Error> {
+    let _preparing = progress.map(|p| {
+        p.step(
+            dutchman_core::StepKind::Preparing,
+            Some(&part.name),
+            None,
+            None,
+        )
+    });
+    #[cfg(debug_assertions)]
+    crate::slow_part(&part.name);
     let mut report = Report::default();
     let step = if part.ir.model.bodies.is_empty() {
         None
@@ -621,7 +639,7 @@ fn prepare_part(writer: &SolidCraftWriter, part: &Model) -> Result<PreparedPart,
         Some(step::restate(part, &mut report)?)
     };
     let history = match &step {
-        Some(step) if !writer.import_only => Some(prepare_history(writer, part, step)?),
+        Some(step) if !writer.import_only => Some(prepare_history(writer, part, step, progress)?),
         _ => None,
     };
     let references = if step.is_some() && writer.import_only && writer.sketches {
@@ -644,6 +662,7 @@ fn prepare_parts(
     assembly: &Assembly,
     repeats: &BTreeMap<PartPath, PartPath>,
     report: &mut Report,
+    progress: Option<&dutchman_core::Progress<'_>>,
 ) -> Vec<Option<PreparedPart>> {
     if writer.threads == 1 {
         report.set_threads(1, 1);
@@ -708,12 +727,13 @@ fn prepare_parts(
         if let Some(hook) = writer.prepare_hook {
             hook(part);
         }
-        prepare_part(writer, part)
+        prepare_part(writer, part, progress)
     })
 }
 
 /// The design's components, occurrences and Import features as they are built.
 struct Builder<'r> {
+    progress: Option<&'r dutchman_core::Progress<'r>>,
     prepared: std::vec::IntoIter<Option<PreparedPart>>,
     writer: &'r SolidCraftWriter,
     container: Container,
@@ -1074,11 +1094,23 @@ impl Builder<'_> {
     /// geometry SolidCraft cannot show and is left out. A part with no bodies at all, as a
     /// component empty in its source, becomes an empty component, so joints to it still hold.
     fn part(&mut self, part: &Model, parent: u64) -> Result<Option<(u64, String)>, Error> {
+        let _preparing = self.progress.map(|p| {
+            p.step(
+                dutchman_core::StepKind::Preparing,
+                Some(&part.name),
+                None,
+                None,
+            )
+        });
         let prepared = if part.assembly.is_none() {
             self.prepared.next().flatten()
         } else {
             None
         };
+        #[cfg(debug_assertions)]
+        if prepared.is_none() && part.assembly.is_none() {
+            crate::slow_part(&part.name);
+        }
         let mut prepared_history = None;
         let mut prepared_references = None;
         let step = match prepared {
@@ -1203,7 +1235,7 @@ impl Builder<'_> {
             partial_check,
         } = match prepared {
             Some(prepared) => prepared,
-            None => prepare_history(self.writer, part, step)?,
+            None => prepare_history(self.writer, part, step, self.progress)?,
         };
         self.outcomes
             .extend(mapping.features.iter().cloned().map(|mut feature| {
@@ -1695,9 +1727,28 @@ mod prepare_tests {
             .unwrap();
         let mut actual = Vec::new();
         let mut actual_report = Report::default();
+        let events = std::sync::Mutex::new(Vec::new());
+        let callback = |event| events.lock().unwrap().push(event);
+        let progress = dutchman_core::Progress::new(&callback);
         parallel
-            .write(&model, &mut actual, &mut actual_report)
+            .write_with_progress(&model, &mut actual, &mut actual_report, Some(&progress))
             .unwrap();
+        let events = events.into_inner().unwrap();
+        assert!(events
+            .iter()
+            .any(|event| event
+                .running
+                .as_ref()
+                .is_some_and(|step| step.name.as_deref() == Some("Forced panic")
+                    && step.kind == dutchman_core::StepKind::Preparing)));
+        assert!(events
+            .last()
+            .unwrap()
+            .running
+            .as_ref()
+            .unwrap()
+            .name
+            .is_none());
         assert_eq!(expected, actual);
         assert_eq!(actual_report.threads(), Some((4, 2)));
         let mut automatic = Vec::new();

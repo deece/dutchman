@@ -938,6 +938,7 @@ fn newest_cli(
 /// geometry live), whose model has `solids` solid bodies. When SolidCraft opens the original
 /// unsoundly (solids without a volume, bodies inside out), there is nothing sound to compare
 /// with, and a replay that runs is kept unverified, saying why.
+#[cfg(test)]
 pub(crate) fn compare(
     cli: &Path,
     timeout: Duration,
@@ -945,6 +946,43 @@ pub(crate) fn compare(
     original: &[u8],
     bodies: Expected,
 ) -> Outcome {
+    compare_with_progress(
+        cli,
+        timeout,
+        history,
+        original,
+        bodies,
+        None,
+        "design",
+        dutchman_core::progress_words::history_limit(false, false),
+    )
+}
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn compare_with_progress(
+    cli: &Path,
+    timeout: Duration,
+    history: &[u8],
+    original: &[u8],
+    bodies: Expected,
+    progress: Option<&dutchman_core::Progress<'_>>,
+    part: &str,
+    consequence: &str,
+) -> Outcome {
+    let evaluate = |cli: &Path, timeout: Duration, dir: &Path, name: &str, design: &[u8]| {
+        let _checking = progress.map(|p| {
+            p.step(
+                if name == "original" {
+                    dutchman_core::StepKind::CheckingOriginal
+                } else {
+                    dutchman_core::StepKind::CheckingHistory
+                },
+                Some(part),
+                Some(timeout),
+                Some(consequence),
+            )
+        });
+        evaluate(cli, timeout, dir, name, design)
+    };
     let dir = match tempfile::tempdir() {
         Ok(dir) => dir,
         Err(err) => return Outcome::Unverified(format!("no scratch folder: {err}")),
@@ -2494,6 +2532,81 @@ mod cli_tests {
                 ..Expected::default()
             },
         )
+    }
+
+    #[test]
+    fn comparing_original_and_history_labels_the_two_evaluation_clocks() {
+        let _turn = crate::testing::scripts();
+        let dir = tempfile::tempdir().unwrap();
+        let cli = fake_cli(dir.path(), &eval(1000.0, "null"));
+        let events = std::sync::Mutex::new(Vec::new());
+        let callback = |event| events.lock().unwrap().push(event);
+        let progress = dutchman_core::Progress::new(&callback);
+        assert_eq!(
+            compare_with_progress(
+                &cli,
+                DEFAULT_TIMEOUT,
+                b"history",
+                b"original",
+                Expected::default(),
+                Some(&progress),
+                "Bracket",
+                dutchman_core::progress_words::history_limit(false, false),
+            ),
+            Outcome::Matches
+        );
+        let events = events.into_inner().unwrap();
+        for (kind, label) in [
+            (
+                dutchman_core::StepKind::CheckingOriginal,
+                "original geometry",
+            ),
+            (dutchman_core::StepKind::CheckingHistory, "rebuilt history"),
+        ] {
+            assert!(events.iter().any(|event| event
+                .running
+                .as_ref()
+                .is_some_and(|step| step.kind == kind && step.name.as_deref() == Some("Bracket"))
+                && event.running_line().contains(label)));
+        }
+    }
+
+    #[test]
+    fn timeout_reports_the_part_and_the_unverified_outcome_before_step_ends() {
+        let _turn = crate::testing::scripts();
+        let dir = tempfile::tempdir().unwrap();
+        let cli = fake_cli(dir.path(), "exec sleep 2");
+        let events = std::sync::Mutex::new(Vec::new());
+        let callback = |event| events.lock().unwrap().push(event);
+        let progress = dutchman_core::Progress::new(&callback);
+        let outcome = compare_with_progress(
+            &cli,
+            Duration::from_millis(20),
+            b"history",
+            b"original",
+            Expected::default(),
+            Some(&progress),
+            "Bracket",
+            dutchman_core::progress_words::history_limit(false, true),
+        );
+        assert!(matches!(outcome, Outcome::Unverified(why) if why.contains("timed out")));
+        let events = events.into_inner().unwrap();
+        assert!(events.iter().any(|e| e
+            .running
+            .as_ref()
+            .is_some_and(|s| s.name.as_deref() == Some("Bracket")
+                && s.kind == dutchman_core::StepKind::CheckingOriginal
+                && s.elapsed_ms >= 20)
+            && e.running_line()
+                .contains("history is kept unverified and hidden beside the imported geometry")));
+        assert!(events
+            .last()
+            .unwrap()
+            .running
+            .as_ref()
+            .unwrap()
+            .name
+            .is_none());
     }
 
     #[test]

@@ -66,6 +66,16 @@ pub struct Run {
     stop: Arc<AtomicBool>,
 }
 
+#[cfg(feature = "test-support")]
+impl Run {
+    /// A held run for injected progress screenshots; starts no worker.
+    pub(crate) fn preview() -> Self {
+        Self {
+            stop: Arc::new(AtomicBool::new(false)),
+        }
+    }
+}
+
 /// Set by tests, whose own program is not a converter, so they convert here instead.
 static IN_PROCESS: AtomicBool = AtomicBool::new(cfg!(test));
 

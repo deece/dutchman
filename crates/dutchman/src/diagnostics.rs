@@ -563,9 +563,9 @@ pub(crate) fn run(
             return crate::json::failure(crate::json::CONVERT, crate::json::input(input), &message);
         }
     };
-    let callback = |event| {
+    let callback = |event: ProgressEvent| {
         if let Some(log) = &log {
-            log.progress(event);
+            log.progress(event.clone());
         }
         progress(event);
     };

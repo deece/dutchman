@@ -1,4 +1,4 @@
-//! Coarse conversion progress. No work is done per geometry entity.
+//! Stage and scoped running-step progress. No work is done per geometry entity.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use crate::Stage;
 
 /// A snapshot of one conversion, independent of its final report.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProgressEvent {
     pub stage: Stage,
     pub elapsed_ms: u64,
@@ -15,29 +15,148 @@ pub struct ProgressEvent {
     /// Unknown when the decoder owns the document loop or discovery is still running.
     pub designs_total: Option<u64>,
     pub heartbeat: bool,
+    pub running: Option<RunningStep>,
 }
 
 impl std::fmt::Display for ProgressEvent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let stage = match self.stage {
-            Stage::Input => "Opening input",
-            Stage::Decode => "Reading geometry and history",
-            Stage::Project => "Checking the decoded model",
-            Stage::Map => "Building and checking the output design",
-            Stage::Write => "Saving the output",
-            Stage::SolidCraft => "Checking in SolidCraft",
-        };
-        write!(f, "{stage}")?;
-        if let Some(total) = self.designs_total {
-            write!(f, "; {} of {total} designs read", self.designs_read)?;
-        } else if self.designs_read > 0 {
-            write!(f, "; {} designs read", self.designs_read)?;
+        write!(f, "{}", super::progress_words::summary(self))
+    }
+}
+
+/// Default usual-time thresholds for work without a matching estimate.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StepKind {
+    Opening,
+    Reading,
+    Preparing,
+    Checking,
+    CheckingOriginal,
+    CheckingHistory,
+    CheckingBlends,
+    CheckingPrefix,
+    CheckingGeometry,
+    Writing,
+    Projecting,
+}
+impl StepKind {
+    pub const ALL: [Self; 11] = [
+        Self::Opening,
+        Self::Reading,
+        Self::Preparing,
+        Self::Checking,
+        Self::CheckingOriginal,
+        Self::CheckingHistory,
+        Self::CheckingBlends,
+        Self::CheckingPrefix,
+        Self::CheckingGeometry,
+        Self::Writing,
+        Self::Projecting,
+    ];
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Opening => "opening",
+            Self::Reading => "reading",
+            Self::Preparing => "preparing",
+            Self::Checking => "checking",
+            Self::CheckingOriginal => "checking_original",
+            Self::CheckingHistory => "checking_history",
+            Self::CheckingBlends => "checking_blends",
+            Self::CheckingPrefix => "checking_prefix",
+            Self::CheckingGeometry => "checking_geometry",
+            Self::Writing => "writing",
+            Self::Projecting => "projecting",
         }
-        write!(f, "; {} elapsed", elapsed(self.elapsed_ms / 1000))?;
-        if self.heartbeat {
-            write!(f, "; still working")?;
+    }
+    pub fn usual_ms(self) -> u64 {
+        match self {
+            Self::Opening | Self::Writing | Self::Projecting => 10_000,
+            Self::Reading | Self::Preparing => 30_000,
+            Self::Checking
+            | Self::CheckingOriginal
+            | Self::CheckingHistory
+            | Self::CheckingBlends
+            | Self::CheckingPrefix
+            | Self::CheckingGeometry => 60_000,
         }
-        Ok(())
+    }
+    pub(crate) fn is_check(self) -> bool {
+        matches!(
+            self,
+            Self::Checking
+                | Self::CheckingOriginal
+                | Self::CheckingHistory
+                | Self::CheckingBlends
+                | Self::CheckingPrefix
+                | Self::CheckingGeometry
+        )
+    }
+    fn stage(stage: Stage) -> Self {
+        match stage {
+            Stage::Input => Self::Opening,
+            Stage::Decode => Self::Reading,
+            Stage::Project => Self::Projecting,
+            Stage::Map => Self::Preparing,
+            Stage::Write => Self::Writing,
+            Stage::SolidCraft => Self::Checking,
+        }
+    }
+}
+/// Names are private local display text. Anonymous sinks must never serialize this record.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RunningStep {
+    pub kind: StepKind,
+    pub name: Option<String>,
+    pub elapsed_ms: u64,
+    pub usual_ms: u64,
+    pub limit_ms: Option<u64>,
+    /// Fixed consequence text, supplied by the owner of the limit.
+    pub consequence: Option<String>,
+}
+impl ProgressEvent {
+    pub fn running_line(&self) -> String {
+        match &self.running {
+            Some(step) => super::progress_words::running(step),
+            None => super::progress_words::running(&RunningStep {
+                kind: StepKind::stage(self.stage),
+                name: None,
+                elapsed_ms: self.elapsed_ms,
+                usual_ms: StepKind::stage(self.stage).usual_ms(),
+                limit_ms: None,
+                consequence: None,
+            }),
+        }
+    }
+}
+struct ActiveStep {
+    id: u64,
+    thread: std::thread::ThreadId,
+    started: Instant,
+    step: RunningStep,
+}
+/// Ends a step on every return path, including unwinding.
+pub struct StepGuard<'p, 'a> {
+    progress: &'p Progress<'a>,
+    id: u64,
+}
+impl Drop for StepGuard<'_, '_> {
+    fn drop(&mut self) {
+        let passed_limit = self.progress.steps.lock().is_ok_and(|steps| {
+            steps.iter().any(|s| {
+                s.id == self.id
+                    && s.step
+                        .limit_ms
+                        .is_some_and(|limit| s.started.elapsed().as_millis() >= u128::from(limit))
+            })
+        });
+        // Preserve a timeout consequence even when the operation ends between heartbeats.
+        if passed_limit {
+            self.progress.emit(None, false, false);
+        }
+        if let Ok(mut steps) = self.progress.steps.lock() {
+            steps.retain(|s| s.id != self.id);
+        }
+        self.progress.emit(None, false, false);
     }
 }
 
@@ -91,6 +210,10 @@ pub struct Progress<'a> {
     pub(crate) members: Option<Arc<dyn MemberObserver>>,
     started: Instant,
     stage: Mutex<Stage>,
+    stage_started: Mutex<Instant>,
+    steps: Mutex<Vec<ActiveStep>>,
+    next_step: AtomicU64,
+    stage_usual: Vec<(StepKind, u64)>,
     read: AtomicU64,
     total: AtomicU64,
     callback: &'a (dyn Fn(ProgressEvent) + Send + Sync),
@@ -102,15 +225,86 @@ impl<'a> Progress<'a> {
             members: None,
             started: Instant::now(),
             stage: Mutex::new(Stage::Input),
+            stage_started: Mutex::new(Instant::now()),
+            steps: Mutex::new(Vec::new()),
+            next_step: AtomicU64::new(0),
+            stage_usual: Vec::new(),
             read: AtomicU64::new(0),
             total: AtomicU64::new(u64::MAX),
             callback,
         }
     }
 
+    /// Whole-stage estimates apply to whole-design work, never individual assembly parts.
+    pub fn with_stage_estimates(mut self, estimates: &[(StepKind, u64)]) -> Self {
+        self.stage_usual = estimates.to_vec();
+        self
+    }
+
     pub fn with_members(mut self, members: Option<Arc<dyn MemberObserver>>) -> Self {
         self.members = members;
         self
+    }
+
+    pub fn step(
+        &self,
+        kind: StepKind,
+        name: Option<&str>,
+        limit: Option<Duration>,
+        consequence: Option<&str>,
+    ) -> StepGuard<'_, 'a> {
+        self.start_step(kind, name, limit, consequence, kind.usual_ms())
+    }
+
+    /// Whole-design work may carry its name while using the existing stage estimate.
+    /// Separate assembly members retain their own per-design threshold.
+    pub fn stage_step(&self, kind: StepKind, name: Option<&str>) -> StepGuard<'_, 'a> {
+        let usual_ms = if kind == StepKind::Reading && self.read.load(Ordering::Relaxed) > 0 {
+            kind.usual_ms()
+        } else {
+            self.stage_usual(kind)
+        };
+        self.start_step(kind, name, None, None, usual_ms)
+    }
+
+    fn stage_usual(&self, kind: StepKind) -> u64 {
+        self.stage_usual
+            .iter()
+            .find(|(candidate, _)| *candidate == kind)
+            .map_or_else(|| kind.usual_ms(), |(_, ms)| *ms)
+    }
+
+    fn start_step(
+        &self,
+        kind: StepKind,
+        name: Option<&str>,
+        limit: Option<Duration>,
+        consequence: Option<&str>,
+        usual_ms: u64,
+    ) -> StepGuard<'_, 'a> {
+        let id = self.next_step.fetch_add(1, Ordering::Relaxed);
+        if let Ok(mut steps) = self.steps.lock() {
+            steps.push(ActiveStep {
+                id,
+                thread: std::thread::current().id(),
+                started: Instant::now(),
+                step: RunningStep {
+                    kind,
+                    name: name.map(|name| {
+                        name.chars()
+                            .take(240)
+                            .map(|c| if c.is_control() { ' ' } else { c })
+                            .collect()
+                    }),
+                    elapsed_ms: 0,
+                    usual_ms,
+                    limit_ms: limit.map(|d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX)),
+                    consequence: consequence.map(str::to_owned),
+                },
+            });
+        }
+        self.emit(None, false, false);
+        StepGuard { progress: self, id }
     }
 
     pub fn stage(&self, stage: Stage) {
@@ -137,6 +331,9 @@ impl<'a> Progress<'a> {
         if let Ok(mut stage) = self.stage.lock() {
             if let Some(next) = next {
                 *stage = next;
+                if let Ok(mut started) = self.stage_started.lock() {
+                    *started = Instant::now();
+                }
             }
             // Counted under the lock, so a load and a store cannot lose a completion.
             if completed {
@@ -150,6 +347,41 @@ impl<'a> Progress<'a> {
                 designs_read: self.read.load(Ordering::Relaxed),
                 designs_total: (total != u64::MAX).then_some(total),
                 heartbeat,
+                running: self
+                    .steps
+                    .lock()
+                    .ok()
+                    .and_then(|steps| {
+                        // Only the innermost step on each worker is currently running.
+                        steps
+                            .iter()
+                            .filter(|s| {
+                                !steps
+                                    .iter()
+                                    .any(|other| other.thread == s.thread && other.id > s.id)
+                            })
+                            .min_by_key(|s| s.started)
+                            .map(|s| {
+                                let mut step = s.step.clone();
+                                step.elapsed_ms = u64::try_from(s.started.elapsed().as_millis())
+                                    .unwrap_or(u64::MAX);
+                                step
+                            })
+                    })
+                    .or_else(|| {
+                        Some(RunningStep {
+                            kind: StepKind::stage(*stage),
+                            name: None,
+                            elapsed_ms: self
+                                .stage_started
+                                .lock()
+                                .map(|s| u64::try_from(s.elapsed().as_millis()).unwrap_or(u64::MAX))
+                                .unwrap_or(0),
+                            usual_ms: self.stage_usual(StepKind::stage(*stage)),
+                            limit_ms: None,
+                            consequence: None,
+                        })
+                    }),
             });
         }
     }
@@ -238,5 +470,107 @@ mod elapsed_tests {
         assert_eq!(elapsed(125), "125 s (2 min 5 s)");
         assert_eq!(elapsed(7261), "7261 s (2 h 1 min)");
         assert_eq!(elapsed(3600), "3600 s (1 h 0 min)");
+    }
+}
+
+#[cfg(test)]
+mod running_tests {
+    use super::*;
+
+    #[test]
+    fn stage_estimates_do_not_become_each_parts_usual_duration() {
+        let saved = Mutex::new(None);
+        let callback = |event| *saved.lock().unwrap() = Some(event);
+        let progress = Progress::new(&callback)
+            .with_stage_estimates(&[(StepKind::Preparing, 240_000), (StepKind::Reading, 90_000)]);
+        let usual = || {
+            saved
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .running
+                .as_ref()
+                .unwrap()
+                .usual_ms
+        };
+        progress.stage(Stage::Map);
+        assert_eq!(usual(), 240_000);
+        let whole = progress.stage_step(StepKind::Preparing, Some("Assembly"));
+        assert_eq!(usual(), 240_000);
+        let part = progress.step(StepKind::Preparing, Some("Bracket"), None, None);
+        assert_eq!(usual(), 30_000);
+        drop(part);
+        drop(whole);
+        let root = progress.stage_step(StepKind::Reading, Some("Assembly.iam"));
+        assert_eq!(usual(), 90_000);
+        drop(root);
+        progress.design_read();
+        let _member = progress.stage_step(StepKind::Reading, Some("Bracket.ipt"));
+        assert_eq!(usual(), 30_000);
+    }
+
+    #[test]
+    fn heartbeat_identifies_a_slow_part_and_guard_finishes_it() {
+        let (send, receive) = mpsc::channel();
+        let callback = |event| {
+            send.send(event).unwrap();
+        };
+        let progress = Progress::new(&callback);
+        let step = progress.step(StepKind::Preparing, Some("Bracket"), None, None);
+        receive.recv().unwrap();
+        progress.run_every(Duration::from_millis(15), || {
+            let event = receive.recv_timeout(Duration::from_secs(2)).unwrap();
+            assert!(event.heartbeat);
+            let running = event.running.as_ref().unwrap();
+            assert_eq!(running.name.as_deref(), Some("Bracket"));
+            assert_eq!(running.kind, StepKind::Preparing);
+            assert!(running.elapsed_ms >= 15);
+            assert!(event.to_string().contains("Preparing Bracket"));
+        });
+        drop(step);
+        assert!(receive
+            .try_iter()
+            .last()
+            .unwrap()
+            .running
+            .unwrap()
+            .name
+            .is_none());
+    }
+
+    #[test]
+    fn longest_current_worker_wins_and_nested_check_replaces_preparation() {
+        let events = Mutex::new(Vec::new());
+        let callback = |event| events.lock().unwrap().push(event);
+        let progress = Progress::new(&callback);
+        let _outer = progress.step(StepKind::Preparing, Some("Bracket"), None, None);
+        let check = progress.step(StepKind::Checking, Some("Bracket"), None, None);
+        std::thread::scope(|scope| {
+            scope
+                .spawn(|| {
+                    let _newer = progress.step(StepKind::Preparing, Some("Pin"), None, None);
+                    progress.heartbeat();
+                    let events = events.lock().unwrap();
+                    let current = events.last().unwrap().running.as_ref().unwrap();
+                    assert_eq!(current.kind, StepKind::Checking);
+                    assert_eq!(current.name.as_deref(), Some("Bracket"));
+                })
+                .join()
+                .unwrap();
+        });
+        drop(check);
+        assert_eq!(
+            events
+                .lock()
+                .unwrap()
+                .last()
+                .unwrap()
+                .running
+                .as_ref()
+                .unwrap()
+                .kind,
+            StepKind::Preparing
+        );
     }
 }

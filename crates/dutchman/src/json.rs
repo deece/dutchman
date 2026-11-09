@@ -763,6 +763,7 @@ pub fn progress(input: &Path, event: dutchman_core::ProgressEvent) -> Value {
         "stage": event.stage.id(), "elapsed_ms": event.elapsed_ms,
         "designs_read": event.designs_read, "designs_total": event.designs_total,
         "heartbeat": event.heartbeat,
+        "running": event.running.as_ref().map(|s| json!({"kind": s.kind.id(), "name": s.name, "elapsed_ms": s.elapsed_ms, "usual_ms": s.usual_ms, "limit_ms": s.limit_ms, "consequence": s.consequence})),
     })
 }
 
@@ -778,6 +779,24 @@ pub(crate) fn parse_progress(value: &Value) -> Option<dutchman_core::ProgressEve
         designs_read: value.get("designs_read")?.as_u64()?,
         designs_total: value.get("designs_total")?.as_u64(),
         heartbeat: value.get("heartbeat")?.as_bool()?,
+        running: value
+            .get("running")
+            .filter(|v| v.is_object())
+            .and_then(|v| {
+                Some(dutchman_core::RunningStep {
+                    kind: dutchman_core::StepKind::ALL
+                        .into_iter()
+                        .find(|k| Some(k.id()) == v.get("kind").and_then(Value::as_str))?,
+                    name: v.get("name").and_then(Value::as_str).map(str::to_owned),
+                    elapsed_ms: v.get("elapsed_ms")?.as_u64()?,
+                    usual_ms: v.get("usual_ms")?.as_u64()?,
+                    limit_ms: v.get("limit_ms").and_then(Value::as_u64),
+                    consequence: v
+                        .get("consequence")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned),
+                })
+            }),
     })
 }
 
@@ -1623,5 +1642,28 @@ mod compact_loss_tests {
         notes.push(json!({"level":"Info", "subject":"other.f3d: history", "message":"No feature history was decoded."}));
         assert_eq!(loss_lines(&notes, false).len(), 3);
         assert_eq!(notes[0], repeated);
+    }
+}
+
+#[cfg(test)]
+mod running_progress_tests {
+    use super::*;
+    #[test]
+    fn running_progress_roundtrips_and_accepts_older_workers() {
+        let saved = std::sync::Mutex::new(None);
+        let callback = |event| *saved.lock().unwrap() = Some(event);
+        let reporter = dutchman_core::Progress::new(&callback);
+        let _step = reporter.step(
+            dutchman_core::StepKind::Checking,
+            Some("Bracket"),
+            Some(std::time::Duration::from_secs(120)),
+            Some(dutchman_core::progress_words::geometry_limit()),
+        );
+        let event = saved.lock().unwrap().clone().unwrap();
+        let mut record = progress(Path::new("assembly.iam"), event.clone());
+        assert_eq!(record["schema"], "dutchman.progress/1");
+        assert_eq!(parse_progress(&record), Some(event));
+        record.as_object_mut().unwrap().remove("running");
+        assert!(parse_progress(&record).unwrap().running.is_none());
     }
 }

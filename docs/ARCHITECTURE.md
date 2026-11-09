@@ -75,6 +75,12 @@ The default `accepts_extension` checks the writer's extension case-insensitively
 SolidCraft adapter also accepts legacy `.solidcraft` and `.solvecraft` names. Its default
 extension follows the same target version gates as feature mapping.
 
+`Writer::write_with_progress` is an optional default method that delegates to `write`.
+Writers that report named work receive the conversion's shared `Progress` explicitly,
+including on scoped part workers. Running-step guards end on drop. A snapshot selects
+the oldest innermost step per worker; names remain local presentation data. Anonymous
+logging keeps its existing stage/count allowlist and never serializes these snapshots.
+
 The SolidCraft adapter depends only on this trait, CADIR and the SolidCraft file format.
 When SolidCraft grows a plugin interface, a small shim crate implements that interface by
 calling `dutchman-core` to decode and `dutchman-solidcraft` to build the design (or hands the
@@ -488,3 +494,8 @@ controls reference sketches and joints independently; FreeCAD honours history on
 The history mapper reads CADIR wire versions 6 through 11. Version 11 includes the
 fragment and reproduction contract; complete documents continue through the same
 history mapping and feature checks. Unknown later versions remain refused.
+
+Debug builds accept `DUTCHMAN_TEST_SLOW_PART=<design name>` to hold one named part's
+preparation for six seconds, long enough for a real five-second heartbeat. Release builds
+do not read it. The running-step GUI screenshot case uses injected snapshots at 0 s,
+61 s, 120 s and 121 s through the normal card renderer in both themes.

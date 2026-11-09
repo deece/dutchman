@@ -104,6 +104,16 @@ impl Writer for OutputWriter {
         out: &mut dyn std::io::Write,
         report: &mut Report,
     ) -> Result<(), Error> {
+        self.write_with_progress(model, out, report, None)
+    }
+
+    fn write_with_progress(
+        &self,
+        model: &Model,
+        out: &mut dyn std::io::Write,
+        report: &mut Report,
+        progress: Option<&dutchman_core::Progress<'_>>,
+    ) -> Result<(), Error> {
         // Tests make the writer fail on one named part, to see the rest carry on; release
         // builds have no such switch.
         #[cfg(debug_assertions)]
@@ -111,9 +121,9 @@ impl Writer for OutputWriter {
             return Err(Error::Restate("injected failure".into()));
         }
         match self {
-            Self::Configured { writer, .. } => writer.write(model, out, report),
-            Self::SolidCraft(writer) => writer.write(model, out, report),
-            Self::FreeCad(writer) => writer.write(model, out, report),
+            Self::Configured { writer, .. } => writer.write_with_progress(model, out, report, progress),
+            Self::SolidCraft(writer) => writer.write_with_progress(model, out, report, progress),
+            Self::FreeCad(writer) => writer.write_with_progress(model, out, report, progress),
             Self::Dxf => Err(Error::Encode("DXF page output uses dutchman convert --to dxf; convert-all and the single-file Writer are not supported yet".into())),
         }
     }
@@ -349,6 +359,7 @@ impl ConvertOptions {
 /// A writer with the history decision fixed before decoding.
 #[derive(Clone, Debug)]
 pub struct PreparedWriter {
+    usual_stages: Vec<(dutchman_core::StepKind, u64)>,
     writer: OutputWriter,
     /// Geometry only, for Standard when what the read really took leaves no room for history.
     without_history: Option<OutputWriter>,
@@ -375,6 +386,16 @@ impl Writer for PreparedWriter {
         out: &mut dyn std::io::Write,
         report: &mut Report,
     ) -> Result<(), Error> {
+        self.write_with_progress(model, out, report, None)
+    }
+
+    fn write_with_progress(
+        &self,
+        model: &Model,
+        out: &mut dyn std::io::Write,
+        report: &mut Report,
+        progress: Option<&dutchman_core::Progress<'_>>,
+    ) -> Result<(), Error> {
         dutchman_solidcraft::watch_check_memory(self.check_history_memory);
         let (held, available) = if self.memory_stop || self.check_history_memory {
             measured_memory()
@@ -391,7 +412,7 @@ impl Writer for PreparedWriter {
                     "history",
                     format!("feature history left out: {message}; use the full preset to keep it"),
                 );
-                return writer.write(model, out, report);
+                return writer.write_with_progress(model, out, report, progress);
             }
         }
         if let Some(note) = &self.memory_note {
@@ -402,14 +423,15 @@ impl Writer for PreparedWriter {
                 (&self.writer, self.history_check_bytes)
             {
                 let writer = writer.clone().history_check_memory(needed, available);
-                writer.write(model, out, report)?;
+                writer.write_with_progress(model, out, report, progress)?;
                 if let Some((needed, available)) = writer.history_check_skipped() {
                     record_history_check_skip(report, needed, available);
                 }
                 return Ok(());
             }
         }
-        self.writer.write(model, out, report)
+        self.writer
+            .write_with_progress(model, out, report, progress)
     }
 }
 
@@ -477,7 +499,31 @@ impl ConvertOptions {
                 }
                 .output_writer()
             });
+        let estimates = choices::read_sizes(input)
+            .and_then(|sizes| choices::desktop_estimate_parts(sizes, &options, !options.no_verify));
+        let mut usual_stages = Vec::new();
+        if let Some(estimates) = estimates {
+            if let Some(split) = estimates.split {
+                usual_stages.push((
+                    dutchman_core::StepKind::Reading,
+                    split.read.seconds.saturating_mul(1000),
+                ));
+                if options.part.is_none() {
+                    usual_stages.push((
+                        dutchman_core::StepKind::Preparing,
+                        split.convert.seconds.saturating_mul(1000),
+                    ));
+                }
+            }
+            if let Some(check) = estimates.check {
+                usual_stages.push((
+                    dutchman_core::StepKind::Checking,
+                    check.seconds.saturating_mul(1000),
+                ));
+            }
+        }
         PreparedWriter {
+            usual_stages,
             writer: options.output_writer(),
             without_history,
             memory_note,
@@ -546,6 +592,7 @@ pub(crate) fn convert_options_with_observer(
         };
         let prepared = options.preflight(input, available);
         let progress = dutchman_core::Progress::new(callback)
+            .with_stage_estimates(&prepared.usual_stages)
             .with_members(log.map(diagnostics::Log::observer).or(observer));
         convert_prepared(input, output, options, replace, search, &progress, prepared)
     })
