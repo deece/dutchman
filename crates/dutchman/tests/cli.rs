@@ -3185,6 +3185,9 @@ fn diagnose_stops_a_part_over_its_time_limit_and_carries_on() {
     let (target, _) = leaf_part(&report, &names);
     let dir = tempfile::tempdir().unwrap();
     let started = std::time::Instant::now();
+    // Far above any real part's time, even on a slow shared runner, so only the hang (an
+    // hour) reaches it: with 1 s, a busy Windows runner timed out a real part too.
+    let limit = 15;
     let out = dutchman_with(
         &[
             "diagnose",
@@ -3192,7 +3195,7 @@ fn diagnose_stops_a_part_over_its_time_limit_and_carries_on() {
             "--out",
             dir.path().to_str().unwrap(),
             "--time-limit",
-            "1",
+            &limit.to_string(),
         ],
         &[("DUTCHMAN_DIAGNOSE_TEST_FAULT", &format!("{target}:hang"))],
     );
@@ -3208,11 +3211,11 @@ fn diagnose_stops_a_part_over_its_time_limit_and_carries_on() {
     assert_eq!(parts[0]["part"], target);
     assert_eq!(parts[0]["outcome"], "timed_out");
     assert_eq!(parts[0]["stage"], "map");
-    assert!(parts[0]["time_ms"].as_u64().unwrap() >= 1000);
-    assert_eq!(report["summary"]["timed_out"], 1);
+    assert!(parts[0]["time_ms"].as_u64().unwrap() >= limit * 1000);
+    assert_eq!(report["summary"]["timed_out"], 1, "{report}");
     assert_eq!(report["summary"]["restarts"], 1);
     assert_eq!(report["summary"]["not_run"], 0);
-    assert_eq!(report["limits"]["time_limit_s"], 1.0);
+    assert_eq!(report["limits"]["time_limit_s"], limit as f64);
     // Every other part still got its turn after the converter was started again.
     assert!(parts[1..]
         .iter()
