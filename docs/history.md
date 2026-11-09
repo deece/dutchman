@@ -219,8 +219,9 @@ none of the selected regions are written as construction, so they do not divide 
 counts them. That covers open segments and lines laid across a region, and also closed loops no
 feature takes: a tab along part of a selected region's edge, or a ring around a hole the region
 keeps. A trimmed region counts only when its boundary closes into one shape; otherwise nothing
-is inferred. A curve a feature names, and any sketch another kind of feature uses, keep their
-curves as real geometry.
+is inferred. A piece of a line in a trimmed boundary is read as cadmpeg gives it: the fraction of
+the way from the line's start to its end. A curve a feature names, and any sketch another kind of
+feature uses, keep their curves as real geometry.
 
 Selected loops that share part of an edge with another solid line (a tab taken together with
 the plate it sits on) are named by a point inside each region, since SolidCraft splits the
