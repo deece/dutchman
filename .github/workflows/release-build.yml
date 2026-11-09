@@ -191,7 +191,7 @@ jobs:
             | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "dutchman"))')
           archive=$(scripts/package-archive.sh ${{ matrix.target }} "dutchman-${version}-${{ matrix.target }}" "v$version")
           echo "ARCHIVE=$archive" >> "$GITHUB_ENV"
-      - uses: actions/setup-dotnet@v5
+      - uses: actions/setup-dotnet@v6
         if: runner.os == 'Windows'
         with:
           dotnet-version: '6.0.x'
