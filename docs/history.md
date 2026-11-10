@@ -278,6 +278,9 @@ Bézier spline pieces, up to 200 pieces, sharing their endpoints. Uniform spline
 spline. Profiles and sweep paths select the entire chain; constraints that cannot apply to
 a chain are left out with an Info message. A loft whose section or guide rail uses such a
 chain is not mapped yet: more edges in a section would make a different lofted surface.
+A loft section that takes several loops of one sketch (the whole sketch, or a list of its
+profiles) is not mapped yet either: the source can loft the filled outer loop where the loops
+read as a ring, so whether an inner loop is a hole is not known.
 Selected multi-piece elliptical arcs, unbounded conics, other weighted splines,
 and text without solved outlines still prevent history replay.
 Additional coordinate, intersection, tangency, curvature, symmetry, and repeated-dimension

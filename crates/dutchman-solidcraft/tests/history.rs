@@ -1227,6 +1227,42 @@ fn shared_sketch_loft() -> Model {
 }
 
 #[test]
+fn a_loft_section_taking_several_loops_of_its_sketch_is_refused() {
+    for section in [
+        json!({"kind": "sketch", "value": SKETCH}),
+        json!({"kind": "sketch_profiles", "value": {"sketch": SKETCH, "profiles": [0, 1]}}),
+    ] {
+        let model = shared_sketch_loft();
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let loft = wire["model"]["features"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|f| f["definition"]["definition"] == "loft")
+            .unwrap();
+        loft["definition"]["sections"][0] = section;
+        let model = Model {
+            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ..model
+        };
+        let (document, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert!(!document["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f["type"] == "loft"));
+        assert!(
+            history_line(&report).contains("takes several loops of its sketch"),
+            "{}",
+            history_line(&report)
+        );
+    }
+}
+
+#[test]
 fn loft_sections_in_one_sketch_keep_their_selected_regions() {
     let (document, report) = convert(
         &shared_sketch_loft(),

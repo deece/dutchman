@@ -13,7 +13,7 @@
 use serde_json::{json, Value};
 
 use super::extrude::{body_names, operation};
-use super::profile::profile;
+use super::profile::{profile, profile_count};
 use super::sketch::v3;
 use super::sketch::{Mapped, Shape};
 use super::sweep::curves;
@@ -24,6 +24,27 @@ use super::{name, Context};
 /// SolidCraft), even though each piece is exact.
 const SPLIT: &str = "lofts through a spline written as exact pieces are not mapped yet: the \
 pieces would change the lofted surface";
+
+/// Why a loft section that takes several of a sketch's loops is refused: the source's loft can
+/// fill the outer loop where the loops read as a ring, so neither reading is proven.
+const SEVERAL_LOOPS: &str = "a loft section that takes several loops of its sketch is not mapped \
+yet: whether the inner loops are holes in the lofted shape is not known";
+
+/// How many of its sketch's loops a section selects, when it selects whole loops by kind
+/// (the whole sketch, or a list of its profiles). Other selections name their regions.
+fn loops_selected(section: &Value, ctx: &Context) -> usize {
+    let value = section.get("value");
+    match section.get("kind").and_then(Value::as_str) {
+        Some("sketch") => value
+            .and_then(Value::as_str)
+            .map_or(0, |sketch| profile_count(ctx, sketch)),
+        Some("sketch_profiles") => value
+            .and_then(|value| value.get("profiles"))
+            .and_then(Value::as_array)
+            .map_or(0, Vec::len),
+        _ => 0,
+    }
+}
 
 /// Whether `sketch` carries a spline split into exact pieces, among the curves `ids` when given.
 fn split_spline(sketch: &Mapped, ids: Option<&[&str]>) -> bool {
@@ -165,6 +186,9 @@ pub(crate) fn map(
             }));
             sections.push(json!({"sketch": id, "point": "origin", "profiles": {"type": "all"}}));
             continue;
+        }
+        if loops_selected(section, ctx) > 1 {
+            return Err(SEVERAL_LOOPS.to_owned());
         }
         let (sketch_id, profiles) = profile(Some(section), ctx)?;
         let sketch = ctx
