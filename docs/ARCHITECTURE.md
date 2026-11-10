@@ -197,10 +197,14 @@ geometry only. The report names the blocker and counts retained source features.
 body-building prefix exists, the import keeps resolved sketches for reference as before.
 Suppressed source features are left out and
 reported. Mapped today: principal datum planes; planar sketches (points, lines, circles, arcs,
-whole ellipses, elliptical arcs up to one turn (multi-piece curves require whole-sketch selection), bounded parabolas and hyperbolas, rational quadratic Béziers, clamped uniform B-splines (including equal-weight rational curves and exactly clamped
-uniform periodic curves), reference lines, at their solved positions) with their constraints and dimensions, each
+whole ellipses, elliptical arcs up to one turn (multi-piece curves require whole-sketch
+selection), bounded parabolas and hyperbolas, rational quadratic Béziers, clamped B-splines
+(including equal-weight rational curves and periodic curves clamped by exact knot insertion),
+reference lines, at their solved positions) with their constraints and dimensions, each
 dimension linked to its parameter (a constraint that does not map is dropped and reported,
-since the geometry is already exact); extrudes of a whole sketch, of selected sketch
+since the geometry is already exact). A clamped uniform spline stays one spline; other knot
+spacing becomes a chain of exact Bézier spline pieces, up to 200, with shared endpoints.
+Also mapped: extrudes of a whole sketch, of selected sketch
 profiles, of profile regions (whole loops with their holes, or regions bounded by pieces of
 curves) or of selected curves, one-sided, symmetric or two-sided, blind or through all, from the sketch plane or an
 offset, or a resolved parallel planar face on an earlier named body. A face of the

@@ -41,8 +41,7 @@ pub(crate) struct Mapped {
 }
 
 impl Mapped {
-    /// Boundary pieces keep their source curve's id: SolidCraft splits curves again on
-    /// recompute, so selections follow the original geometry and its constraints.
+    /// Expand source boundaries into every exact emitted piece in traversal order.
     pub(crate) fn boundaries(
         &self,
         entities: Vec<Vec<String>>,
@@ -52,13 +51,12 @@ impl Mapped {
             .map(|ring| {
                 ring.into_iter()
                     .map(|entity| {
-                        self.curve(&entity)
-                            .map(|curve| curve.id.clone())
-                            .ok_or_else(|| {
-                                "its profile uses a curve the sketch does not carry".to_owned()
-                            })
+                        self.curve(&entity).map(Curve::ids).ok_or_else(|| {
+                            "its profile uses a curve the sketch does not carry".to_owned()
+                        })
                     })
-                    .collect()
+                    .collect::<Result<Vec<_>, _>>()
+                    .map(|chains| chains.into_iter().flatten().collect())
             })
             .collect()
     }
@@ -186,6 +184,15 @@ pub(crate) fn map(
         report,
     );
     let mut constraints = constraints;
+    for mut joint in builder.joints.clone() {
+        if let Some(fields) = joint.as_object_mut() {
+            fields.insert(
+                "id".to_owned(),
+                json!(format!("k{}", constraints.len() + 1)),
+            );
+        }
+        constraints.push(joint);
+    }
     let ties: Vec<&Value> = ctx
         .arena("sketch_constraints")
         .iter()
@@ -570,6 +577,8 @@ pub(crate) enum Shape {
 /// A SolidCraft curve a source entity became.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Curve {
+    /// Exact pieces, empty for a single curve. Aggregate endpoints belong to the whole chain.
+    pub(crate) pieces: Vec<Curve>,
     /// Its index among the sketch's curves.
     pub(crate) index: usize,
     /// Its id.
@@ -582,6 +591,17 @@ pub(crate) struct Curve {
     pub(crate) center: Option<usize>,
 }
 
+impl Curve {
+    /// All emitted ids in traversal order.
+    pub(crate) fn ids(&self) -> Vec<String> {
+        if self.pieces.is_empty() {
+            vec![self.id.clone()]
+        } else {
+            self.pieces.iter().map(|piece| piece.id.clone()).collect()
+        }
+    }
+}
+
 /// SolidCraft sketch points and curves as they are built.
 pub(crate) struct Builder {
     points: Vec<Value>,
@@ -590,6 +610,8 @@ pub(crate) struct Builder {
     /// Source endpoint records already placed, with their point index.
     endpoint_refs: Vec<(String, usize)>,
     curves: Vec<Value>,
+    /// Continuity relations introduced between exact spline pieces.
+    joints: Vec<Value>,
     /// The last number used per point or curve id prefix (conics use `q` to avoid constraint ids).
     counters: BTreeMap<&'static str, u64>,
     /// What each source entity became, by its id.
@@ -603,6 +625,7 @@ impl Default for Builder {
             positions: vec![[0.0, 0.0]],
             endpoint_refs: Vec::new(),
             curves: Vec::new(),
+            joints: Vec::new(),
             counters: BTreeMap::new(),
             shapes: BTreeMap::new(),
         }
@@ -680,6 +703,7 @@ impl Builder {
                     .and_then(|i| usize::try_from(i).ok())
             };
             let curve = Curve {
+                pieces: Vec::new(),
                 index: self.curves.len(),
                 id: id.clone(),
                 kind: match kind.get("type").and_then(Value::as_str) {
@@ -876,36 +900,75 @@ impl Builder {
                 );
             }
             "nurbs" => match spline(geometry.get("curve")) {
-                Ok((degree, poles)) => {
-                    // The ends are shared with the curves that meet them; the inner control
-                    // points belong to this spline alone.
-                    let last = poles.len().saturating_sub(1);
-                    let points: Vec<usize> = poles
-                        .iter()
-                        .enumerate()
-                        .map(|(i, pole)| {
-                            if i == 0 {
-                                self.point(*pole, refs.first().copied())
-                            } else if i == last {
-                                self.point(*pole, refs.get(1).copied())
-                            } else {
-                                self.own_point(*pole)
-                            }
-                        })
-                        .collect();
-                    self.curve(
-                        source,
-                        "s",
-                        construction,
-                        json!({"type": "spline", "pts": points, "control": true, "degree": degree}),
-                        &[],
-                    );
-                    if let (Some(first), Some(end)) = (points.first(), points.last()) {
+                Ok(Spline {
+                    degree,
+                    pieces,
+                    smooth,
+                }) => {
+                    let mut chain = Vec::new();
+                    let mut previous_end = None;
+                    let count = pieces.len();
+                    for (piece_index, poles) in pieces.iter().enumerate() {
+                        let last = poles.len().saturating_sub(1);
+                        let points: Vec<usize> = poles
+                            .iter()
+                            .enumerate()
+                            .map(|(i, pole)| {
+                                if i == 0 {
+                                    previous_end
+                                        .unwrap_or_else(|| self.point(*pole, refs.first().copied()))
+                                } else if i == last {
+                                    if piece_index + 1 == count {
+                                        self.point(*pole, refs.get(1).copied())
+                                    } else {
+                                        self.own_point(*pole)
+                                    }
+                                } else {
+                                    self.own_point(*pole)
+                                }
+                            })
+                            .collect();
+                        self.curve(source, "s", construction,
+                            json!({"type": "spline", "pts": points, "control": true, "degree": degree}), &[]);
+                        previous_end = points.last().copied();
                         if let Some(Shape::Curve(curve)) =
                             source.and_then(|id| self.shapes.get_mut(id))
                         {
-                            curve.start = Some(*first);
-                            curve.end = Some(*end);
+                            curve.start = points.first().copied();
+                            curve.end = previous_end;
+                            chain.push(curve.clone());
+                        }
+                        if piece_index > 0 {
+                            let before = pieces
+                                .get(piece_index - 1)
+                                .ok_or("its spline piece is missing")?;
+                            let tangent = before.iter().rev().take(2).copied().collect::<Vec<_>>();
+                            if let (Some(&end), Some(&a), Some(&start), Some(&b)) =
+                                (tangent.first(), tangent.get(1), poles.first(), poles.get(1))
+                            {
+                                let u = [end[0] - a[0], end[1] - a[1]];
+                                let v = [b[0] - start[0], b[1] - start[1]];
+                                let scale = u[0].hypot(u[1]) * v[0].hypot(v[1]);
+                                if smooth.get(piece_index - 1).copied().unwrap_or(false)
+                                    || scale > 0.0
+                                        && (u[0] * v[1] - u[1] * v[0]).abs() <= 1e-12 * scale
+                                        && u[0] * v[0] + u[1] * v[1] > 0.0
+                                {
+                                    let index = self.curves.len() - 1;
+                                    self.joints.push(
+                                        json!({"type": "tangent", "a": index - 1, "b": index}),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    if chain.len() > 1 {
+                        let mut whole = chain.first().cloned().ok_or("its spline has no pieces")?;
+                        whole.kind = "compound_spline";
+                        whole.end = chain.last().and_then(|piece| piece.end);
+                        whole.pieces = chain;
+                        if let Some(source) = source {
+                            self.shapes.insert(source.to_owned(), Shape::Curve(whole));
                         }
                     }
                 }
@@ -1019,6 +1082,7 @@ impl Builder {
                     self.shapes.insert(
                         source.to_owned(),
                         Shape::Curve(Curve {
+                            pieces: Vec::new(),
                             index,
                             id,
                             kind: "compound_conic",
@@ -1223,10 +1287,17 @@ const MAX_POLES: usize = 500;
 /// How far apart (relative to the knot span) knots may be and still be evenly spaced.
 const EVEN: f64 = 1e-9;
 
-/// A CADIR NURBS curve as SolidCraft's clamped uniform B-spline: its degree and control
-/// points; or why it is not one. SolidCraft's control splines have exactly this knot layout,
-/// so periodic curves are first clamped by exact endpoint knot insertion.
-fn spline(curve: Option<&Value>) -> Result<(u64, Vec<P2>), String> {
+/// Exact target geometry and the source's continuity at the inserted joints.
+#[derive(Debug)]
+struct Spline {
+    degree: u64,
+    pieces: Vec<Vec<P2>>,
+    smooth: Vec<bool>,
+}
+
+/// A CADIR spline as one uniform control spline or exact Bézier pieces. Periodic
+/// curves are clamped first; nonuniform knots are inserted to full degree multiplicity.
+fn spline(curve: Option<&Value>) -> Result<Spline, String> {
     let curve = curve.ok_or("its spline is malformed")?;
     let periodic = curve.get("periodic").and_then(Value::as_bool) == Some(true);
     let poles = curve.get("poles").ok_or("its spline is malformed")?;
@@ -1291,6 +1362,9 @@ fn spline(curve: Option<&Value>) -> Result<(u64, Vec<P2>), String> {
         return Err("its spline is malformed".to_owned());
     };
     let span = last - first;
+    if !span.is_finite() {
+        return Err("its spline knot span is not finite".to_owned());
+    }
     let clamped = span > 0.0
         && knots
             .iter()
@@ -1312,16 +1386,64 @@ fn spline(curve: Option<&Value>) -> Result<(u64, Vec<P2>), String> {
         let want = first + span * (i + 1) as f64 / pieces as f64;
         (k - want).abs() <= tolerance * span
     });
-    if clamped && even {
-        Ok((degree, points))
-    } else if periodic {
-        Err("periodic splines with nonuniform or repeated interior knots are not supported yet: SolidCraft control splines have no custom knots".to_owned())
-    } else {
-        Err(
-            "its spline is not a clamped uniform B-spline, which SolidCraft's splines are"
-                .to_owned(),
-        )
+    if knots.iter().any(|k| !k.is_finite()) || knots.windows(2).any(|w| w.first() > w.get(1)) {
+        return Err("its spline knots are not finite and nondecreasing".to_owned());
     }
+    if clamped && even {
+        return Ok(Spline {
+            degree,
+            pieces: vec![points],
+            smooth: Vec::new(),
+        });
+    }
+    // Decomposition requires actual clamping, without rounding endpoint knots.
+    if !span.is_finite()
+        || span <= 0.0
+        || !knots.iter().take(order).all(|k| *k == first)
+        || !knots.iter().rev().take(order).all(|k| *k == last)
+    {
+        return Err("its spline is not clamped; this knot layout is not supported yet".to_owned());
+    }
+    let mut interior = Vec::new();
+    for knot in inner {
+        if knot <= first || knot >= last {
+            return Err("its spline interior knots are outside its active domain".to_owned());
+        }
+        if interior.last().is_none_or(|(value, _)| *value != knot) {
+            interior.push((knot, 1usize));
+        } else if let Some((_, count)) = interior.last_mut() {
+            *count += 1;
+        }
+    }
+    if interior.len() + 1 > 200 {
+        return Err(
+            "its spline needs more than 200 exact pieces; this is not supported yet".to_owned(),
+        );
+    }
+    let degree_usize = order - 1;
+    let smooth = interior
+        .iter()
+        .map(|(_, multiplicity)| *multiplicity < degree_usize)
+        .collect();
+    for (knot, multiplicity) in interior {
+        if multiplicity > degree_usize {
+            return Err("disconnected spline pieces are not supported yet".to_owned());
+        }
+        for _ in multiplicity..degree_usize {
+            insert_spline_knot(degree_usize, &mut knots, &mut points, knot)
+                .ok_or("its spline cannot be split by exact knot insertion")?;
+        }
+    }
+    let pieces = points
+        .windows(order)
+        .step_by(degree_usize)
+        .map(<[P2]>::to_vec)
+        .collect();
+    Ok(Spline {
+        degree,
+        pieces,
+        smooth,
+    })
 }
 
 /// Restrict the full CADIR knot vector to [U[p], U[pole_count]]. Repeating each
@@ -1633,21 +1755,97 @@ mod tests {
     }
 
     #[test]
-    fn only_clamped_uniform_splines_map() {
+    fn clamped_splines_map_as_one_uniform_curve_or_exact_pieces() {
         let five = [[0.0, 0.0], [1.0, 1.0], [2.0, 0.0], [3.0, 1.0], [4.0, 0.0]];
         let uniform = nurbs(3, &[0.0, 0.0, 0.0, 0.0, 0.5, 1.0, 1.0, 1.0, 1.0], &five);
-        assert_eq!(spline(Some(&uniform)).unwrap().0, 3);
+        assert_eq!(spline(Some(&uniform)).unwrap().degree, 3);
+        assert_eq!(spline(Some(&uniform)).unwrap().pieces, vec![five.to_vec()]);
         let bezier = nurbs(2, &[0.0, 0.0, 0.0, 2.0, 2.0, 2.0], &five[..3]);
         assert!(spline(Some(&bezier)).is_ok());
         let uneven = nurbs(3, &[0.0, 0.0, 0.0, 0.0, 0.3, 1.0, 1.0, 1.0, 1.0], &five);
-        assert!(spline(Some(&uneven))
-            .unwrap_err()
-            .contains("clamped uniform"));
+        let Spline { pieces, smooth, .. } = spline(Some(&uneven)).unwrap();
+        assert_eq!(smooth, vec![true]);
+        assert_eq!(pieces.len(), 2);
+        assert_eq!(pieces[0].last(), pieces[1].first());
+        for (i, piece) in pieces.iter().enumerate() {
+            let (low, high) = if i == 0 { (0.0, 0.3) } else { (0.3, 1.0) };
+            for j in 0..=20 {
+                let t = j as f64 / 20.0;
+                let actual = evaluate(3, &[0., 0., 0., 0., 1., 1., 1., 1.], piece, t);
+                let expected = evaluate(
+                    3,
+                    &[0., 0., 0., 0., 0.3, 1., 1., 1., 1.],
+                    &five,
+                    low + (high - low) * t,
+                );
+                assert!(
+                    distance(actual, expected) < 1e-12,
+                    "{actual:?} != {expected:?}"
+                );
+            }
+        }
         let mut rational = uniform.clone();
         rational["poles"]["form"] = json!("rational");
         assert!(spline(Some(&rational)).is_err());
         let wrong_count = nurbs(3, &[0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0], &five);
         assert!(spline(Some(&wrong_count)).is_err());
+    }
+
+    #[test]
+    fn full_multiplicity_spline_pieces_keep_the_source_poles() {
+        let poles: Vec<P2> = (0..10).map(|i| [i as f64, (i % 3) as f64]).collect();
+        let curve = nurbs(
+            3,
+            &[0., 0., 0., 0., 0.2, 0.2, 0.2, 0.7, 0.7, 0.7, 1., 1., 1., 1.],
+            &poles,
+        );
+        let Spline { pieces, smooth, .. } = spline(Some(&curve)).unwrap();
+        assert_eq!(smooth, vec![false, false]);
+        assert_eq!(
+            pieces,
+            vec![
+                poles[0..4].to_vec(),
+                poles[3..7].to_vec(),
+                poles[6..10].to_vec()
+            ]
+        );
+        let mut builder = Builder::default();
+        let source = json!({"id": "chain", "construction": true, "geometry": {"kind": "nurbs", "curve": curve}});
+        builder.entity(&source, &mut Report::default()).unwrap();
+        assert_eq!(builder.curves.len(), 3);
+        assert!(builder.curves.iter().all(|c| c["construction"] == true));
+        for pair in builder.curves.windows(2) {
+            assert_eq!(
+                pair[0]["pts"].as_array().unwrap().last(),
+                pair[1]["pts"].as_array().unwrap().first()
+            );
+        }
+        let Shape::Curve(mapped) = &builder.shapes["chain"] else {
+            panic!("missing chain");
+        };
+        assert_eq!(mapped.ids(), vec!["s1", "s2", "s3"]);
+    }
+
+    #[test]
+    fn spline_decomposition_bounds_work_and_rejects_unequal_weights() {
+        let poles: Vec<P2> = (0..204).map(|i| [i as f64, 0.0]).collect();
+        let mut knots = vec![0.; 4];
+        knots.extend((1..=200).map(|i| (i as f64 / 201.).powi(2)));
+        knots.extend([1.; 4]);
+        let curve = nurbs(3, &knots, &poles);
+        assert!(spline(Some(&curve))
+            .unwrap_err()
+            .contains("200 exact pieces"));
+        let mut curve = nurbs(3, &[0., 0., 0., 0., 0.3, 1., 1., 1., 1.], &poles[..5]);
+        curve["poles"] = json!({"form": "rational", "points": poles[..5].iter().enumerate().map(|(i,p)|
+            json!({"point": {"u": p[0], "v": p[1]}, "weight": i+1})).collect::<Vec<_>>()});
+        assert!(spline(Some(&curve))
+            .unwrap_err()
+            .contains("weighted splines"));
+        for p in curve["poles"]["points"].as_array_mut().unwrap() {
+            p["weight"] = json!(2.0);
+        }
+        assert_eq!(spline(Some(&curve)).unwrap().pieces.len(), 2);
     }
 
     // Cox–de Boor basis evaluation, independent of the insertion implementation.
@@ -1755,9 +1953,19 @@ mod tests {
         assert_eq!((again, same), (clamped, poles));
         let mut curve = nurbs(degree as u64, &knots, &points);
         curve["periodic"] = json!(true);
-        assert!(spline(Some(&curve))
-            .unwrap_err()
-            .contains("no custom knots"));
+        let pieces = spline(Some(&curve)).unwrap().pieces;
+        assert_eq!(pieces.len(), 3);
+        for (piece, (low, high)) in pieces.iter().zip([(0., 0.2), (0.2, 0.7), (0.7, 1.)]) {
+            for i in 0..=20 {
+                let t = i as f64 / 20.;
+                assert!(
+                    distance(
+                        evaluate(3, &[0., 0., 0., 0., 1., 1., 1., 1.], piece, t),
+                        evaluate(3, &knots, &points, low + (high - low) * t)
+                    ) < 1e-12
+                );
+            }
+        }
     }
 
     #[test]
@@ -1779,9 +1987,7 @@ mod tests {
         let mut almost_uniform = nurbs(3, &knots, &points);
         almost_uniform["periodic"] = json!(true);
         almost_uniform["knots"][4] = json!(1.0 + 1e-10);
-        assert!(spline(Some(&almost_uniform))
-            .unwrap_err()
-            .contains("no custom knots"));
+        assert!(spline(Some(&almost_uniform)).unwrap().pieces.len() > 1);
         let mut decreasing = knots.clone();
         decreasing[4] = -100.0;
         assert!(clamp_periodic(3, decreasing, points.clone()).is_none());

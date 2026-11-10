@@ -929,6 +929,7 @@ mod tests {
         shapes.insert(
             "circle".to_owned(),
             Shape::Curve(Curve {
+                pieces: Vec::new(),
                 index: 0,
                 id: "c1".to_owned(),
                 kind: "circle",

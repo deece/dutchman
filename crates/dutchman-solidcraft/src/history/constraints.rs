@@ -59,7 +59,23 @@ pub(crate) fn map(
                     out.push(constraint);
                 }
             }
-            Err(kind) => *dropped.entry(kind).or_default() += 1,
+            Err(kind) => {
+                fn names_chain(value: &Value, shapes: &BTreeMap<String, Shape>) -> bool {
+                    match value {
+                        Value::String(id) => {
+                            matches!(shapes.get(id), Some(Shape::Curve(c)) if !c.pieces.is_empty())
+                        }
+                        Value::Array(values) => values.iter().any(|v| names_chain(v, shapes)),
+                        Value::Object(fields) => fields.values().any(|v| names_chain(v, shapes)),
+                        _ => false,
+                    }
+                }
+                if names_chain(definition, &mapper.builder.shapes) {
+                    report.push(Severity::Info, label, format!("a constraint on an exact spline chain is not carried ({kind}); its geometry is exact"));
+                } else {
+                    *dropped.entry(kind).or_default() += 1;
+                }
+            }
         }
     }
     if !dropped.is_empty() {
@@ -162,9 +178,13 @@ impl Mapper<'_, '_> {
             "point_on_object" => {
                 let p = self.point(field("point"));
                 match (p, self.shape(field("entity"))) {
-                    (Some(p), Some(Shape::Curve(c))) if c.kind != "compound_conic" => Some(vec![
-                        json!({"type": "point_on_curve", "p": p, "c": c.index}),
-                    ]),
+                    (Some(p), Some(Shape::Curve(c)))
+                        if !matches!(c.kind, "compound_conic" | "compound_spline") =>
+                    {
+                        Some(vec![
+                            json!({"type": "point_on_curve", "p": p, "c": c.index}),
+                        ])
+                    }
                     (Some(p), Some(Shape::Point(q))) => Some(coincident(&[p, *q])),
                     _ => None,
                 }
@@ -189,7 +209,11 @@ impl Mapper<'_, '_> {
             "fixed" => match self.shape(field("entity")).cloned() {
                 Some(Shape::Point(p)) => Some(vec![json!({"type": "fix", "p": p})]),
                 Some(Shape::Curve(c)) => {
-                    let count = if c.kind == "compound_conic" { 4 } else { 1 };
+                    let count = if c.kind == "compound_conic" {
+                        4
+                    } else {
+                        c.pieces.len().max(1)
+                    };
                     (c.index..c.index + count)
                         .map(|index| self.builder.fix_curve(index))
                         .collect::<Option<Vec<_>>>()
@@ -247,6 +271,29 @@ impl Mapper<'_, '_> {
             Shape::Point(p) => Some(vec![*p]),
             Shape::Curve(c) => {
                 let row = self.builder_curve(c.index)?;
+                if c.kind == "compound_spline" {
+                    return c
+                        .pieces
+                        .iter()
+                        .map(|piece| {
+                            self.builder_curve(piece.index)?
+                                .get("pts")?
+                                .as_array()?
+                                .iter()
+                                .map(|p| usize::try_from(p.as_u64()?).ok())
+                                .collect::<Option<Vec<_>>>()
+                        })
+                        .collect::<Option<Vec<_>>>()
+                        .map(|pieces| {
+                            pieces
+                                .into_iter()
+                                .enumerate()
+                                .flat_map(|(index, points)| {
+                                    points.into_iter().skip(usize::from(index > 0))
+                                })
+                                .collect()
+                        });
+                }
                 if c.kind == "spline" {
                     return row
                         .get("pts")?
@@ -287,6 +334,15 @@ impl Mapper<'_, '_> {
                 let first = self.builder_curve(a.index)?;
                 let second = self.builder_curve(b.index)?;
                 if a.kind == "conic" && first.get("rho") != second.get("rho") {
+                    return None;
+                }
+                if a.kind == "compound_spline"
+                    && (a.pieces.len() != b.pieces.len()
+                        || a.pieces.iter().zip(&b.pieces).any(|(a, b)| {
+                            self.builder_curve(a.index).and_then(|c| c.get("degree"))
+                                != self.builder_curve(b.index).and_then(|c| c.get("degree"))
+                        }))
+                {
                     return None;
                 }
                 if a.kind == "spline" && first.get("degree") != second.get("degree") {
@@ -577,26 +633,33 @@ impl Mapper<'_, '_> {
         }
         let p = self.point(first)?;
         let q = self.point(second)?;
-        let pair = json!({"first": first.get("entity")?, "second": second.get("entity")?});
-        let mut out = self.pair("tangent", &pair, &["line", "arc", "spline", "conic"])?;
+        let endpoint_curve = |locus: &Value| {
+            let Shape::Curve(curve) = self.shape(locus.get("entity")?)? else {
+                return None;
+            };
+            let piece = if curve.pieces.is_empty() {
+                curve
+            } else if locus.get("kind")?.as_str()? == "start" {
+                curve.pieces.first()?
+            } else {
+                curve.pieces.last()?
+            };
+            matches!(piece.kind, "line" | "arc" | "spline" | "conic").then_some(piece)
+        };
+        let a = endpoint_curve(first)?;
+        let b = endpoint_curve(second)?;
+        let kind = if a.kind == "line" && b.kind == "line" {
+            "collinear"
+        } else {
+            "tangent"
+        };
+        let mut out = vec![json!({"type": kind, "a": a.index, "b": b.index})];
         out.extend(coincident(&[p, q]));
         Some(out)
     }
 
     fn curvature(&self, definition: &Value) -> Option<Vec<Value>> {
-        let a = self.curve(
-            definition.get("first")?,
-            &["line", "arc", "spline", "conic"],
-        )?;
-        let b = self.curve(
-            definition.get("second")?,
-            &["line", "arc", "spline", "conic"],
-        )?;
-        let ends = [a.start?, a.end?];
-        if a.index == b.index || ![b.start?, b.end?].iter().any(|p| ends.contains(p)) {
-            return None;
-        }
-        Some(vec![json!({"type": "smooth", "a": a.index, "b": b.index})])
+        self.pair("smooth", definition, &["line", "arc", "spline", "conic"])
     }
 
     fn point_symmetric(&mut self, definition: &Value) -> Option<Vec<Value>> {
@@ -819,8 +882,39 @@ impl Mapper<'_, '_> {
 
     /// A two-curve relation of SolidCraft type `kind` between `first` and `second`.
     fn pair(&self, kind: &str, definition: &Value, kinds: &[&str]) -> Option<Vec<Value>> {
-        let a = self.curve(definition.get("first")?, kinds)?;
-        let b = self.curve(definition.get("second")?, kinds)?;
+        let first = self.shape(definition.get("first")?)?;
+        let second = self.shape(definition.get("second")?)?;
+        let (Shape::Curve(first), Shape::Curve(second)) = (first, second) else {
+            return None;
+        };
+        let candidates = |curve: &Curve| {
+            if curve.pieces.is_empty() {
+                vec![curve.clone()]
+            } else {
+                curve.pieces.clone()
+            }
+        };
+        let a_candidates = candidates(first);
+        let b_candidates = candidates(second);
+        let mut pairs = a_candidates
+            .iter()
+            .flat_map(|a| b_candidates.iter().map(move |b| (a, b)))
+            .filter(|(a, b)| kinds.contains(&a.kind) && kinds.contains(&b.kind))
+            .filter(|(a, b)| {
+                let meet = [a.start, a.end]
+                    .into_iter()
+                    .flatten()
+                    .any(|p| [b.start, b.end].contains(&Some(p)));
+                if kind == "smooth" {
+                    a.index != b.index && meet
+                } else {
+                    first.pieces.is_empty() && second.pieces.is_empty() || kind == "tangent" && meet
+                }
+            });
+        let (a, b) = pairs.next()?;
+        if pairs.next().is_some() {
+            return None;
+        }
         let kind = if kind == "tangent" && a.kind == "line" && b.kind == "line" {
             "collinear"
         } else {
@@ -893,7 +987,7 @@ impl Mapper<'_, '_> {
             match (self.shape(first)?, self.shape(second)?) {
                 (Shape::Point(p), Shape::Point(q)) => out.extend(coincident(&[*p, *q])),
                 (Shape::Point(p), Shape::Curve(c)) | (Shape::Curve(c), Shape::Point(p))
-                    if c.kind != "compound_conic" =>
+                    if !matches!(c.kind, "compound_conic" | "compound_spline") =>
                 {
                     out.push(json!({"type": "point_on_curve", "p": p, "c": c.index}));
                 }

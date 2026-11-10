@@ -572,9 +572,11 @@ JSON, logs, the journal, the key, and the salt private. Do not attach design fil
 
 Sketch history uses the same conic and constraint mappings as the CLI. Bounded parabolas,
 hyperbolas, elliptical arcs up to one turn, and rational quadratic Béziers retain editable
-geometry. Uniform periodic sketch B-splines also retain their exact shape through endpoint
-knot insertion into a clamped control spline. Unequal periodic weights or nonuniform/repeated
-interior knots name SolidCraft's missing weights or custom knots in the blocker reason.
+geometry. Periodic sketch B-splines retain their exact shape through endpoint knot insertion.
+Clamped uniform splines stay one spline; other spacing and repeated interior knots become
+chains of exact spline pieces with shared endpoints (up to 200 pieces). Unequal weights
+remain unsupported except for the rational quadratic Béziers above. Constraints that cannot
+apply to a chain are left out with an Info message; the geometry remains exact.
 An unsupported relation appears in `losses` as a counted `Degraded` sketch
 message with its reason, while the solved sketch remains mapped. Static sketch patterns
 retain point and radius associations; driving count and span parameters still produce a

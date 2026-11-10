@@ -144,9 +144,10 @@ Boolean operation cannot rebuild.
 Uniform periodic (closed) sketch B-splines map exactly when CADIR supplies the full knot
 vector and its corresponding poles. Dutchman inserts endpoint knots to clamp the active
 parameter interval without changing the curve, and shares the seam point in SolidCraft.
-Equal-weight rational splines map the same way. Unequal weights and nonuniform or repeated
-interior knots are refused specifically because SolidCraft control splines store neither
-weights nor custom knots.
+Equal-weight rational splines map the same way. Clamped splines with nonuniform spacing
+or repeated interior knots become chains of exact spline pieces, up to 200 pieces, with
+shared endpoints. Uniform splines stay one spline. Unequal weights remain unsupported
+because SolidCraft control splines have no weights.
 
 The CC0 FreeCAD 1.1.4 recipe fixtures N04a and N04b currently stop before this mapping:
 cadmpeg's sketch reader passes FreeCAD's compact periodic knots and poles directly to CADIR,

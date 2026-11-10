@@ -250,6 +250,13 @@ has no input surface geometry means the thread annotation could not be placed sa
 see [Feature history](history.md#feature-by-feature). Check size edits on the editable body
 when the result also contains the original imported shape.
 
+Clamped sketch splines with nonuniform spacing or repeated interior knots convert as chains
+of exact spline pieces, up to 200 pieces, instead of leaving out the sketch. Periodic
+splines are clamped first. Uniform splines stay one spline. Endpoints are shared, and
+profiles and sweep paths select the whole chain. Constraints that cannot apply to a chain
+are left out with an Info message; the solved geometry remains exact. A loft through such a
+chain is not mapped yet (more edges in a section would change the lofted surface).
+
 ## Open the result in SolidCraft
 
 In the SolidCraft app, use File, Open, or start it with the design:

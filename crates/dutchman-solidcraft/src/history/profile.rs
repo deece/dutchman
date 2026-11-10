@@ -217,7 +217,13 @@ fn canonical_loop(ring: Vec<String>, mapped: &Mapped) -> Vec<String> {
         .iter()
         .map(|id| {
             mapped.shapes.values().find_map(|shape| match shape {
-                Shape::Curve(curve) if curve.id == *id => Some(curve),
+                Shape::Curve(curve) => {
+                    if curve.pieces.is_empty() {
+                        (curve.id == *id).then_some(curve)
+                    } else {
+                        curve.pieces.iter().find(|piece| piece.id == *id)
+                    }
+                }
                 _ => None,
             })
         })
@@ -495,8 +501,15 @@ fn source_loop(
 ) -> Result<Vec<String>, String> {
     source_members(ctx, sketch, index)?
         .iter()
-        .map(|uses| curve_id(uses.get("entity"), mapped))
-        .collect()
+        .map(|uses| {
+            curve_ids(
+                uses.get("entity"),
+                mapped,
+                uses.get("reversed").and_then(Value::as_bool) == Some(true),
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map(|chains| chains.into_iter().flatten().collect())
 }
 
 fn source_members<'a>(
@@ -519,11 +532,21 @@ fn source_members<'a>(
 }
 
 /// The SolidCraft curve id of a source entity.
-fn curve_id(entity: Option<&Value>, mapped: &Mapped) -> Result<String, String> {
+fn curve_ids(
+    entity: Option<&Value>,
+    mapped: &Mapped,
+    reversed: bool,
+) -> Result<Vec<String>, String> {
     entity
         .and_then(Value::as_str)
         .and_then(|entity| mapped.curve(entity))
-        .map(|curve| curve.id.clone())
+        .map(|curve| {
+            let mut ids = curve.ids();
+            if reversed {
+                ids.reverse();
+            }
+            ids
+        })
         .ok_or_else(|| "its profile uses a curve the sketch does not carry".to_owned())
 }
 
@@ -612,9 +635,14 @@ fn regions(
                     .and_then(Value::as_array)
                     .ok_or("its trimmed region is malformed")?
                 {
-                    let id = curve_id(boundary.get("entity"), mapped)?;
-                    if !outer.contains(&id) {
-                        outer.push(id);
+                    for id in curve_ids(
+                        boundary.get("entity"),
+                        mapped,
+                        boundary.get("reversed").and_then(Value::as_bool) == Some(true),
+                    )? {
+                        if !outer.contains(&id) {
+                            outer.push(id);
+                        }
                     }
                 }
                 outers.push(outer);
@@ -845,7 +873,7 @@ fn entities(entities: Option<&Value>, mapped: &Mapped) -> Result<Value, String> 
             .map(|(index, _)| index)
             .collect();
         match touching.split_first() {
-            None => groups.push((points, vec![curve.id.clone()])),
+            None => groups.push((points, curve.ids())),
             Some((&first, others)) => {
                 for &other in others.iter().rev() {
                     if other < groups.len() {
@@ -858,7 +886,7 @@ fn entities(entities: Option<&Value>, mapped: &Mapped) -> Result<Value, String> 
                 }
                 if let Some(group) = groups.get_mut(first) {
                     group.0.extend(points);
-                    group.1.push(curve.id.clone());
+                    group.1.extend(curve.ids());
                 }
             }
         }
@@ -876,6 +904,7 @@ mod tests {
 
     fn line(index: usize, a: usize, b: usize) -> Shape {
         Shape::Curve(Curve {
+            pieces: Vec::new(),
             index,
             id: format!("l{}", index + 1),
             kind: "line",
@@ -883,6 +912,37 @@ mod tests {
             end: Some(b),
             center: None,
         })
+    }
+
+    #[test]
+    fn sketch_spline_chain_selection_reverses_piece_order() {
+        let mut mapped = mapped();
+        let Shape::Curve(mut whole) = line(0, 1, 3) else {
+            return;
+        };
+        let Shape::Curve(a) = line(0, 1, 2) else {
+            return;
+        };
+        let Shape::Curve(b) = line(1, 2, 3) else {
+            return;
+        };
+        whole.kind = "compound_spline";
+        whole.pieces = vec![a, b];
+        mapped
+            .shapes
+            .insert("chain".to_owned(), Shape::Curve(whole));
+        assert_eq!(
+            curve_ids(Some(&json!("chain")), &mapped, false).unwrap(),
+            vec!["l1", "l2"]
+        );
+        assert_eq!(
+            curve_ids(Some(&json!("chain")), &mapped, true).unwrap(),
+            vec!["l2", "l1"]
+        );
+        assert_eq!(
+            mapped.boundaries(vec![vec!["chain".to_owned()]]).unwrap(),
+            vec![vec!["l1", "l2"]]
+        );
     }
 
     /// Two separate triangles (curves l1–l3 and l4–l6) and a circle c1.
@@ -897,6 +957,7 @@ mod tests {
         shapes.insert(
             "circle".to_owned(),
             Shape::Curve(Curve {
+                pieces: Vec::new(),
                 index: 6,
                 id: "c1".to_owned(),
                 kind: "circle",
@@ -972,6 +1033,7 @@ mod tests {
             shapes.insert(
                 entity.to_owned(),
                 Shape::Curve(Curve {
+                    pieces: Vec::new(),
                     index,
                     id: id.to_owned(),
                     kind: "circle",
@@ -1237,6 +1299,7 @@ mod tests {
                 (
                     format!("e{index}"),
                     Shape::Curve(Curve {
+                        pieces: Vec::new(),
                         index,
                         id: (*id).to_owned(),
                         kind,
@@ -1385,6 +1448,7 @@ mod tests {
         mapped.shapes.insert(
             "outer".to_owned(),
             Shape::Curve(Curve {
+                pieces: Vec::new(),
                 index: 7,
                 id: "c2".to_owned(),
                 kind: "circle",

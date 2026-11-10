@@ -218,7 +218,7 @@ pub(super) fn curves(
             .and_then(Value::as_str)
             .and_then(|id| mapped.curve(id))
             .ok_or_else(|| format!("its {what} uses a curve the sketch does not carry"))?;
-        return Ok((mapped.feature, vec![curve.id.clone()]));
+        return Ok((mapped.feature, curve.ids()));
     }
     match path.get("kind").and_then(Value::as_str) {
         Some("sketch_curves") => {}
@@ -263,11 +263,11 @@ pub(super) fn curves(
             entity
                 .as_str()
                 .and_then(|entity| mapped.curve(entity))
-                .map(|curve| curve.id.clone())
+                .map(|curve| curve.ids())
                 .ok_or_else(|| format!("its {what} uses a curve the sketch does not carry"))
         })
         .collect::<Result<Vec<_>, _>>()?;
-    Ok((mapped.feature, ids))
+    Ok((mapped.feature, ids.into_iter().flatten().collect()))
 }
 
 /// The SolidCraft sketch feature and wire ids of curves picked in a 3D sketch.

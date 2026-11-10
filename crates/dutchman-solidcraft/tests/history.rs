@@ -5622,6 +5622,242 @@ fn freecad_periodic_spline_recipes_keep_their_history() {
     }
 }
 
+fn nonuniform_spline_geometry() -> Value {
+    json!({"kind": "nurbs", "curve": {"degree": 3, "periodic": false,
+        "knots": [0.,0.,0.,0.,0.3,1.,1.,1.,1.],
+        "poles": {"form": "polynomial", "points": [
+            {"u": 0., "v": 0.}, {"u": 1., "v": 4.}, {"u": 4., "v": 6.},
+            {"u": 8., "v": 4.}, {"u": 10., "v": 0.}]}}})
+}
+
+#[test]
+fn nonuniform_spline_profiles_keep_one_closed_loop_and_extrude() {
+    for profile in [
+        first_profile(),
+        json!({"kind": "sketch_entities", "value": {"sketch": SKETCH,
+            "entities": ["f3d:model:sketch-entity#1", "f3d:model:sketch-entity#2"]}}),
+        json!({"kind": "sketch_regions", "value": {"sketch": SKETCH,
+            "regions": [{"region": "loops", "outer": 0, "holes": []}]}}),
+    ] {
+        let mut model = cube_with_history(10., profile, None);
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let m = &mut wire["model"];
+        m["sketch_entities"] = json!([
+            entity(1, nonuniform_spline_geometry()),
+            line(2, [10., 0.], [0., 0.])
+        ]);
+        m["sketches"][0]["profiles"] = json!([[{"entity": "f3d:model:sketch-entity#1"}, {"entity": "f3d:model:sketch-entity#2"}]]);
+        m["sketch_constraints"] = json!([]);
+        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        let (document, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert!(
+            history_line(&report).starts_with("2 of 2 features rebuilt"),
+            "{:?}",
+            report.losses()
+        );
+        let sketch = &document["features"][0]["sketch"];
+        let curves = sketch["curves"].as_array().unwrap();
+        assert_eq!(curves.len(), 3);
+        let first = curves[0]["pts"].as_array().unwrap();
+        let second = curves[1]["pts"].as_array().unwrap();
+        assert_eq!(first.last(), second.first());
+        assert_eq!(first.first().unwrap(), &curves[2]["b"]);
+        assert_eq!(second.last().unwrap(), &curves[2]["a"]);
+        assert!(sketch["constraints"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|c| c["type"] == "tangent" && c["a"] == 0 && c["b"] == 1));
+        assert_eq!(document["features"][1]["type"], "extrude");
+        let selection = &document["features"][1]["profiles"];
+        assert!(
+            selection == &json!({"type": "all"})
+                || selection == &json!({"type": "curves", "loops": [["s1", "s2", "l1"]]})
+                || selection
+                    == &json!({"type": "whole_boundaries", "profiles": [{"outer": ["l1", "s1", "s2"], "holes": []}]}),
+            "{selection}"
+        );
+        if let Some(cli) = solidcraft() {
+            let volume = volumes(&cli, &written(&model).0);
+            assert_eq!(volume.len(), 1, "{volume:?}");
+            assert!(volume[0] > 0.0, "{volume:?}");
+        }
+    }
+}
+
+#[test]
+fn nonuniform_spline_sweep_paths_expand_the_source_curve() {
+    for whole in [false, true] {
+        let mut model = sweep_history(|d| {
+            d["path"] = if whole {
+                json!({"kind": "sketch", "value": PATH})
+            } else {
+                json!({"kind": "sketch_curves", "value": {"sketch": PATH, "curves": ["f3d:model:sketch-entity#20"]}})
+            };
+        });
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        for entity in wire["model"]["sketch_entities"].as_array_mut().unwrap() {
+            if entity["sketch"] == PATH {
+                entity["id"] = json!("f3d:model:sketch-entity#20");
+                entity["geometry"] = nonuniform_spline_geometry();
+            }
+        }
+        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        let (document, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert!(
+            history_line(&report).starts_with("3 of 3 features rebuilt"),
+            "{:?}",
+            report.losses()
+        );
+        let sweep = document["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|f| f["type"] == "sweep")
+            .unwrap();
+        assert_eq!(sweep["path"], json!(["s1", "s2"]));
+    }
+}
+
+#[test]
+fn nonuniform_spline_constraints_follow_chain_endpoints_and_fixed_pieces() {
+    let mut model = bounded_conic_history(nonuniform_spline_geometry(), [0., 0.], [10., 0.]);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut tangent = line(3, [10., 0.], [12., -4.]);
+    tangent["construction"] = json!(true);
+    wire["model"]["sketch_entities"]
+        .as_array_mut()
+        .unwrap()
+        .push(tangent);
+    wire["model"]["sketch_constraints"] = json!([
+        {"id": "f3d:model:sketch-constraint#1", "sketch": SKETCH,
+         "definition": {"kind": "fixed", "entity": "f3d:model:sketch-entity#1"}},
+        {"id": "f3d:model:sketch-constraint#2", "sketch": SKETCH,
+         "definition": {"kind": "coincident_loci", "loci": [
+             {"kind": "end", "entity": "f3d:model:sketch-entity#1"},
+             {"kind": "start", "entity": "f3d:model:sketch-entity#2"}]}},
+        {"id": "f3d:model:sketch-constraint#3", "sketch": SKETCH,
+         "definition": {"kind": "distance", "entities": ["f3d:model:sketch-entity#1"], "parameter": "f3d:model:parameter#2"}},
+        {"id": "f3d:model:sketch-constraint#4", "sketch": SKETCH,
+         "definition": {"kind": "tangent_loci", "first": {"kind": "end", "entity": "f3d:model:sketch-entity#1"},
+             "second": {"kind": "start", "entity": "f3d:model:sketch-entity#3"}}},
+        {"id": "f3d:model:sketch-constraint#5", "sketch": SKETCH,
+         "definition": {"kind": "curvature", "first": "f3d:model:sketch-entity#1", "second": "f3d:model:sketch-entity#3"}}
+    ]);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (document, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(
+        history_line(&report).starts_with("2 of 2 features rebuilt"),
+        "{:?}",
+        report.losses()
+    );
+    let curves = document["features"][0]["sketch"]["curves"]
+        .as_array()
+        .unwrap();
+    assert_eq!(curves[0]["fixed"], true);
+    assert_eq!(curves[1]["fixed"], true);
+    let constraints = document["features"][0]["sketch"]["constraints"]
+        .as_array()
+        .unwrap();
+    for kind in ["tangent", "smooth"] {
+        assert!(
+            constraints
+                .iter()
+                .any(|c| c["type"] == kind && c["a"] == 1 && c["b"] == 3),
+            "{constraints:?}"
+        );
+    }
+    assert!(report
+        .losses()
+        .iter()
+        .any(|loss| loss.severity == dutchman_core::Severity::Info
+            && loss
+                .detail
+                .contains("a constraint on an exact spline chain is not carried")));
+    assert!(!report
+        .losses()
+        .iter()
+        .any(|loss| loss.detail.contains("constraints not carried")));
+}
+
+#[test]
+fn nonuniform_spline_projected_copies_keep_every_control_point() {
+    let mut model = bounded_conic_history(nonuniform_spline_geometry(), [0., 0.], [10., 0.]);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut copy = entity(3, nonuniform_spline_geometry());
+    copy["construction"] = json!(true);
+    wire["model"]["sketch_entities"]
+        .as_array_mut()
+        .unwrap()
+        .push(copy);
+    wire["model"]["sketch_constraints"] = json!([
+        {"id": "f3d:model:sketch-constraint#1", "sketch": SKETCH,
+         "definition": {"kind": "projected_copy", "source": "f3d:model:sketch-entity#1", "result": "f3d:model:sketch-entity#3"}}
+    ]);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (document, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(
+        history_line(&report).starts_with("2 of 2 features rebuilt"),
+        "{:?}",
+        report.losses()
+    );
+    assert!(
+        !report
+            .losses()
+            .iter()
+            .any(|loss| loss.detail.contains("not carried")),
+        "{:?}",
+        report.losses()
+    );
+    let sketch = &document["features"][0]["sketch"];
+    assert_eq!(sketch["curves"].as_array().unwrap().len(), 5);
+    assert_eq!(sketch["curves"][3]["construction"], true);
+    assert_eq!(sketch["curves"][4]["construction"], true);
+    let source: Vec<_> = sketch["curves"][0]["pts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .chain(
+            sketch["curves"][1]["pts"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .skip(1),
+        )
+        .collect();
+    let result: Vec<_> = sketch["curves"][3]["pts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .chain(
+            sketch["curves"][4]["pts"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .skip(1),
+        )
+        .collect();
+    let constraints = sketch["constraints"].as_array().unwrap();
+    for (p, q) in source.into_iter().zip(result) {
+        assert!(
+            p == q || constraints.iter().any(|c| c["p"] == *p && c["q"] == *q),
+            "{p} -> {q}: {constraints:?}"
+        );
+    }
+}
+
 fn periodic_spline_profile(profile: Value) -> Model {
     let mut model = cube_with_history(10.0, profile, None);
     let mut wire = serde_json::to_value(&model.ir).unwrap();
