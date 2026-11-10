@@ -156,11 +156,11 @@ jobs:
           # Save the build even when a test fails, so the next run does not start cold.
           cache-on-failure: true
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - run: cargo test --workspace --locked
       # The desktop app's test seams (fixed checker text, previews, isolated folders) sit behind
-      # its test-support feature, which the workspace run above does not turn on; run those
-      # tests too, on every platform.
-      - run: cargo test --locked -p dutchman-gui --features test-support
+      # its test-support feature. Turning it on in the workspace run tests them on every platform
+      # in one build; a separate `-p dutchman-gui` run resolves its dependencies' features apart
+      # from the workspace and so compiled every crate a second time.
+      - run: cargo test --workspace --locked --features dutchman-gui/test-support
       # A build without FreeCAD says it leaves FreeCAD files out. This checks feature gating, not
       # the platform, and on another OS it would rebuild every crate a second time.
       - if: matrix.os == 'ubuntu-latest'
@@ -177,6 +177,9 @@ jobs:
     env:
       CARGO_PROFILE_DEV_DEBUG: "0"
       CARGO_PROFILE_TEST_DEBUG: "0"
+      # Two compile jobs at a time keep the build within the ARM runner's memory; with one per
+      # core it is shut down while compiling the desktop app and web crates.
+      CARGO_BUILD_JOBS: "2"
     steps:
       - name: Free disk space
         run: |
@@ -190,8 +193,7 @@ jobs:
           shared-key: test-ubuntu-24.04-arm-debug
           cache-on-failure: true
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - run: cargo test --workspace --locked
-      - run: cargo test --locked -p dutchman-gui --features test-support
+      - run: cargo test --workspace --locked --features dutchman-gui/test-support
 
   # A second try of test-arm, only when its runner was shut down; a real failure is not retried.
   test-arm-again:
@@ -206,6 +208,9 @@ jobs:
     env:
       CARGO_PROFILE_DEV_DEBUG: "0"
       CARGO_PROFILE_TEST_DEBUG: "0"
+      # Two compile jobs at a time keep the build within the ARM runner's memory; with one per
+      # core it is shut down while compiling the desktop app and web crates.
+      CARGO_BUILD_JOBS: "2"
     steps:
       - name: Retry only after a runner shutdown
         env:
@@ -233,8 +238,7 @@ jobs:
         with:
           shared-key: test-ubuntu-24.04-arm-debug
           save-if: false
-      - run: cargo test --workspace --locked
-      - run: cargo test --locked -p dutchman-gui --features test-support
+      - run: cargo test --workspace --locked --features dutchman-gui/test-support
 
   # Docs-only changes skip the build jobs above; the tests that read README.md and docs/formats.md
   # still check them against the program.
