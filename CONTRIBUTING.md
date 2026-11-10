@@ -167,6 +167,23 @@ artifact has lost its executable bit, so `chmod +x` the programs.
    Run `python3 scripts/changelog.py check` and `python3 scripts/changelog.py preview`.
 5. Open the pull request against `main` and make sure CI passes.
 
+A few things reviewers ask about most:
+
+- **Keep the default output.** A new behaviour that changes what an existing file converts to
+  (orientation, units, placement, names) is opt-in behind a flag, and the default output stays
+  the same. Change a golden file or a placement expectation only when the change means to, and
+  say why in the pull request.
+- **Checks compare with the source.** Blend proving, the partial-history body comparison and the
+  SolidCraft replay compare the written design with the source's coordinates, so a change that
+  transforms the whole output applies it only where the final file is written, after them.
+- **Land what works.** If your change needs an unmerged cadmpeg change, keep it as a draft until
+  cadmpeg merges it and Dutchman's pin includes it, then switch everything on in one pull
+  request. No commented-out code, ignored tests, or docs announcing what the build can't do yet.
+- **Measure numbers that drive decisions**, such as the memory and time estimates in
+  `crates/dutchman/src/choices.rs`, and put the measurements in the pull request.
+- **Changelog fragments are for users:** one to three short bullets on what they get. Detail
+  belongs in the docs.
+
 Write commit messages and pull request titles in the imperative, in sentence case, saying
 what changes for the user: "Map patterns of features", "Convert SolidWorks parts".
 
@@ -180,14 +197,17 @@ There is no separate contributor agreement or sign-off.
 
 Proprietary formats are decoded from public information and from files their owners made
 themselves, never from leaked or confidential material, decompiled programs, or someone
-else's private designs. Native decoding belongs in cadmpeg, not in Dutchman.
+else's private designs. Native decoding belongs in cadmpeg, not in Dutchman: reading any part
+of a native file's bytes (a zip member, a stream such as `BulkStream.dat`, a table) is
+decoding, and goes there.
 
 - Don't add code, test files or documentation that comes from another CAD program's source,
   SDK samples or help, or from material under a confidentiality agreement.
 - Don't add third-party CAD files: no designs from model libraries, vendors, employers or
   customers.
 - New test files are synthetic: built in code, or taken from cadmpeg's public test suite, with
-  their origin written down in `crates/dutchman-core/tests/fixtures/README.md`.
+  their origin written down in `crates/dutchman-core/tests/fixtures/README.md`: the merged
+  cadmpeg commit and path a file was copied from, or how it was generated.
 - Tests for bugs found on private files use generic dimensions and synthetic geometry: never
   copy a private design's numbers, names or shapes into a test.
 
@@ -207,7 +227,8 @@ SolidCraft round trip and the anonymous-report leak check first (docs/releasing.
 ## Adding a format
 
 Dutchman never parses a native format itself. A new format starts in cadmpeg: once cadmpeg
-publishes a codec for it, Dutchman can convert it.
+publishes a codec for it, Dutchman can convert it. Open the Dutchman pull request when the
+codec is merged into cadmpeg's `main` and the pin includes it, or keep it as a draft until then.
 
 1. Turn the codec on in the `cadmpeg-registry` features in the workspace `Cargo.toml`.
 2. Add the format to `Format` in `crates/dutchman-core/src/format.rs` (its id, extension,
