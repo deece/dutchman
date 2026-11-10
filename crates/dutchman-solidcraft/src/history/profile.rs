@@ -81,6 +81,16 @@ pub(super) fn profile(profile: Option<&Value>, ctx: &Context) -> Result<(String,
                 .ok_or("its sketch has no profiles")?;
             let entities = sketch_entities(ctx, sketch);
             if count == 1 {
+                // Other curves of the sketch can divide its one stored loop into several
+                // regions, and the source picked one of them: cutting the whole sketch would
+                // take them all.
+                if split_loop(ctx, sketch, &json!(0), mapped).is_ok_and(|rings| rings.len() > 1) {
+                    return Err(
+                        "a profile cadmpeg does not resolve, in a sketch whose curves \
+                                divide its one profile into several regions, is not mapped yet"
+                            .to_owned(),
+                    );
+                }
                 json!({"type": "all"})
             } else if let Some(outer) = super::crossing::single_region(source, &entities) {
                 let boundary = source_loop(ctx, sketch, &json!(outer), mapped)?;
@@ -1131,6 +1141,63 @@ mod tests {
         assert_eq!(
             select(&model(), native).unwrap_err(),
             "a profile cadmpeg does not resolve, in a sketch of 2 profiles, is not mapped yet"
+        );
+    }
+
+    #[test]
+    fn a_native_selection_in_a_one_profile_sketch_divided_by_a_chain_is_refused() {
+        // One line across the loop is written as construction (`crossing`); a chain of two,
+        // each ending inside the loop, stays solid and divides it in SolidCraft.
+        let line = |id: &str, a: [f64; 2], b: [f64; 2]| {
+            json!({"id": id, "sketch": "s", "geometry": {"kind": "line",
+                "start": {"u": a[0], "v": a[1]}, "end": {"u": b[0], "v": b[1]}}})
+        };
+        let corners = [[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]];
+        let square = |chain: bool| {
+            let mut entities: Vec<Value> = (0..4)
+                .map(|i| line(&format!("e{i}"), corners[i], corners[(i + 1) % 4]))
+                .collect();
+            if chain {
+                entities.push(line("e4", [4.0, 0.0], [5.0, 8.0]));
+                entities.push(line("e5", [5.0, 8.0], [6.0, 10.0]));
+            }
+            json!({
+                "sketches": [{"id": "s", "profiles": [
+                    [{"entity": "e0"}, {"entity": "e1"}, {"entity": "e2"}, {"entity": "e3"}],
+                ], "placement": {"kind": "resolved", "frame": {
+                    "origin": {"x": 0.0, "y": 0.0, "z": 0.0},
+                    "normal": {"x": 0.0, "y": 0.0, "z": 1.0},
+                    "u_axis": {"x": 1.0, "y": 0.0, "z": 0.0}}}}],
+                "sketch_entities": entities,
+            })
+        };
+        let mut points = corners.to_vec();
+        points.extend([[4.0, 0.0], [6.0, 10.0], [5.0, 8.0]]);
+        let drawing = || {
+            drawn(
+                &points,
+                &[
+                    ("s1", "line", 0, 1, None),
+                    ("s2", "line", 1, 2, None),
+                    ("s3", "line", 2, 3, None),
+                    ("s4", "line", 3, 0, None),
+                    ("s5", "line", 4, 6, None),
+                    ("s6", "line", 6, 5, None),
+                ],
+            )
+        };
+        let pick = |model: &Value| {
+            let mut ctx = Context::new(model);
+            ctx.sketches.insert("s".to_owned(), drawing());
+            let native = json!({"kind": "sketch_selection",
+                "value": {"sketch": "s", "selections": ["native#1"]}});
+            super::profile(Some(&native), &ctx).map(|(_, selection)| selection)
+        };
+        assert_eq!(pick(&square(false)).unwrap(), json!({"type": "all"}));
+        assert_eq!(
+            pick(&square(true)).unwrap_err(),
+            "a profile cadmpeg does not resolve, in a sketch whose curves divide its one \
+             profile into several regions, is not mapped yet"
         );
     }
 

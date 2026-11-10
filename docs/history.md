@@ -243,6 +243,13 @@ one self-crossing loop, to tell it from a profile whose loop is crossed by other
 sketch ("a profile crossed by its own sketch's curves is not mapped yet"). The self-crossing
 test covers lines, arcs and circles; a loop with other curve types gets the second message.
 
+A selection cadmpeg keeps native (it names no profile Dutchman can read) maps only when the
+region is certain. In a sketch with one profile loop that is the whole sketch, unless other solid
+curves of the sketch divide that loop into several regions: the source picked one of them, and
+cutting or adding the whole sketch would take them all. That case stops the history there ("a
+profile cadmpeg does not resolve, in a sketch whose curves divide its one profile into several
+regions, is not mapped yet").
+
 Patterns can repeat earlier features or named bodies in one or two linear directions,
 around an axis, or at fixed spacing along curves of an earlier planar sketch. Explicit
 linear offsets and circular angles map when their intervals are equal; two linear composite
