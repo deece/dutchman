@@ -552,7 +552,7 @@ fn count(arguments: &Arguments, key: &str) -> Result<Option<NonZeroUsize>, Strin
     }
 }
 
-const OPTIONS: [&str; 19] = [
+const OPTIONS: [&str; 21] = [
     "diagnostics",
     "diagnostics_default",
     "threads",
@@ -569,6 +569,8 @@ const OPTIONS: [&str; 19] = [
     "solidcraft",
     "solidcraft_version",
     "verify_timeout",
+    "stand_up",
+    "no_stand_up",
     "overwrite",
     "project",
     "search",
@@ -680,6 +682,8 @@ fn options(arguments: &Arguments) -> Result<ConvertOptions, String> {
         no_clobber: !flag(arguments, "overwrite", true)?,
         solidcraft,
         solidcraft_version,
+        stand_up: flag(arguments, "stand_up", false)?,
+        no_stand_up: flag(arguments, "no_stand_up", false)?,
         verify_timeout: count(arguments, "verify_timeout")?
             .map_or(defaults.verify_timeout, |n| n.get() as u64),
         project: search.project,

@@ -377,8 +377,8 @@ change replay order: the neutral ordinal controls it.
 | Tool | Arguments | Returns | Writes |
 |---|---|---|---|
 | `inspect` | `input`, and optionally `project`, `search` | `dutchman.inspect/1` | nothing |
-| `convert` | `input`, `output` (optional for `dry_run`), and optionally `threads`, `preset`, `history`, `sketches`, `joints`, `no_memory_check`, `dry_run`, `import_only`, `verify`, `solidcraft`, `solidcraft_version`, `verify_timeout`, `overwrite`, `project`, `search` | `dutchman.convert/1` | the `output` file |
-| `convert_all` | `inputs`, `out_dir`, and optionally `jobs`, `timeout`, `max_memory_mb`, `journal`, `report_anon`, `report_salt`, `report_key`, `threads`, `preset`, `history`, `sketches`, `joints`, `no_memory_check`, `import_only`, `verify`, `solidcraft`, `solidcraft_version`, `verify_timeout`, `overwrite`, `project`, `search` | `dutchman.convert-all/1` | designs and the default log inside `out_dir`, plus `journal`, `report_anon`, and `report_key` at their specified paths |
+| `convert` | `input`, `output` (optional for `dry_run`), and optionally `threads`, `preset`, `history`, `sketches`, `joints`, `no_memory_check`, `dry_run`, `import_only`, `verify`, `solidcraft`, `solidcraft_version`, `verify_timeout`, `stand_up`, `no_stand_up`, `overwrite`, `project`, `search` | `dutchman.convert/1` | the `output` file |
+| `convert_all` | `inputs`, `out_dir`, and optionally `jobs`, `timeout`, `max_memory_mb`, `journal`, `report_anon`, `report_salt`, `report_key`, `threads`, `preset`, `history`, `sketches`, `joints`, `no_memory_check`, `import_only`, `verify`, `solidcraft`, `solidcraft_version`, `verify_timeout`, `stand_up`, `no_stand_up`, `overwrite`, `project`, `search` | `dutchman.convert-all/1` | designs and the default log inside `out_dir`, plus `journal`, `report_anon`, and `report_key` at their specified paths |
 | `formats` | none | `dutchman.formats/1` | nothing |
 | `read_report` | `input` (saved report or its design) | `dutchman.convert/1` plus `loss_groups`, with private local names and paths | nothing |
 
@@ -407,6 +407,8 @@ The formats report includes each reader's status and cadmpeg's published headlin
 | `solidcraft` | string | Path of `solidcraft-cli` for the check. Default: `$SOLIDCRAFT_CLI`, else `solidcraft-cli` on `PATH`, else the one inside an installed SolidCraft app (macOS `SolidCraft*.app`, newest first; Windows `Program Files\SolidCraft`). |
 | `solidcraft_version` | string | Target release as x.y.z, at least 0.18.2. Default: the found CLI's version capped at newest known, else the newest known at build time (currently 0.41), including when `verify` is false. |
 | `verify_timeout` | integer, at least 1 | Seconds each SolidCraft check may run before the history is written unverified. Default 120. |
+| `stand_up` | boolean | Rotate Y-up models (such as Fusion 360) so their +Y axis becomes SolidCraft's +Z axis (+90° about +X). Default false. |
+| `no_stand_up` | boolean | Keep source axes without standing Y-up models up along +Z (default). |
 | `overwrite` | boolean | Replace an existing `.sc` file (default true). When false, an existing file is left alone and that file's conversion fails with "already exists". |
 | `project` | string | Absolute path of the project folder an assembly's part files are searched in when they are not at their stored paths. Default: the nearest folder above the assembly holding an Inventor `.ipj`, else two folders up; for `convert_all`, each folder given. See [Finding the part files](inventor.md#finding-the-part-files). |
 | `search` | array of strings | Absolute paths of more folders to search, with their subfolders, for part files the project folder does not hold. |

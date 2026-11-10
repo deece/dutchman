@@ -203,6 +203,13 @@ pub struct ConvertOptions {
     /// Seconds each SolidCraft check may run before the history is written unverified.
     #[arg(long, value_name = "SECONDS", default_value_t = DEFAULT_TIMEOUT.as_secs())]
     pub verify_timeout: u64,
+    /// Rotate Y-up models (such as Fusion 360) so their +Y axis becomes SolidCraft's +Z axis.
+    /// By default source axes are preserved; pass --stand-up to rotate or --no-stand-up to keep identity.
+    #[arg(long, conflicts_with = "no_stand_up")]
+    pub stand_up: bool,
+    /// Keep source axes without standing Y-up models up along +Z (default).
+    #[arg(long, conflicts_with = "stand_up")]
+    pub no_stand_up: bool,
     /// The project folder an assembly's part files are searched in when they are not at their
     /// stored paths (default: the nearest folder above the assembly holding an Inventor .ipj,
     /// else two folders up; for convert-all, each folder given).
@@ -241,6 +248,8 @@ impl Default for ConvertOptions {
             freecad_timeout: 300,
             no_clobber: false,
             verify_timeout: DEFAULT_TIMEOUT.as_secs(),
+            stand_up: false,
+            no_stand_up: false,
             project: None,
             search: Vec::new(),
             part: None,
@@ -304,6 +313,17 @@ impl ConvertOptions {
         choices
     }
 
+    /// User's explicit choice for standing up Y-up models, if any.
+    pub fn stand_up_choice(&self) -> Option<bool> {
+        if self.stand_up {
+            Some(true)
+        } else if self.no_stand_up {
+            Some(false)
+        } else {
+            None
+        }
+    }
+
     /// The legacy switch is an alias of first-placed.
     pub fn effective_part_positions(&self) -> dutchman_core::PartPositions {
         if self.stored_placements {
@@ -342,6 +362,7 @@ impl ConvertOptions {
                     .joints(self.choices().joints)
                     .verification(self.verification())
                     .target_version(self.solidcraft_version)
+                    .stand_up(self.stand_up_choice())
                     .timeout(Duration::from_secs(self.verify_timeout)),
             ),
             OutputFormat::Freecad | OutputFormat::Fcstd => {

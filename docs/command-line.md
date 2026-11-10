@@ -104,6 +104,7 @@ CAD extension selects conversion.
 | `--no-joints` | Leave assembly joints out and retain the selected placements before joint solving. |
 | `--part-positions MODE` | Part positions: `smart` (default), `last-shown`, or `first-placed`. |
 | `--stored-placements` | Alias of `--part-positions first-placed`: place parts where they were first placed, ignoring later moves. |
+| `--stand-up`, `--no-stand-up` | Rotate Y-up models (such as Fusion 360) so their +Y axis becomes SolidCraft's +Z axis (+90° about +X). By default, source axes are preserved; pass `--stand-up` to rotate or `--no-stand-up` to keep identity. |
 | `--no-memory-check` | Bypass the memory refusal, Standard's history budget, and automatic history-check skipping. |
 | `--yes` | Never prompt to switch presets; refuse an over-budget conversion with exit 2. |
 | `--solidcraft PATH` | The `solidcraft-cli` that checks a converted history. Default: `$SOLIDCRAFT_CLI`, else `solidcraft-cli` on `PATH` or beside `dutchman`, else the one inside an installed SolidCraft app (macOS `SolidCraft*.app`, newest first; Windows `Program Files\SolidCraft`, else the install folder recorded in the registry). The same search runs in the desktop app; see [How Dutchman finds SolidCraft](desktop.md#how-dutchman-finds-solidcraft). When none is found, the report's `solidcraft.search` lists the places tried. |

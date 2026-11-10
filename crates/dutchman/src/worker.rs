@@ -413,6 +413,12 @@ impl ConvertOptions {
         if self.import_only {
             args.push("--import-only".into());
         }
+        if self.stand_up {
+            args.push("--stand-up".into());
+        }
+        if self.no_stand_up {
+            args.push("--no-stand-up".into());
+        }
         if let Some(cli) = &self.solidcraft {
             args.push("--solidcraft".into());
             args.push(cli.clone().into_os_string());

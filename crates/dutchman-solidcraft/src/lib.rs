@@ -90,6 +90,7 @@ pub struct SolidCraftWriter {
     replay: Verification,
     timeout: Duration,
     hide_unverified: bool,
+    stand_up: Option<bool>,
     memory_budget: Option<u64>,
     memory_skip: OnceLock<(u64, u64)>,
 }
@@ -112,6 +113,7 @@ impl Default for SolidCraftWriter {
             replay: Verification::Auto,
             timeout: DEFAULT_TIMEOUT,
             hide_unverified: false,
+            stand_up: None,
             memory_budget: None,
             memory_skip: OnceLock::new(),
         }
@@ -237,6 +239,17 @@ impl SolidCraftWriter {
     pub fn hide_unverified_history(mut self, hide: bool) -> Self {
         self.hide_unverified = hide;
         self
+    }
+
+    /// Whether to orient Y-up models (such as Fusion 360 designs) to SolidCraft's Z-up
+    /// coordinate system. By default (`None` or `false`), source axes are preserved.
+    pub fn stand_up(mut self, stand_up: Option<bool>) -> Self {
+        self.stand_up = stand_up;
+        self
+    }
+
+    pub(crate) fn should_stand_up(&self, _model: &Model) -> bool {
+        self.stand_up.unwrap_or(false)
     }
 
     /// Additional memory estimated after reading the design. Recheck current free memory
@@ -423,7 +436,8 @@ impl SolidCraftWriter {
         let references = references.filter(|_| self.sketches);
         document::report_unmapped(model, references, report);
         let design = container::Container::new(step.as_bytes())?;
-        let mut doc = document::import_design(model, design.step_blob());
+        let mut doc =
+            document::import_design(model, design.step_blob(), self.should_stand_up(model));
         let looks = history::imported(model, step, report, false)?;
         document::import_looks(&mut doc, &looks);
         if let Some(references) = references {
@@ -475,6 +489,7 @@ impl SolidCraftWriter {
             design.step_blob(),
             live,
             self.resolved_version(),
+            self.should_stand_up(model),
         );
         if matches!(live, Live::Partial | Live::Unverified) {
             let mut looks = history::imported(model, step, report, false)?;

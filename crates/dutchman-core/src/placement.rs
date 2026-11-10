@@ -18,6 +18,14 @@ pub const MIRROR_X: Placement3x4 = [
     [0.0, 0.0, 1.0, 0.0],
 ];
 
+/// Rotation from Fusion 360's default Y-up coordinate system to SolidCraft's default Z-up
+/// coordinate system (+90° about +X: X -> X, Y -> Z, Z -> -Y).
+pub const STAND_UP_Y_TO_Z: Placement3x4 = [
+    [1.0, 0.0, 0.0, 0.0],
+    [0.0, 0.0, -1.0, 0.0],
+    [0.0, 1.0, 0.0, 0.0],
+];
+
 /// Admit orthogonal placements within 1e-6, remove numeric drift, and factor out an X
 /// reflection when needed. The returned placement is always proper rigid; translation is
 /// unchanged. Scaling and shear outside that tolerance are refused, never repaired.

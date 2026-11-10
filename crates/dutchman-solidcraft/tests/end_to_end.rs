@@ -130,6 +130,60 @@ fn converts_to_an_import(file: &str) {
 }
 
 #[test]
+fn fusion_unit_cube_defaults_to_preserving_source_axes() {
+    let dir = std::env::temp_dir().join(format!("dutchman-e2e-default-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let output = dir.join("default.solidcraft");
+    convert(
+        &fixture("generated_unit_cube.f3d"),
+        &output,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    )
+    .unwrap();
+    let bytes = std::fs::read(&output).unwrap();
+    let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+    let (document, _) = entry(&mut archive, "document.json");
+    let document: Value = serde_json::from_slice(&document).unwrap();
+    assert_eq!(
+        document["occurrences"][0]["transform"],
+        serde_json::json!([
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ])
+    );
+}
+
+#[test]
+fn fusion_unit_cube_with_stand_up_rotates_to_z_up() {
+    let dir = std::env::temp_dir().join(format!("dutchman-e2e-standup-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let output = dir.join("standup.solidcraft");
+    convert(
+        &fixture("generated_unit_cube.f3d"),
+        &output,
+        &SolidCraftWriter::new()
+            .stand_up(Some(true))
+            .verification(Verification::Off),
+    )
+    .unwrap();
+    let bytes = std::fs::read(&output).unwrap();
+    let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+    let (document, _) = entry(&mut archive, "document.json");
+    let document: Value = serde_json::from_slice(&document).unwrap();
+    assert_eq!(
+        document["occurrences"][0]["transform"],
+        serde_json::json!([
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, -1.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ])
+    );
+}
+
+#[test]
 fn solidcraft_shows_every_face_of_each_cube() {
     let Some(cli) = std::env::var_os(dutchman_solidcraft::CLI_ENV).map(PathBuf::from) else {
         eprintln!("skipped: set SOLIDCRAFT_CLI to open the designs in SolidCraft");

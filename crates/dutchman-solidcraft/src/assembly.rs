@@ -143,6 +143,7 @@ pub(crate) fn write(
     }
     let prepared = prepare_parts(writer, assembly, &repeats, report, progress).into_iter();
     let mut builder = Builder {
+        model,
         progress,
         writer,
         prepared,
@@ -733,6 +734,7 @@ fn prepare_parts(
 
 /// The design's components, occurrences and Import features as they are built.
 struct Builder<'r> {
+    model: &'r Model,
     progress: Option<&'r dutchman_core::Progress<'r>>,
     prepared: std::vec::IntoIter<Option<PreparedPart>>,
     writer: &'r SolidCraftWriter,
@@ -851,7 +853,7 @@ impl Builder<'_> {
                     .get(index)
                     .unwrap_or(&placement.transform)
             };
-            let transform = match rigid(transform) {
+            let mut transform = match rigid(transform) {
                 Ok((rotation, false)) => rotation,
                 result => {
                     let kind = result.err().unwrap_or("unresolved reflected placement");
@@ -863,6 +865,9 @@ impl Builder<'_> {
                     continue;
                 }
             };
+            if parent == 0 && self.writer.should_stand_up(self.model) {
+                transform = compose(&dutchman_core::placement::STAND_UP_Y_TO_Z, &transform);
+            }
             let Some(Some((component, name))) = components.get(placement.part).cloned() else {
                 occurrences.push(None);
                 continue;

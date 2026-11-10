@@ -64,6 +64,20 @@ pub struct Model {
 }
 
 impl Model {
+    /// Whether this model was decoded from a Fusion 360 design (.f3d, .f3z).
+    pub fn is_fusion(&self) -> bool {
+        if let Some(source) = &self.source_file {
+            let path = Path::new(source);
+            if matches!(
+                Format::from_path(path),
+                Some(Format::FusionArchive | Format::FusionMultiDocument)
+            ) {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Classifies an assignment no placed component retained, using decoded identities.
     pub fn unplaced_appearance_cause(
         &self,

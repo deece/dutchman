@@ -170,6 +170,16 @@ refuses what stays ambiguous. Boundaries sharing a circle or arc resolve their p
 reading together: an asymmetric neighboring region can distinguish the two semicircles of a
 diameter. Boundaries using unrelated curves cannot settle that ambiguity.
 
+## Coordinate orientation
+
+Fusion 360 models in a right-handed coordinate system that defaults to Y-up in older versions
+(Autodesk made Z-up default for new installations around 2019). SolidCraft uses Z-up.
+
+By default, Dutchman preserves the source coordinates unchanged (`--no-stand-up`).
+For models created with Y-up orientation, `--stand-up` rotates the model +90° about +X
+(mapping source +Y to SolidCraft +Z and +Z to -Y). The rotation applies to imported geometry,
+assemblies, and rebuilt history.
+
 ## Assembly placements
 
 **Part positions** defaults to **Smart**. For each occurrence, Smart prefers a displayed
