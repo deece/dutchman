@@ -207,8 +207,9 @@ transform, and each component as a product definition.
   select history. A sketch another component builds that a feature of this one uses (designed
   in the context of the assembly) is the exception: when each of the two components has a single
   instance, its sketch feature comes in as this component's, with the sketch's plane moved into
-  this component's coordinates. A component placed more than once has no single place relative
-  to the other, so the history stops at the feature that uses it.
+  this component's coordinates. A component placed more than once also takes the sketch when
+  exactly one of its instances puts the selected profile on the part. If none or several do,
+  the history stops at the feature that uses it.
   Root-owned history goes to the design's loose-body component when it exists.
   Each sketch is written under the part that owns it, once per part however often it is
   placed, and a sketch owned by a component that holds no bodies goes under that component;

@@ -11,6 +11,7 @@ mod poses;
 mod position_bounds;
 mod position_skeleton;
 mod position_smart;
+mod sketch_instance;
 mod slicing;
 mod solidworks;
 
@@ -2988,10 +2989,25 @@ fn slice(
         HistoryOwner::Root => product_definition(row).is_none(),
         HistoryOwner::Unknown => false,
     };
+    let here_world = match owner {
+        HistoryOwner::Definition(id) => single_world(
+            wire.get("occurrences")
+                .and_then(Value::as_array)
+                .map_or(&[][..], Vec::as_slice),
+            Some(id),
+        ),
+        HistoryOwner::Root => Some(IDENTITY),
+        HistoryOwner::Unknown => None,
+    };
     // Explicit ownership takes precedence over output links from older files.
     let foreign = |row: &Value| {
         if let Some(owner) = product_definition(row) {
             return Some(owner) != definition;
+        }
+        // A root sketch has no ownership field: repeated parts must resolve its instance
+        // before following its binder, just as for a sketch with an explicit foreign owner.
+        if definition.is_some() && here_world.is_none() && sketched(row).is_some() {
+            return true;
         }
         row.get("outputs")
             .and_then(Value::as_array)
@@ -3079,9 +3095,8 @@ fn slice(
     }
     // A sketch another component builds that a feature of this one uses (designing in the
     // context of an assembly): carry its sketch feature in, with the sketch's plane moved from
-    // that component's coordinates into this one's. That move exists only where each of the
-    // two components has a single instance; otherwise the sketch stays out and the history
-    // stops at the feature that uses it.
+    // that component's coordinates into this one's. Repeated using components need a unique
+    // instance whose selected profile fits the stored part.
     let mut carried: BTreeMap<String, Placement3x4> = BTreeMap::new();
     let mut carried_features: BTreeSet<String> = BTreeSet::new();
     if history && !bodies.is_empty() {
@@ -3089,11 +3104,7 @@ fn slice(
             .get("occurrences")
             .and_then(Value::as_array)
             .map_or(&[][..], Vec::as_slice);
-        let here = match owner {
-            HistoryOwner::Definition(id) => single_world(occurrences, Some(id)),
-            HistoryOwner::Root => Some(IDENTITY),
-            HistoryOwner::Unknown => None,
-        };
+        let here = here_world;
         // Sketches this component's own features use (a profile, a path), not every sketch
         // its rows happen to reach.
         let mut used: BTreeSet<String> = BTreeSet::new();
@@ -3115,7 +3126,6 @@ fn slice(
             );
         }
         for sketch in used.iter().map(String::as_str) {
-            let Some(here) = here else { break };
             let Some(builders) = binders.get(sketch) else {
                 continue;
             };
@@ -3147,7 +3157,27 @@ fn slice(
             if !movable {
                 continue;
             }
-            carried.insert(sketch.to_owned(), compose(&inverse(&here), &there));
+            let movement = match here {
+                Some(here) => Some(compose(&inverse(&here), &there)),
+                None => sketch_instance::choose(
+                    slices,
+                    bodies,
+                    owner,
+                    occurrences,
+                    &there,
+                    resolved.as_ref().map(|row| row.as_ref()),
+                    keep.keys()
+                        .filter_map(|id| rows.get(*id))
+                        .filter(|entry| entry.arena == "features")
+                        .map(|entry| entry.row.value())
+                        .collect::<Result<Vec<_>, _>>()?
+                        .iter()
+                        .map(|row| row.as_ref())
+                        .filter(|row| owned(row)),
+                )?,
+            };
+            let Some(movement) = movement else { continue };
+            carried.insert(sketch.to_owned(), movement);
             for id in builders {
                 keep.insert(id, ());
                 carried_features.insert((*id).to_owned());
@@ -4260,6 +4290,194 @@ mod tests {
             .find(|part| part.name == "Block")
             .unwrap();
         assert!(!feature_ids(block).contains(&builder));
+    }
+
+    /// Hand-written CADIR: a root rectangle at x = 10 and a vertex-bounded part.
+    /// A second, unused profile lies far away, so checking the whole sketch would fail.
+    fn repeated_sketch_part(instances: [f64; 2], selection: Value) -> Model {
+        let mut wire = serde_json::to_value(cadmpeg_ir::CadIr::empty()).unwrap();
+        let empty_arenas = wire["model"].clone();
+        let id = |kind: &str, key: &str| format!("synthetic:model:{kind}#{key}");
+        let body = id("body", "part");
+        let region = id("region", "part");
+        let shell = id("shell", "part");
+        let sketch = id("sketch", "layout");
+        let builder = id("feature", "sketch");
+        let mut points = Vec::new();
+        let mut vertices = Vec::new();
+        let mut members = Vec::new();
+        for (i, [x, y, z]) in [[-3.0, -2.0, -8.0], [13.0, 2.0, 8.0]]
+            .into_iter()
+            .enumerate()
+        {
+            let point = id("point", &i.to_string());
+            let vertex = id("vertex", &i.to_string());
+            points.push(json!({"id": point, "position": {"x": x, "y": y, "z": z}}));
+            vertices.push(json!({"id": vertex, "point": point}));
+            members.push(json!({"kind": "free_vertex", "id": vertex}));
+        }
+        let mut entities = Vec::new();
+        let corners = [[-1.5, -7.1], [1.5, -7.1], [1.5, 7.1], [-1.5, 7.1]];
+        let mut profile = Vec::new();
+        for (i, [u, v]) in corners.into_iter().enumerate() {
+            let [a, b] = corners[(i + 1) % 4];
+            let entity = id("sketch-entity", &i.to_string());
+            profile.push(json!({"entity": entity, "reversed": false}));
+            entities.push(
+                json!({"id": entity, "sketch": sketch, "construction": false,
+                "geometry": {"kind": "line", "start": {"u": u, "v": v}, "end": {"u": a, "v": b}}}),
+            );
+        }
+        let far = id("sketch-entity", "unused");
+        entities.push(json!({"id": far, "sketch": sketch, "construction": false,
+            "geometry": {"kind": "circle", "center": {"u": 100.0, "v": 100.0}, "radius": 1.0}}));
+        wire["model"] = json!({
+            "bodies": [{"id": body, "kind": "general", "regions": [region]}],
+            "regions": [{"id": region, "body": body, "shells": [shell]}],
+            "shells": [{"id": shell, "region": region, "members": members}],
+            "vertices": vertices, "points": points,
+            "sketches": [{"id": sketch, "placement": {"kind": "resolved", "frame": {
+                "origin": {"x": 10.0, "y": 0.0, "z": 0.0},
+                "normal": {"x": 1.0, "y": 0.0, "z": 0.0},
+                "u_axis": {"x": 0.0, "y": 1.0, "z": 0.0}}},
+                "profiles": [profile, [{"entity": far, "reversed": false}]]}],
+            "sketch_entities": entities,
+            "features": [
+                {"id": builder, "ordinal": 0, "suppressed": false, "definition": {"definition": "sketch", "sketch": {"space": "planar", "sketch": sketch}}},
+                {"id": id("feature", "extrude"), "ordinal": 1, "suppressed": false, "product_definition": "f3d:model:component#block",
+                 "definition": {"definition": "extrude", "profile": selection,
+                    "direction": {"kind": "profile_normal"}, "start": {"kind": "profile_plane"},
+                    "extent": {"kind": "one_sided", "side": {"termination": {"kind": "blind", "length": 3.0}}},
+                    "op": "new_body"}}
+            ],
+            "product_definitions": [{"id": "f3d:model:component#block", "kind": "part", "bodies": [body]}],
+            "occurrences": [placed(0, "block", root(), instances[0]), placed(1, "block", root(), instances[1])]
+        });
+        for (arena, rows) in empty_arenas.as_object().unwrap() {
+            wire["model"]
+                .as_object_mut()
+                .unwrap()
+                .entry(arena.clone())
+                .or_insert_with(|| rows.clone());
+        }
+        Model {
+            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            fidelity: None,
+            name: "Repeated part".to_owned(),
+            source_file: None,
+            assembly: None,
+            source_step: None,
+        }
+    }
+
+    fn selected_layout_profile() -> Value {
+        json!({"kind": "sketch_profiles", "value": {"sketch": "synthetic:model:sketch#layout", "profiles": [0]}})
+    }
+
+    fn slice_repeated_sketch(model: &Model) -> Model {
+        let wire = serde_json::to_value(&model.ir).unwrap();
+        only(
+            model,
+            &wire,
+            &["synthetic:model:body#part"],
+            HistoryOwner::Definition("f3d:model:component#block"),
+            "Part".to_owned(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn a_repeated_component_carries_a_sketch_at_the_only_fitting_instance() {
+        let model = repeated_sketch_part([100.0, 10.0], selected_layout_profile());
+        let part = slice_repeated_sketch(&model);
+        assert!(feature_ids(&part).contains(&"synthetic:model:feature#sketch".to_owned()));
+        let wire = serde_json::to_value(&part.ir).unwrap();
+        let frame = &wire["model"]["sketches"][0]["placement"]["frame"];
+        assert_eq!(frame["origin"], json!({"x": 0.0, "y": 0.0, "z": 0.0}));
+        assert_eq!(frame["u_axis"], json!({"x": 0.0, "y": 1.0, "z": 0.0}));
+        assert_eq!(
+            wire["model"]["features"][0]["product_definition"],
+            "f3d:model:component#block"
+        );
+    }
+
+    #[test]
+    fn a_repeated_component_leaves_out_a_sketch_when_both_instances_fit() {
+        let part = slice_repeated_sketch(&repeated_sketch_part(
+            [0.0, 10.0],
+            selected_layout_profile(),
+        ));
+        assert!(!feature_ids(&part).contains(&"synthetic:model:feature#sketch".to_owned()));
+    }
+
+    #[test]
+    fn a_repeated_component_leaves_out_a_sketch_when_neither_instance_fits() {
+        let part = slice_repeated_sketch(&repeated_sketch_part(
+            [100.0, 200.0],
+            selected_layout_profile(),
+        ));
+        assert!(!feature_ids(&part).contains(&"synthetic:model:feature#sketch".to_owned()));
+    }
+
+    #[test]
+    fn a_repeated_component_uses_region_boundaries_to_place_a_sketch() {
+        for regions in [
+            json!([{"region": "loops", "outer": 0, "holes": []}]),
+            json!([{"region": "trimmed", "outer_boundary": [
+                {"entity": "synthetic:model:sketch-entity#0", "parameter_range": [0.0, 1.0]},
+                {"entity": "synthetic:model:sketch-entity#1", "parameter_range": [0.0, 1.0]},
+                {"entity": "synthetic:model:sketch-entity#2", "parameter_range": [0.0, 1.0]},
+                {"entity": "synthetic:model:sketch-entity#3", "parameter_range": [0.0, 1.0]}]}]),
+        ] {
+            let selection = json!({"kind": "sketch_regions", "value": {
+                "sketch": "synthetic:model:sketch#layout", "regions": regions}});
+            let part = slice_repeated_sketch(&repeated_sketch_part([100.0, 10.0], selection));
+            assert!(feature_ids(&part).contains(&"synthetic:model:feature#sketch".to_owned()));
+        }
+    }
+
+    #[test]
+    fn a_repeated_component_checks_every_curve_for_a_whole_sketch_selection() {
+        let selection = json!({"kind": "sketch", "value": "synthetic:model:sketch#layout"});
+        let model = repeated_sketch_part([100.0, 10.0], selection);
+        let part = slice_repeated_sketch(&model);
+        assert!(!feature_ids(&part).contains(&"synthetic:model:feature#sketch".to_owned()));
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        wire["model"]["sketch_entities"]
+            .as_array_mut()
+            .unwrap()
+            .pop();
+        wire["model"]["sketches"][0]["profiles"]
+            .as_array_mut()
+            .unwrap()
+            .pop();
+        let model = Model {
+            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ..model
+        };
+        let part = slice_repeated_sketch(&model);
+        assert!(feature_ids(&part).contains(&"synthetic:model:feature#sketch".to_owned()));
+    }
+
+    #[test]
+    fn a_native_selection_of_the_same_sketch_does_not_stop_the_instance_check() {
+        let model = repeated_sketch_part([100.0, 10.0], selected_layout_profile());
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        wire["model"]["features"].as_array_mut().unwrap().push(json!({
+            "id": "synthetic:model:feature#native", "ordinal": 2, "suppressed": false,
+            "product_definition": "f3d:model:component#block",
+            "definition": {"definition": "extrude", "profile": {"kind": "sketch_selection",
+                "value": {"sketch": "synthetic:model:sketch#layout", "selections": ["native"]}},
+                "direction": {"kind": "profile_normal"}, "start": {"kind": "profile_plane"},
+                "extent": {"kind": "one_sided", "side": {"termination": {"kind": "blind", "length": 1.0}}},
+                "op": "join"}
+        }));
+        let model = Model {
+            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ..model
+        };
+        let part = slice_repeated_sketch(&model);
+        assert!(feature_ids(&part).contains(&"synthetic:model:feature#sketch".to_owned()));
     }
 
     #[test]
