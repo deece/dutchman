@@ -5,6 +5,17 @@ cadmpeg's most complete native reader. This page says what Dutchman makes of wha
 gives and which upstream gaps remain. Improvements land in cadmpeg and reach Dutchman when the
 pin is bumped.
 
+State at the cadmpeg commit pinned in `Cargo.toml` (`6c775550`, cadmpeg 0.6.11).
+More thread and hole forms, healed Delete Face operations, shell wall selections, loft
+sections and rails, circular pipes, and pattern placements decode for history mapping.
+More extrude profiles and face ends, fillet edge selections, body moves, and component
+placements resolve. Mapping still depends on the resolved operands each feature needs.
+Sketch names follow their timeline sketch features.
+
+Historical body centres use bounded samples along curved edges as well as vertices and
+proven circular extrema. cadmpeg identifies incomplete edge or topology evidence separately;
+only bodies certified as exact have exact bounding-box centres.
+
 ## Parts and history
 
 Bodies a Combine used up as a tool, or that a Remove step took out of the design, are left out when cadmpeg marks them hidden and no component owns them; an Info `bodies` note gives the count. A body an active Remove deletes is left out too, even when cadmpeg lists it as shown, as long as cadmpeg resolves which body the Remove names; an Info note on the Remove gives the count. Bodies you hid yourself stay available, and a part with both shown and hidden bodies is shown whole, with an Info note.

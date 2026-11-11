@@ -5,8 +5,10 @@ Dutchman reads Inventor through cadmpeg's Inventor codec (cadmpeg-registry's
 when the pin is bumped. This page says what Dutchman makes of what that codec gives, and which
 upstream gaps keep Inventor history from replaying. It drives what is asked of cadmpeg next.
 
-State as of the cadmpeg commit Dutchman pins (`f9d0a14`, cadmpeg 0.6.11; see `Cargo.toml`). From that
-commit more Inventor fillet forms decode instead of staying native.
+State as of the cadmpeg commit Dutchman pins (`6c775550`, cadmpeg 0.6.11; see `Cargo.toml`).
+Fixed-spacing rectangular body patterns and more face operands now decode, and resolved
+split targets retain their earlier body producer for history mapping. Body patterns still
+need earlier mapped body names; feature-local body selections remain unsupported.
 
 ## Parts (`.ipt`)
 

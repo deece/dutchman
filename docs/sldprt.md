@@ -6,8 +6,8 @@ decoding land in cadmpeg and reach Dutchman when the pin is bumped. This page sa
 Dutchman makes of what that codec gives, and which upstream gaps keep SolidWorks history from
 replaying. It drives what is asked of cadmpeg next.
 
-State at the cadmpeg commit pinned in `Cargo.toml`. `dutchman formats` reports the reader's
-current reader status alongside what Dutchman converts.
+State at the cadmpeg commit pinned in `Cargo.toml` (`6c775550`, cadmpeg 0.6.11).
+`dutchman formats` reports the reader's current reader status alongside what Dutchman converts.
 
 ## Parts (`.sldprt`)
 
@@ -23,6 +23,13 @@ current reader status alongside what Dutchman converts.
 
 A part saved with several configurations converts in the configuration it was saved in.
 Bodies belonging only to the other configurations are left out, and the report says so.
+Source bodies retained for derived or mirrored geometry are also left out of the current
+body set. Unresolved body, shell, or face ownership is reported.
+
+Closed faces without boundary edges and closed ring edges without vertices are retained
+when their surfaces and curves resolve. More offset surfaces decode over analytic, NURBS,
+and swept supports. Offsets whose support orientation, distance, or trim boundaries cannot
+be resolved remain reported losses.
 
 Parts read by 0.1.5 that 0.2.0 to 0.2.2 read empty, with fewer bodies, or failing cadmpeg's
 edge checks read again since 0.2.3: cadmpeg no longer lets bytes inside other
