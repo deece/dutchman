@@ -26,6 +26,14 @@ const MESH_CHORD: f64 = 5e-5;
 /// The closest, in millimetres, SolidCraft's measuring mesh keeps to a body's faces.
 const MESH_CHORD_FLOOR: f64 = 1e-4;
 
+/// Position and box allowance: (minimum millimetres, share of the larger diagonal).
+/// Separate evaluations of exact versus imported surfaces differed by at most 0.0022 mm
+/// on a 38 mm helix (5.7e-5 of its size); flat bodies agreed to about 1e-14 mm.
+/// Four mesh chord sags and a 0.01 mm floor leave margin above that measured noise,
+/// while the smallest measured real placement error was 4 mm. The size term is a
+/// conservative allowance for other scales, not a measured scaling law.
+const POSITION_BOX_ALLOWANCE: (f64, f64) = (0.01, 4.0 * MESH_CHORD);
+
 /// The relative difference in area at which a replay no longer matches the original. A mesh
 /// misses a curved face's area by about a third of its chord over the face's radius, and
 /// SolidCraft keeps that chord within 3e-4 of the smallest radius: well inside this.
@@ -1231,8 +1239,8 @@ fn shown(eval: &Eval, expected: Expected) -> Shown {
     }
 }
 
-/// Whether two sets of bodies match, regardless of body order: in volume, within what
-/// SolidCraft's measuring meshes can miss, and in area.
+/// Whether two sets of bodies match, regardless of body order: in position and box,
+/// volume, and area, within what SolidCraft's measuring meshes can miss.
 fn match_bodies(replayed: &[Measured], expected: &[Measured]) -> Outcome {
     if replayed.len() != expected.len() {
         return Outcome::Differs(format!(
@@ -1242,10 +1250,60 @@ fn match_bodies(replayed: &[Measured], expected: &[Measured]) -> Outcome {
         ));
     }
     let mut replayed = replayed.to_vec();
-    let mut expected = expected.to_vec();
-    replayed.sort_by(|a, b| a.volume.total_cmp(&b.volume));
-    expected.sort_by(|a, b| a.volume.total_cmp(&b.volume));
-    for (got, want) in replayed.iter().zip(&expected) {
+    for want in expected {
+        let distance = |got: &Measured| {
+            got.center
+                .zip(want.center)
+                .map_or(f64::INFINITY, |(a, b)| center_distance(&a, &b))
+        };
+        let nearest = replayed.iter().enumerate().min_by(|(_, a), (_, b)| {
+            distance(a).total_cmp(&distance(b)).then_with(|| {
+                (a.volume - want.volume)
+                    .abs()
+                    .total_cmp(&(b.volume - want.volume).abs())
+            })
+        });
+        let Some((index, _)) = nearest else {
+            // The count check ensures an unpaired body for every original.
+            break;
+        };
+        let got = replayed.remove(index);
+        let got = &got;
+        if let (
+            Some((min_a, max_a)),
+            Some((min_b, max_b)),
+            Some(at),
+            Some(to),
+            Some(sa),
+            Some(sb),
+        ) = (
+            got.bounds,
+            want.bounds,
+            got.center,
+            want.center,
+            got.size,
+            want.size,
+        ) {
+            let (minimum, share) = POSITION_BOX_ALLOWANCE;
+            let allowed = (share * sa.max(sb)).max(minimum);
+            let shift = center_distance(&at, &to);
+            if !within(shift, allowed) {
+                return Outcome::Differs(format!(
+                    "a body sits {shift:.3} mm from the original's position"
+                ));
+            }
+            let difference = min_a
+                .iter()
+                .chain(&max_a)
+                .zip(min_b.iter().chain(&max_b))
+                .map(|(a, b)| (a - b).abs())
+                .fold(0.0, f64::max);
+            if !within(difference, allowed) {
+                return Outcome::Differs(format!(
+                    "a body's box differs from the original's by {difference:.3} mm"
+                ));
+            }
+        }
         let (v, w) = (got.volume, want.volume);
         let allowed = (VOLUME_TOLERANCE * v.abs().max(w.abs())).max(mesh_slack(got, want));
         if !within((v - w).abs(), allowed) {
@@ -1262,6 +1320,14 @@ fn match_bodies(replayed: &[Measured], expected: &[Measured]) -> Outcome {
         }
     }
     Outcome::Matches
+}
+
+fn center_distance(a: &[f64; 3], b: &[f64; 3]) -> f64 {
+    a.iter()
+        .zip(b)
+        .map(|(a, b)| (a - b).powi(2))
+        .sum::<f64>()
+        .sqrt()
 }
 
 /// Whether `difference` is no more than `limit`; not when either is not a number.
@@ -1292,6 +1358,8 @@ struct Measured {
     size: Option<f64>,
     /// The centre of its box, when SolidCraft gives it.
     center: Option<[f64; 3]>,
+    /// The minimum and maximum corners of its box, when SolidCraft gives it.
+    bounds: Option<([f64; 3], [f64; 3])>,
 }
 
 /// One design as SolidCraft evaluated it.
@@ -1799,19 +1867,22 @@ fn parse(value: &Value) -> Result<Eval, String> {
                 .get("volume_mm3")
                 .and_then(Value::as_f64)
                 .ok_or_else(|| format!("{CLI_NAME} result has a body without a volume"))?;
-            let corner = |end: &str| -> Option<Vec<f64>> {
+            let corner = |end: &str| -> Option<[f64; 3]> {
                 let corner = body.pointer(&format!("/bbox/{end}"))?.as_array()?;
                 let corner: Option<Vec<f64>> = corner.iter().map(Value::as_f64).collect();
-                corner.filter(|corner| corner.len() == 3)
+                <[f64; 3]>::try_from(corner?)
+                    .ok()
+                    .filter(|corner| corner.iter().all(|v| v.is_finite()))
             };
-            let size = corner("min").zip(corner("max")).map(|(min, max)| {
+            let bounds = corner("min").zip(corner("max"));
+            let size = bounds.map(|(min, max)| {
                 min.iter()
                     .zip(&max)
                     .map(|(lo, hi)| (hi - lo) * (hi - lo))
                     .sum::<f64>()
                     .sqrt()
             });
-            let center = corner("min").zip(corner("max")).and_then(|(min, max)| {
+            let center = bounds.and_then(|(min, max)| {
                 let center: Vec<f64> = min
                     .iter()
                     .zip(&max)
@@ -1826,6 +1897,7 @@ fn parse(value: &Value) -> Result<Eval, String> {
                 area: body.get("area_mm2").and_then(Value::as_f64),
                 size: size.filter(|size| size.is_finite()),
                 center,
+                bounds,
             })
         })
         .collect::<Result<Vec<_>, String>>()?;
@@ -2217,6 +2289,7 @@ mod tests {
                 area: None,
                 size: None,
                 center: None,
+                bounds: None,
             })
             .collect()
     }
@@ -2227,7 +2300,146 @@ mod tests {
             area: Some(area),
             size: Some(size),
             center: None,
+            bounds: None,
         }]
+    }
+
+    fn boxed(min: [f64; 3], max: [f64; 3]) -> Measured {
+        parse(&serde_json::json!({
+            "bodies": [{
+                "volume_mm3": 6000.0, "area_mm2": 2200.0,
+                "bbox": {"min": min, "max": max}
+            }]
+        }))
+        .unwrap()
+        .bodies
+        .remove(0)
+    }
+
+    #[test]
+    fn a_body_shifted_with_the_same_volume_and_area_differs() {
+        let original = boxed([0.0; 3], [10.0; 3]);
+        let shifted = boxed([0.0, 6.0, 0.0], [10.0, 16.0, 10.0]);
+        assert_eq!(
+            match_bodies(&[shifted], &[original]),
+            Outcome::Differs("a body sits 6.000 mm from the original's position".to_owned())
+        );
+    }
+
+    #[test]
+    fn a_body_with_swapped_extents_at_the_same_center_differs() {
+        let original = boxed([-5.0, -10.0, -15.0], [5.0, 10.0, 15.0]);
+        let turned = boxed([-5.0, -15.0, -10.0], [5.0, 15.0, 10.0]);
+        assert_eq!(
+            match_bodies(&[turned], &[original]),
+            Outcome::Differs("a body's box differs from the original's by 5.000 mm".to_owned())
+        );
+    }
+
+    #[test]
+    fn boxes_match_within_the_position_allowance_and_floor() {
+        for size in [0.01, 30.0] {
+            let original = boxed([-size; 3], [size; 3]);
+            let (minimum, share) = POSITION_BOX_ALLOWANCE;
+            let allowed = (share * original.size.unwrap()).max(minimum);
+            let noise = allowed * 0.25;
+            let noisy = boxed([-size + noise; 3], [size + noise; 3]);
+            assert_eq!(
+                match_bodies(&[noisy], std::slice::from_ref(&original)),
+                Outcome::Matches
+            );
+            // The centre is unchanged; a bound beyond the allowance still differs.
+            let enlarged = boxed([-size - allowed * 1.1; 3], [size + allowed * 1.1; 3]);
+            assert!(matches!(match_bodies(&[enlarged], &[original]),
+                Outcome::Differs(why) if why.contains("box differs")));
+        }
+    }
+
+    #[test]
+    fn measured_noise_matches_but_real_position_and_box_errors_differ() {
+        for (size, difference, matches) in [
+            (40.0, 4.0, false),
+            (38.0, 0.0022, true),
+            (400.0, 0.05, true),
+            (400.0, 1.0, false),
+        ] {
+            // These side lengths give a diagonal of exactly `size`.
+            let [x, y, z] = [size * 2.0 / 3.0, size * 2.0 / 3.0, size / 3.0];
+            let original = boxed([0.0; 3], [x, y, z]);
+            let shifted = boxed([difference, 0.0, 0.0], [x + difference, y, z]);
+            // Change the bounds without moving the centre, to exercise both checks.
+            let enlarged = boxed([-difference, 0.0, 0.0], [x + difference, y, z]);
+            for (replayed, reason) in [(shifted, "position"), (enlarged, "box")] {
+                let outcome = match_bodies(&[replayed], std::slice::from_ref(&original));
+                if matches {
+                    assert_eq!(
+                        outcome,
+                        Outcome::Matches,
+                        "size {size}, difference {difference}"
+                    );
+                } else {
+                    assert!(
+                        matches!(outcome, Outcome::Differs(why) if why.contains(reason)),
+                        "size {size}, difference {difference}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn bodies_pair_by_position_even_when_volume_order_changes() {
+        let left = boxed([0.0; 3], [10.0, 20.0, 30.0]);
+        let mut right = boxed([50.0, 0.0, 0.0], [60.0, 20.0, 30.0]);
+        right.volume += 0.01;
+        let mut replayed_left = left.clone();
+        replayed_left.volume += 0.02;
+        assert_eq!(
+            match_bodies(&[right.clone(), replayed_left], &[left, right]),
+            Outcome::Matches
+        );
+    }
+
+    #[test]
+    fn bodies_at_the_same_position_pair_by_volume() {
+        let small = boxed([0.0; 3], [10.0, 20.0, 30.0]);
+        let mut large = small.clone();
+        large.volume *= 2.0;
+        assert_eq!(
+            match_bodies(&[large.clone(), small.clone()], &[small, large]),
+            Outcome::Matches
+        );
+    }
+
+    #[test]
+    fn a_body_without_a_box_uses_volume_and_area_only() {
+        let original = boxed([0.0; 3], [10.0, 20.0, 30.0]);
+        let mut no_box = original.clone();
+        no_box.bounds = None;
+        no_box.center = None;
+        no_box.size = None;
+        assert_eq!(
+            match_bodies(
+                std::slice::from_ref(&no_box),
+                std::slice::from_ref(&original)
+            ),
+            Outcome::Matches
+        );
+        assert_eq!(
+            match_bodies(
+                std::slice::from_ref(&original),
+                std::slice::from_ref(&no_box)
+            ),
+            Outcome::Matches
+        );
+        no_box.area = Some(2000.0);
+        assert!(
+            matches!(match_bodies(std::slice::from_ref(&no_box), std::slice::from_ref(&original)),
+            Outcome::Differs(why) if why.contains("area"))
+        );
+        no_box.volume = 5000.0;
+        assert!(matches!(match_bodies(&[no_box], &[original]),
+            Outcome::Differs(why) if why.contains("volume")));
     }
 
     #[test]
@@ -2306,6 +2518,9 @@ mod tests {
         assert_eq!(eval.bodies[0].area, None);
         assert_eq!(eval.bodies[1].area, Some(52.0));
         assert_eq!(eval.bodies[1].size, Some(7.0));
+        assert_eq!(eval.bodies[0].bounds, None);
+        assert_eq!(eval.bodies[1].center, Some([1.0, 1.5, 3.0]));
+        assert_eq!(eval.bodies[1].bounds, Some(([0.0; 3], [2.0, 3.0, 6.0])));
         assert_eq!(
             eval.errors,
             ["feature \"Extrude1\" failed: profile not closed"]

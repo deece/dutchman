@@ -481,10 +481,13 @@ Convert one file:
     {"level":"Info","code":null,"subject":"history","message":"flattened: the design carries no feature history"}]}}}
 ```
 
-SolidCraft history checks compare area and volume within the measuring mesh tolerances.
-Face-count differences alone produce no geometry loss, nor do open-shell warnings when area
-and volume agree. Evaluation errors, unmeshable faces, bodies inside out, solids without
-volume, and solids that geometry-only output opens as open shells are still reported;
+SolidCraft history checks compare each body's position, box, area, and volume. Position
+and box checks allow the larger of 0.01 mm and 0.02% of the larger box diagonal
+for the centre distance and each minimum/maximum coordinate. Volume and area retain their
+measuring mesh tolerances. A pair without boxes is compared by area and volume alone.
+Face-count differences alone produce no geometry loss, nor do open-shell warnings when the
+compared measurements agree. Evaluation errors, unmeshable faces, bodies inside out, solids
+without volume, and solids that geometry-only output opens as open shells are still reported;
 sheets remain exempt from volume and closed-shell checks. Geometry-only output has no
 independent source measurements. These use the existing report fields described in
 [JSON reports](json.md).

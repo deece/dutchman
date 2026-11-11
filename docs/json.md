@@ -309,10 +309,16 @@ mirror-pattern chains, both introduced in 0.25 patch 1. The 0.22 patch 1 entry-r
 change preserves geometry and does not count as history loss. These fields use local
 version discovery only.
 
-SolidCraft history verification compares body count, area, and volume, using the measuring
-mesh tolerances. A face-count difference (SolidCraft can merge faces on one surface) produces
-no geometry loss, nor does an open-shell warning when area and volume agree. Geometry-only
-output has no independent source measurements; evaluation errors, unmeshable faces, solids
+SolidCraft history verification compares body count and each body's position, box, area,
+and volume. Position and box checks allow the larger of 0.01 mm and 0.02% of the
+larger box diagonal, for the centre distance and each minimum/maximum coordinate. Volume and
+area retain their measuring mesh tolerances. Bodies are paired by nearest box centre,
+with volume breaking ties. A position mismatch gives a reason such as `a body sits 6.000 mm
+from the original's position`; a box mismatch gives `a body's box differs from the
+original's by 2.500 mm`. When SolidCraft gives no box for a pair, only area and volume are
+compared. A face-count difference (SolidCraft can merge faces on one surface) produces
+no geometry loss, nor does an open-shell warning when the compared measurements agree.
+Geometry-only output has no independent source measurements; evaluation errors, unmeshable faces, solids
 without volume, solids opened as open shells, and bodies inside out still produce `Degraded` losses with subject `geometry` and stage `solidcraft`.
 Sheets remain exempt from volume and closed-shell checks. The GUI, CLI, web app, and MCP
 present these same losses; `verification.status` continues to describe history, and the

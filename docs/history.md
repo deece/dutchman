@@ -10,8 +10,8 @@ history, with no flattened-history warning.
 
 - When every feature in a design's history maps onto SolidCraft, the SolidCraft design keeps
   that history, editable, with the original geometry kept beside it. If `solidcraft-cli` is
-  installed, Dutchman replays the history in it and compares area and volume with the
-  original before keeping it. A face-count difference (SolidCraft merges faces that share a
+  installed, Dutchman replays the history in it and compares each body's position, box, area,
+  and volume with the original before keeping it. A face-count difference (SolidCraft merges faces that share a
   surface) or an open-shell warning alone does not fail that comparison. What maps, most of it from Fusion:
   - sketches: lines, arcs, circles, conics, splines, and many constraints and dimensions;
     3D sketches of lines, arcs, circles, splines and points;
@@ -55,8 +55,14 @@ history, with no flattened-history warning.
 ## How a history is checked
 
 A converted history is checked by replaying it in `solidcraft-cli` and comparing the bodies
-and their area and volume with the original, within the measuring mesh tolerances. The result is in the `history:` line of the report, and
-in `verification.status` in `--json`:
+and each body's position, box, area, and volume with the original. Position and box checks
+allow the larger of 0.01 mm and 0.02% of the larger box diagonal, for the centre distance and
+each minimum/maximum coordinate. The size term is four times the measuring mesh chord
+allowance, with margin above the measured 0.0022 mm difference on a 38 mm curved body.
+Volume and area keep their measuring mesh tolerances. Bodies are paired by nearest box
+centre, with volume breaking ties. When SolidCraft gives no box for a pair, only area and
+volume are compared. The result is in the
+`history:` line of the report and in `verification.status` in `--json`:
 
 | Status | Meaning |
 |---|---|
@@ -98,7 +104,8 @@ cannot mesh, bodies inside out, solids without volume, and timeline errors still
 `Degraded: geometry: solid 'unit cube': 3 face(s) could not be meshed and are not shown`.
 Look over those bodies in SolidCraft before relying on them. SolidCraft can merge faces that
 share a surface, so a face-count difference alone produces no loss. The history comparison
-uses area and volume, so an open-shell warning there produces no loss when they agree.
+uses position, box, area, and volume, so an open-shell warning there produces no loss when
+those measurements agree.
 Geometry-only output has no source measurements to compare against, so a solid it opens as
 an open shell is still reported. Sheets remain exempt from volume and closed-shell checks.
 `--no-verify` skips these checks too.
