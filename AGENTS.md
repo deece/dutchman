@@ -45,6 +45,10 @@ history tests replay in SolidCraft when `SOLIDCRAFT_CLI` points at a `solidcraft
 
 ## Rules
 
+- **SolidCraft versions.** Keep the 0.18.2 opens-in floor, its CI job and all existing writer checks.
+  Before starting, run `scripts/solidcraft-window.sh --print`: new work targets only newest plus releases
+  published in the last 14 days. Never back-port features or add gates older than that window;
+  flatten new features for older targets with a named reason, keeping the file opening.
 - **Never crash.** No `unwrap`, `expect`, `panic!`, `todo!`, `unimplemented!`, `unreachable!`
   or slice indexing outside tests; no `unsafe` (the workspace lints enforce all of this). A
   hostile file comes back as an `Error`. Every call into cadmpeg goes through the existing

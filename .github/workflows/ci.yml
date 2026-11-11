@@ -98,10 +98,25 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v7
         with:
           python-version: '3.x'
       - run: python3 -m unittest discover -s scripts/tests -v
+      - name: Check SolidCraft version gates
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event.before }}
+        run: |
+          if [ "${{ github.event_name }}" = workflow_dispatch ]; then
+            BASE=$(git merge-base origin/main HEAD)
+          fi
+          # A first push without a base still audits against HEAD; PR and queue bases must exist.
+          if [ -z "$BASE" ] || [ "$BASE" = 0000000000000000000000000000000000000000 ]; then
+            BASE=HEAD
+          fi
+          python3 scripts/check-version-gates.py --base "$BASE"
       - run: python3 scripts/changelog.py check
       # The installed guidance (docs/, skills/) the archives and installer carry: a change to docs/
       # no longer starts the release builds, so check here that it still stages.

@@ -443,6 +443,18 @@ latest published patch of the newest minor, while the oldest window release stay
 Designs open in their target release and newer releases.
 
 
+Before starting new writer work, run `scripts/solidcraft-window.sh --print` to see the newest
+stable release, the oldest release published in the last 14 days (always including newest),
+and the separate 0.18.2 opens-in floor. It uses the dated GitHub release list already used by
+the window tooling; `--releases saved-releases.json` reads a saved copy offline. Keep the floor,
+its CI job, and existing writer checks. New features target only this window: never back-port
+one or introduce a gate for an older release. Older targets flatten the new feature with a
+named reason and still open. CI's `scripts/check-version-gates.py` checks version expressions
+and capability uses against the pull-request base; `scripts/version-gates-allowed.txt` records
+historical expressions and may only shrink. Release metadata failures fail the check rather
+than falling back to the writer's older pinned `WINDOW_OLDEST` value.
+
+
 SolidCraft conversion reports include the selected target and the discovered CLI version,
 even with verification off. Text output includes `Target SolidCraft 0.30 (found 0.30.0)`,
 or `(none found)` when no version can be read. `--solidcraft-version` overrides the target;

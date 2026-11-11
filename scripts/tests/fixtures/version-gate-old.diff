@@ -1,0 +1,5 @@
+diff --git a/crates/dutchman-solidcraft/src/example.rs b/crates/dutchman-solidcraft/src/example.rs
+--- a/crates/dutchman-solidcraft/src/example.rs
++++ b/crates/dutchman-solidcraft/src/example.rs
+@@ -0,0 +1 @@
++if target >= SolidCraftVersion::V0_22_1 { flatten(); }

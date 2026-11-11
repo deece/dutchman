@@ -1,0 +1,37 @@
+# Historical version expressions. Only remove entries; CI compares against the PR base.
+crates/dutchman-solidcraft/src/document.rs | 0.30.0 | if target >= SolidCraftVersion :: V0_30_0
+crates/dutchman-solidcraft/src/history/helix.rs | 0.25.1 | if ! crate :: VersionGate :: SketchProfileCoil . supported ( ctx . target_version )
+crates/dutchman-solidcraft/src/history/hole.rs | 0.22.1 | if crate :: VersionGate :: EntryRecessTip . supported ( ctx . target_version ) & & matches ! ( hole . get ( "type" ) . and_then ( Value :: as_str ) , Some ( "counterbore" | "countersink" ) )
+crates/dutchman-solidcraft/src/history/hole.rs | 0.22.1 | let recess_tip = crate :: VersionGate :: EntryRecessTip . supported ( ctx . target_version )
+crates/dutchman-solidcraft/src/history/pattern.rs | 0.25.1 | if ! crate :: VersionGate :: MirrorChain . supported ( ctx . target_version )
+crates/dutchman-solidcraft/src/history/primitive.rs | 0.24.1 | if ! crate :: VersionGate :: ConePrimitive . supported ( ctx . target_version )
+crates/dutchman-solidcraft/src/lib.rs | 0.18.2 | OLDEST_SOLIDCRAFT
+crates/dutchman-solidcraft/src/lib.rs | 0.18.2 | WINDOW_OLDEST
+crates/dutchman-solidcraft/src/lib.rs | 0.30.0 | NEWEST_SOLIDCRAFT
+crates/dutchman-solidcraft/src/verify.rs | 0.18.2 | Some ( version ) if version < OLDEST_SOLIDCRAFT =>
+crates/dutchman-solidcraft/src/verify.rs | 0.18.2 | if version < OLDEST_SOLIDCRAFT
+crates/dutchman-solidcraft/src/verify.rs | 0.18.2 | let [ major , minor , patch ] = OLDEST_SOLIDCRAFT
+crates/dutchman-solidcraft/src/verify.rs | 0.18.2 | let [ old_major , old_minor , _ ] = OLDEST_SOLIDCRAFT
+crates/dutchman-solidcraft/src/verify.rs | 0.18.2 | pub const OLDEST_SOLIDCRAFT : [ u64 ; 3 ] = [ 0 , 18 , 2 ]
+crates/dutchman-solidcraft/src/verify.rs | 0.18.2 | pub const WINDOW_OLDEST : [ u64 ; 3 ] = [ 0 , 18 , 2 ]
+crates/dutchman-solidcraft/src/verify.rs | 0.18.2 | solidcraft_version ( detection ) . and_then ( | line | parse_version ( & line ) ) . filter ( | version | * version >= OLDEST_SOLIDCRAFT ) . map ( | version | Self ( version ) . min ( Self :: default ( ) ) ) . unwrap_or_default ( )
+crates/dutchman-solidcraft/src/verify.rs | 0.22.1 | ! matches ! ( gate , VersionGate :: EntryRecessTip ) & & gate . supported ( SolidCraftVersion :: default ( ) ) & & ! gate . supported ( target )
+crates/dutchman-solidcraft/src/verify.rs | 0.22.1 | EntryRecessTip
+crates/dutchman-solidcraft/src/verify.rs | 0.22.1 | Self :: EntryRecessTip => SolidCraftVersion :: V0_22_1
+crates/dutchman-solidcraft/src/verify.rs | 0.22.1 | [ VersionGate :: EntryRecessTip , VersionGate :: SketchProfileCoil , VersionGate :: MirrorChain , VersionGate :: ConePrimitive , ] . into_iter ( ) . any ( | gate |
+crates/dutchman-solidcraft/src/verify.rs | 0.22.1 | pub const V0_22_1 : Self = Self ( [ 0 , 22 , 1 ] )
+crates/dutchman-solidcraft/src/verify.rs | 0.24.1 | ConePrimitive
+crates/dutchman-solidcraft/src/verify.rs | 0.24.1 | Self :: ConePrimitive => SolidCraftVersion :: V0_24_1
+crates/dutchman-solidcraft/src/verify.rs | 0.24.1 | [ VersionGate :: EntryRecessTip , VersionGate :: SketchProfileCoil , VersionGate :: MirrorChain , VersionGate :: ConePrimitive , ] . into_iter ( ) . any ( | gate |
+crates/dutchman-solidcraft/src/verify.rs | 0.24.1 | pub const V0_24_1 : Self = Self ( [ 0 , 24 , 1 ] )
+crates/dutchman-solidcraft/src/verify.rs | 0.25.1 | MirrorChain
+crates/dutchman-solidcraft/src/verify.rs | 0.25.1 | Self :: SketchProfileCoil | Self :: MirrorChain => SolidCraftVersion :: V0_25_1
+crates/dutchman-solidcraft/src/verify.rs | 0.25.1 | SketchProfileCoil
+crates/dutchman-solidcraft/src/verify.rs | 0.25.1 | [ VersionGate :: EntryRecessTip , VersionGate :: SketchProfileCoil , VersionGate :: MirrorChain , VersionGate :: ConePrimitive , ] . into_iter ( ) . any ( | gate |
+crates/dutchman-solidcraft/src/verify.rs | 0.25.1 | if self >= Self :: V0_25_1
+crates/dutchman-solidcraft/src/verify.rs | 0.25.1 | pub const V0_25_1 : Self = Self ( [ 0 , 25 , 1 ] )
+crates/dutchman-solidcraft/src/verify.rs | 0.30.0 | else if found < NEWEST_SOLIDCRAFT & & target_loses_history ( target )
+crates/dutchman-solidcraft/src/verify.rs | 0.30.0 | if found > NEWEST_SOLIDCRAFT
+crates/dutchman-solidcraft/src/verify.rs | 0.30.0 | let [ major , minor ] = NEWEST_SOLIDCRAFT
+crates/dutchman-solidcraft/src/verify.rs | 0.30.0 | pub const NEWEST_SOLIDCRAFT : [ u64 ; 2 ] = [ 0 , 30 ]
+crates/dutchman-solidcraft/src/verify.rs | 0.30.0 | pub const V0_30_0 : Self = Self ( [ 0 , 30 , 0 ] )

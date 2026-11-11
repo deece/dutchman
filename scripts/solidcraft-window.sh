@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
 # Print window constants/matrix entries, or fetch a verified CI release.
 # Usage: solidcraft-window.sh <oldest-x.y.z> <newest-x.y>
+#        solidcraft-window.sh --print [--releases saved-releases.json]
 #        solidcraft-window.sh --fetch <x.y|x.y.z> [pinned-sha256]
 set -euo pipefail
+if [[ ${1:-} == --print ]]; then
+    shift
+    exec python3 "$(dirname "$0")/solidcraft-version-policy.py" "$@"
+fi
 helper="$(dirname "$0")/solidcraft-release.py"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT

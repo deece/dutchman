@@ -42,6 +42,9 @@ cargo build --release
 Before you open a pull request, run the checks CI runs (`.github/workflows/ci.yml`):
 
 ```sh
+scripts/solidcraft-window.sh --print
+python3 scripts/check-version-gates.py --base HEAD
+python3 -m unittest discover -s scripts/tests -v
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
@@ -169,6 +172,10 @@ artifact has lost its executable bit, so `chmod +x` the programs.
 
 A few things reviewers ask about most:
 
+- **SolidCraft versions.** Keep the 0.18.2 opens-in floor, its CI job and all existing writer checks.
+  Before starting, run `scripts/solidcraft-window.sh --print`: new work targets only newest plus releases
+  published in the last 14 days. Never back-port features or add gates older than that window;
+  flatten new features for older targets with a named reason, keeping the file opening.
 - **Keep the default output.** A new behaviour that changes what an existing file converts to
   (orientation, units, placement, names) is opt-in behind a flag, and the default output stays
   the same. Change a golden file or a placement expectation only when the change means to, and
