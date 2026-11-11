@@ -1063,14 +1063,19 @@ pub(crate) struct StoredBody {
     pub exact: bool,
 }
 
+// (Minimum millimetres, share of the replayed box diagonal). A box over the body's own
+// edge vertices, interior samples and proven arc extremes can only miss an extreme inside
+// a face or between samples. For the parts this checks, that moves the centre by a small
+// fraction of the size, never by a large share of it.
+const APPROXIMATE_BODY_CENTER_TOLERANCE: (f64, f64) = (1.0, 0.02);
+
 /// What to say when a replayed partial history doesn't hold the bodies the source stores at
 /// the same point (`stored`): fewer bodies, or a stored body with no replayed body whose box
 /// centre is near enough. An exact stored box is the solid's own, so its centre must be within
-/// 0.5 mm or 1% of the replayed body's box diagonal. Any other is taken over points sampled on
-/// each edge, which can bunch on a curve, so its centre can be off by up to the body's radius:
-/// half the diagonal (at least 0.5 mm), as far as a replayed body of the right size can be. The
-/// source's list can leave bodies out, so a replay with more bodies than it lists isn't a
-/// difference.
+/// the larger of 0.5 mm and 1% of the replayed body's box diagonal. A box over edge vertices,
+/// interior samples and proven arc extremes allows the larger of 1 mm and 2% of that diagonal.
+/// The source's list can leave bodies out, so a replay with more bodies than it lists isn't
+/// a difference.
 pub(crate) fn bodies_differ(
     stored: Option<&[StoredBody]>,
     replayed: Option<&[Placed]>,
@@ -1096,11 +1101,21 @@ pub(crate) fn bodies_differ(
             .sqrt()
     };
     for body in stored {
-        let share = if body.exact { 0.01 } else { 0.5 };
+        let (minimum, share) = if body.exact {
+            (0.5, 0.01)
+        } else {
+            APPROXIMATE_BODY_CENTER_TOLERANCE
+        };
         let nearest = free
             .iter()
             .enumerate()
-            .map(|(slot, (at, size))| (slot, distance(&body.center, at), (size * share).max(0.5)))
+            .map(|(slot, (at, size))| {
+                (
+                    slot,
+                    distance(&body.center, at),
+                    (size * share).max(minimum),
+                )
+            })
             .min_by(|a, b| a.1.total_cmp(&b.1))?;
         if nearest.1 > nearest.2 {
             return Some(format!(
@@ -1880,13 +1895,15 @@ mod tests {
             bodies_differ(Some(&one), Some(&[piece])).as_deref(),
             Some("a retained body sits 12.6 mm from where the source has it at the same point")
         );
-        // Within half the body's size, as far as a full circle's samples can put the stored
-        // centre: the same body.
+        // An approximate stored centre must also be close to the replayed centre.
         let near = Placed {
             center: Some([0.0, 26.0, 1.5]),
             size: Some(30.0),
         };
-        assert_eq!(bodies_differ(Some(&one), Some(&[near])), None);
+        assert_eq!(
+            bodies_differ(Some(&one), Some(&[near])).as_deref(),
+            Some("a retained body sits 13.8 mm from where the source has it at the same point")
+        );
         // An exact stored box is the solid's own: the same 13.8 mm is a different body, and
         // only a centre within 1% of the size (at least 0.5 mm) matches.
         let exact = [StoredBody {
@@ -1917,6 +1934,25 @@ mod tests {
             size: None,
         };
         assert_eq!(bodies_differ(Some(&one), Some(&[unknown])), None);
+    }
+
+    #[test]
+    fn approximate_stored_centres_allow_small_offsets_but_not_a_large_share_of_the_body() {
+        let stored = [StoredBody {
+            center: [0.0; 3],
+            exact: false,
+        }];
+        let replayed = |offset: f64| {
+            [Placed {
+                center: Some([offset, 0.0, 0.0]),
+                size: Some(56.0),
+            }]
+        };
+        assert_eq!(
+            bodies_differ(Some(&stored), Some(&replayed(17.7))).as_deref(),
+            Some("a retained body sits 17.7 mm from where the source has it at the same point")
+        );
+        assert_eq!(bodies_differ(Some(&stored), Some(&replayed(0.8))), None);
     }
 
     fn touch(folder: &Path, name: &str) -> PathBuf {

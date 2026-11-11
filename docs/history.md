@@ -335,6 +335,10 @@ timeline for correction when it replays; it does not identify which feature need
 correction. SolidCraft's numerical eval includes hidden bodies as well as the visible
 final shape.
 
+When a partial history is checked against the source's stored bodies, each kept body must
+sit where the source has it: within the larger of 1 mm and 2% of its box diagonal when the
+source's position is approximate, or 0.5 mm and 1% when it is exact.
+
 For targets of SolidCraft 0.30 or newer, partial and unverified editable-history copies
 use **Hide its History**: their features stay in the Browser and keep rebuilding, but
 are left out of the History bar. Use **Show its History** on the component to restore

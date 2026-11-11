@@ -265,9 +265,10 @@ A partial history that replays but whose bodies differ from what the source stor
 point adds a `Degraded` loss with code `history/body-mismatch`, and `verification.reason` says
 so: fewer bodies, or a body the source has with no replayed body whose box centre is near
 enough. When the source marks a body's box as the solid's own (Fusion's `body_centers_exact`),
-its centre must be within 0.5 mm or 1% of the replayed body's box diagonal. Other boxes are
-taken over points sampled on each edge and can be off by up to the body's radius, so for those
-it is half the diagonal (at least 0.5 mm). The source's list can leave bodies out, so more
+its centre must be within the larger of 0.5 mm and 1% of the replayed body's box diagonal.
+Other boxes are taken over edge vertices, interior samples and proven arc extremes; their
+centres must be within the larger of 1 mm and 2% of the replayed body's box diagonal.
+The source's list can leave bodies out, so more
 replayed bodies than it lists don't count. It is compared when the last retained feature that isn't a
 sketch carries the source's bodies, which Fusion files can. In a design with components, a list
 that features of more than one component carry isn't any one component's state, so it isn't used.
