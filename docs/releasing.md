@@ -107,6 +107,8 @@ a release always ships a candidate's tested files.
 | Run by hand (`gh workflow run release-build.yml --ref <branch>`) | Full build |
 | Nightly | Its own daily build of `main`, unchanged |
 
+For just the Linux x86_64 tarball and its checksum, dispatch with `targets: linux-x86_64`: `gh workflow run release-build.yml --ref <branch> -f targets=linux-x86_64`.
+
 A full build makes each platform's archive
 (`scripts/package-archive.sh`: `dutchman`, `dutchman-mcp` and `dutchman-gui`, plus `dutchman-web` on Linux, with LICENSE,
 NOTICE, README and a SHA-256), the Windows per-user MSI, and the macOS disk image

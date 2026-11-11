@@ -34,6 +34,13 @@ on:
   push:
     tags: ["v*-rc.*"]
   workflow_dispatch:
+    inputs:
+      # Build just the Linux x86_64 tarball for measurements.
+      targets:
+        description: "Which builds to run: all, or linux-x86_64 for just the Linux x86_64 tarball"
+        type: choice
+        options: [all, linux-x86_64]
+        default: all
   pull_request:
     types: [opened, synchronize, reopened, labeled]
   # A merge queue group is judged like a pull request: the full builds run only when it changes
@@ -143,20 +150,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          # Two compile jobs on Linux keep the release links (thin LTO, 16 codegen units)
-          # within the runner's memory; with more, the x86_64 runner was lost mid-build.
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            container: debian:bookworm
-            jobs: 2
-          - os: ubuntu-24.04-arm
-            target: aarch64-unknown-linux-gnu
-            container: debian:bookworm
-            jobs: 2
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            jobs: 4
+        # Two compile jobs on Linux keep the release links (thin LTO, 16 codegen units)
+        # within the runner's memory; with more, the x86_64 runner was lost mid-build.
+        include: >-
+          ${{ fromJSON(inputs.targets == 'linux-x86_64' &&
+            '[{"os":"ubuntu-latest","target":"x86_64-unknown-linux-gnu","container":"debian:bookworm","jobs":2}]' ||
+            '[{"os":"ubuntu-latest","target":"x86_64-unknown-linux-gnu","container":"debian:bookworm","jobs":2},
+              {"os":"ubuntu-24.04-arm","target":"aarch64-unknown-linux-gnu","container":"debian:bookworm","jobs":2},
+              {"os":"windows-latest","target":"x86_64-pc-windows-msvc","jobs":4}]') }}
     runs-on: ${{ matrix.os }}
     container: ${{ matrix.container || '' }}
     # An uncached Windows release build alone takes 65-87 minutes; the Windows job then
@@ -249,7 +250,7 @@ jobs:
   # Each Mac target gets an Apple silicon runner; Intel stays cross-compiled.
   macos-build:
     needs: plan
-    if: needs.plan.outputs.full == 'true'
+    if: needs.plan.outputs.full == 'true' && inputs.targets != 'linux-x86_64'
     strategy:
       fail-fast: false
       matrix:
@@ -317,6 +318,7 @@ jobs:
 
   image-check:
     needs: build
+    if: inputs.targets != 'linux-x86_64'
     runs-on: ubuntu-latest
     permissions:
       contents: read
