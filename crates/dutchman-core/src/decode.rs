@@ -235,6 +235,7 @@ fn decode_unguarded(
         with_fallback(&mut ir, report, &policy, bytes.len() as u64)
     };
     drop_removed_bodies(&mut ir, report);
+    drop_inactive_configuration_bodies(&mut ir, report);
 
     let model = Model {
         ir,
@@ -506,6 +507,56 @@ fn drop_removed_bodies(ir: &mut cadmpeg_ir::CadIr, report: &mut Report) {
             Severity::Info,
             format!("feature \"{name}\""),
             format!("{count} {bodies} it removes left out of the converted design"),
+        );
+    }
+}
+
+/// Leaves out bodies known only to inactive configurations. Only one active configuration
+/// with resolved bodies can say which to keep; a body no configuration lists stays because
+/// unknown membership does not mean absence from the saved configuration.
+fn drop_inactive_configuration_bodies(ir: &mut cadmpeg_ir::CadIr, report: &mut Report) {
+    use std::collections::BTreeSet;
+    let mut active = ir
+        .model
+        .configurations
+        .iter()
+        .filter(|config| config.active);
+    let Some(config) = active.next() else {
+        return;
+    };
+    if active.next().is_some() {
+        return;
+    }
+    let Some(bodies) = &config.bodies else {
+        return;
+    };
+    let kept: BTreeSet<_> = bodies.iter().collect();
+    let removed: BTreeSet<_> = ir
+        .model
+        .configurations
+        .iter()
+        .filter(|config| !config.active)
+        .filter_map(|config| config.bodies.as_ref())
+        .flat_map(|bodies| bodies.iter())
+        .filter(|id| !kept.contains(id))
+        .cloned()
+        .collect();
+    let name = config.name.as_deref().unwrap_or("unnamed").to_owned();
+    let before = ir.model.bodies.len();
+    ir.model.bodies.retain(|body| !removed.contains(&body.id));
+    for definition in &mut ir.model.product_definitions {
+        definition.bodies.retain(|id| !removed.contains(id));
+    }
+    let count = before - ir.model.bodies.len();
+    if count != 0 {
+        let bodies = if count == 1 { "body" } else { "bodies" };
+        report.push_coded(
+            Severity::Info,
+            "configurations",
+            "dutchman/configuration.inactive-bodies-left-out",
+            format!(
+                "{count} {bodies} of other configurations left out; converted the saved configuration \"{name}\""
+            ),
         );
     }
 }
@@ -993,6 +1044,125 @@ mod tests {
             loss.detail,
             "1 body it removes left out of the converted design"
         );
+    }
+
+    fn configuration_bodies() -> cadmpeg_ir::CadIr {
+        let mut ir = cadmpeg_ir::CadIr::empty();
+        for id in ["test:model:body#A", "test:model:body#B"] {
+            ir.model.bodies.push(
+                serde_json::from_value(serde_json::json!({"id": id, "regions": []})).unwrap(),
+            );
+        }
+        ir.model.product_definitions.push(
+            serde_json::from_value(serde_json::json!({
+                "id": "test:product:definition#0", "kind": "part",
+                "bodies": ["test:model:body#A", "test:model:body#B"]
+            }))
+            .unwrap(),
+        );
+        for (ordinal, name, body, active) in [(0, "Short", "A", true), (1, "Tall", "B", false)] {
+            ir.model.configurations.push(
+                serde_json::from_value(serde_json::json!({
+                    "id": format!("test:design:configuration#{ordinal}"),
+                    "ordinal": ordinal, "name": name, "active": active,
+                    "bodies": [format!("test:model:body#{body}")]
+                }))
+                .unwrap(),
+            );
+        }
+        ir
+    }
+
+    #[test]
+    fn inactive_configuration_bodies_are_left_out_and_reported() {
+        let mut ir = configuration_bodies();
+        let mut report = Report::default();
+        drop_inactive_configuration_bodies(&mut ir, &mut report);
+        assert_eq!(ir.model.bodies.len(), 1);
+        assert_eq!(ir.model.bodies[0].id.as_str(), "test:model:body#A");
+        assert_eq!(ir.model.product_definitions[0].bodies.len(), 1);
+        assert_eq!(
+            ir.model.product_definitions[0].bodies[0],
+            ir.model.bodies[0].id
+        );
+        assert_eq!(report.losses().len(), 1);
+        let loss = &report.losses()[0];
+        assert_eq!(loss.severity, Severity::Info);
+        assert_eq!(loss.subject, "configurations");
+        assert_eq!(
+            loss.code.as_deref(),
+            Some("dutchman/configuration.inactive-bodies-left-out")
+        );
+        assert_eq!(
+            loss.detail,
+            "1 body of other configurations left out; converted the saved configuration \"Short\""
+        );
+        drop_inactive_configuration_bodies(&mut ir, &mut report);
+        assert_eq!(report.losses().len(), 1);
+    }
+
+    #[test]
+    fn bodies_with_unknown_configuration_membership_are_kept() {
+        let mut ir = configuration_bodies();
+        ir.model.bodies.push(
+            serde_json::from_value(serde_json::json!({
+                "id": "test:model:body#C", "regions": []
+            }))
+            .unwrap(),
+        );
+        drop_inactive_configuration_bodies(&mut ir, &mut Report::default());
+        assert_eq!(ir.model.bodies.len(), 2);
+        assert_eq!(ir.model.bodies[0].id.as_str(), "test:model:body#A");
+        assert_eq!(ir.model.bodies[1].id.as_str(), "test:model:body#C");
+    }
+
+    #[test]
+    fn active_configuration_bodies_are_kept_even_when_shared() {
+        let mut ir = configuration_bodies();
+        ir.model.configurations[1].bodies = ir.model.configurations[0].bodies.clone();
+        let source = ir.clone();
+        let mut report = Report::default();
+        drop_inactive_configuration_bodies(&mut ir, &mut report);
+        assert_eq!(ir, source);
+        assert!(report.losses().is_empty());
+    }
+
+    #[test]
+    fn unresolved_active_configuration_bodies_leave_every_body() {
+        let mut ir = configuration_bodies();
+        ir.model.configurations[0].bodies = None;
+        let source = ir.clone();
+        let mut report = Report::default();
+        drop_inactive_configuration_bodies(&mut ir, &mut report);
+        assert_eq!(ir, source);
+        assert!(report.losses().is_empty());
+    }
+
+    #[test]
+    fn two_active_configurations_leave_every_body() {
+        let mut ir = configuration_bodies();
+        ir.model.configurations[1].active = true;
+        let source = ir.clone();
+        let mut report = Report::default();
+        drop_inactive_configuration_bodies(&mut ir, &mut report);
+        assert_eq!(ir, source);
+        assert!(report.losses().is_empty());
+    }
+
+    #[test]
+    fn no_active_configuration_leaves_every_body() {
+        let mut ir = configuration_bodies();
+        ir.model.configurations[0].active = false;
+        let source = ir.clone();
+        let mut report = Report::default();
+        drop_inactive_configuration_bodies(&mut ir, &mut report);
+        assert_eq!(ir, source);
+        assert!(report.losses().is_empty());
+        ir.model.configurations.clear();
+        let source = ir.clone();
+        drop_inactive_configuration_bodies(&mut ir, &mut report);
+        assert_eq!(ir, source);
+        assert!(report.losses().is_empty());
     }
 
     #[test]

@@ -72,6 +72,11 @@ faces without input surface geometry. Unspecified modeled construction, when an 
 can be placed, adds a Degraded loss explaining that only the cosmetic annotation is kept.
 These use the existing loss fields; no report schema or field changes.
 
+When bodies belonging only to inactive configurations are left out, `losses` includes an
+Info entry with code `dutchman/configuration.inactive-bodies-left-out`, subject
+`configurations`, and stage `map`. Its message counts the bodies left out and names the
+saved configuration. Bodies with unknown membership are kept. No schema fields change.
+
 ## `dutchman.progress/1`
 
 `convert --json`, `convert-all --json`, `inspect --json`, and `watch --json` write progress

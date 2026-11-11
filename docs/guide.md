@@ -120,6 +120,9 @@ dutchman convert --json generated_unit_cube.f3d cube.sc
 
 (Printed on one line; wrapped here.)
 
+SolidWorks parts convert in their saved configuration when its body membership is known.
+An Info note counts bodies left out from other configurations and names the saved configuration.
+
 SolidWorks assemblies (`.sldasm`) convert with their external part files. Keep parts beside
 the assembly or give `--project DIR` and `--search DIR`. Missing or unreadable occurrences
 are reported and left out; unavailable referenced configurations use the saved active

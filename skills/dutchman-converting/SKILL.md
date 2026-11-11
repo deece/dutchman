@@ -21,6 +21,10 @@ the output beside the input from `--to`. An existing derived output is kept with
 choose `-o PATH` or use `--force` to replace it. `--force` conflicts with `--no-clobber`.
 Explicit outputs retain their replacement behaviour. MCP output paths remain required.
 
+SolidWorks parts convert in their saved configuration when its body membership is known.
+An Info note counts bodies left out from other configurations and names the saved configuration;
+bodies with unknown membership stay.
+
 Dutchman converts native CAD files into SolidCraft designs. Use the `dutchman-mcp` tools when
 they are connected (`inspect`, `convert`, `convert_all`, `formats`, `repro`); otherwise run the
 `dutchman` command with `--json`. Both return the same reports, described in Dutchman's

@@ -31,6 +31,9 @@ The desktop **Ask your AI about this file** prompt needs no MCP connection: it o
 installed instructions and conversion skill first (with GitHub URL fallbacks when absent),
 then the same JSON directly, and uses the bundled command line only for focused follow-up work.
 
+SolidWorks parts convert in their saved configuration when its body membership is known.
+Conversion reports include an Info note when bodies from other configurations are left out.
+
 ## Project inputs
 
 Files whose names start with `~$` are lock files. They are ignored in project planning
