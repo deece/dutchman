@@ -124,14 +124,20 @@ fn whole_of_several(feature: &Value, ctx: &Context) -> bool {
 
 /// The bodies the source stores in the state right after `feature`: the centres of their
 /// boxes, from `id:x,y,z;id:x,y,z` in its `body_centers`, each exact when its id is in
-/// `body_centers_exact`. `None` when it has none, which is unknown, or when an entry can't be
-/// read.
+/// `body_centers_exact`. `None` when it has none, which is unknown, when an entry can't be
+/// read, or when `body_centers_incomplete` names any body whose centre rests on incomplete
+/// edge evidence, even if that body has a centre entry.
 fn stored_body_centers(feature: &Value) -> Option<Vec<crate::verify::StoredBody>> {
     let property = |name: &str| {
         feature
             .pointer(&format!("/source_properties/{name}"))
             .and_then(Value::as_str)
     };
+    if property("body_centers_incomplete")
+        .is_some_and(|ids| ids.split(';').any(|id| !id.trim().is_empty()))
+    {
+        return None;
+    }
     let exact: std::collections::BTreeSet<&str> = property("body_centers_exact")
         .unwrap_or_default()
         .split(',')
@@ -2229,6 +2235,69 @@ mod tests {
         assert!(
             why.starts_with("feature \"Extrude 4\": its profile is the whole of a sketch"),
             "{why}"
+        );
+    }
+
+    #[test]
+    fn body_centers_with_incomplete_bodies_are_unknown() {
+        let feature = json!({"source_properties": {
+            "body_centers": "1:0,0,10",
+            "body_centers_exact": "1",
+            "body_centers_incomplete": "2;3",
+        }});
+        assert!(stored_body_centers(&feature).is_none());
+    }
+
+    #[test]
+    fn body_centers_with_incomplete_evidence_are_unknown_even_with_all_centers() {
+        let feature = json!({"source_properties": {
+            "body_centers": "1:0,0,10;2:5,0,20",
+            "body_centers_exact": "1,2",
+            "body_centers_incomplete": "2",
+        }});
+        assert!(stored_body_centers(&feature).is_none());
+    }
+
+    #[test]
+    fn body_centers_with_empty_incomplete_list_are_usable() {
+        let feature = json!({"source_properties": {
+            "body_centers": "1:0,0,10;2:5,0,20",
+            "body_centers_exact": "1",
+            "body_centers_incomplete": "",
+        }});
+        assert_eq!(
+            stored_body_centers(&feature),
+            Some(vec![
+                crate::verify::StoredBody {
+                    center: [0.0, 0.0, 10.0],
+                    exact: true,
+                },
+                crate::verify::StoredBody {
+                    center: [5.0, 0.0, 20.0],
+                    exact: false,
+                },
+            ])
+        );
+    }
+
+    #[test]
+    fn body_centers_without_incomplete_property_are_usable() {
+        let feature = json!({"source_properties": {
+            "body_centers": "1:0,0,10;2:5,0,20",
+            "body_centers_exact": "1",
+        }});
+        assert_eq!(
+            stored_body_centers(&feature),
+            Some(vec![
+                crate::verify::StoredBody {
+                    center: [0.0, 0.0, 10.0],
+                    exact: true,
+                },
+                crate::verify::StoredBody {
+                    center: [5.0, 0.0, 20.0],
+                    exact: false,
+                },
+            ])
         );
     }
 
