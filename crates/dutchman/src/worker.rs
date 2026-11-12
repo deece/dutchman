@@ -776,7 +776,7 @@ fn convert_once(
     }
     std::thread::scope(|scope| {
         let stage = Arc::new(Mutex::new(Stage::Input));
-        let reading = Arc::new(Mutex::new(Reading::new()));
+        let reading = Arc::new(Mutex::new(Reading::new(is_archive(&job.input))));
         let stdout = child.stdout.take().map(|out| {
             std::thread::spawn(move || {
                 let mut text = String::new();
@@ -880,17 +880,23 @@ struct Reading {
     since: Instant,
     /// When this design (or this stage, before any design) began; progress does not move it.
     began: Instant,
+    /// A Fusion archive: its preparation before the first design (a whole-archive read that took
+    /// 54 minutes on a 396 MB archive, memory moving throughout) is not one design, so the
+    /// all-in ceiling counts only while a named design is read. The no-progress limit still
+    /// covers the preparation.
+    archive: bool,
     /// The memory the child held when the clock last restarted.
     held: Option<u64>,
 }
 
 impl Reading {
-    fn new() -> Self {
+    fn new(archive: bool) -> Self {
         Self {
             stage: Stage::Input,
             design: None,
             since: Instant::now(),
             began: Instant::now(),
+            archive,
             held: None,
         }
     }
@@ -930,8 +936,9 @@ impl Reading {
     /// all (`Some(None)` when none is named).
     fn stuck(&self, limit: Duration) -> Option<Option<String>> {
         let reading = matches!(self.stage, Stage::Decode | Stage::Project);
+        let ceiling = !self.archive || self.design.is_some();
         let over = self.since.elapsed() > limit
-            || self.began.elapsed() > limit.saturating_mul(CEILING_TIMES);
+            || (ceiling && self.began.elapsed() > limit.saturating_mul(CEILING_TIMES));
         (reading && over).then(|| self.design.clone())
     }
 }
@@ -1386,7 +1393,7 @@ mod classification_tests {
         follow_stages(
             stream.as_bytes(),
             &Mutex::new(Stage::Input),
-            &Mutex::new(Reading::new()),
+            &Mutex::new(Reading::new(false)),
             &|_| {},
             Some(&log),
         );
@@ -1532,7 +1539,7 @@ mod left_out_tests {
 
     #[test]
     fn the_stuck_clock_runs_only_while_reading_and_restarts_per_design() {
-        let mut reading = Reading::new();
+        let mut reading = Reading::new(false);
         let none = Duration::ZERO;
         assert_eq!(reading.stuck(none), None);
         reading.stage(Stage::Decode);
@@ -1556,7 +1563,7 @@ mod left_out_tests {
     #[test]
     fn a_design_that_keeps_moving_memory_still_stops_at_three_times_the_limit() {
         let limit = Duration::from_millis(40);
-        let mut reading = Reading::new();
+        let mut reading = Reading::new(false);
         reading.stage(Stage::Decode);
         reading.design(Some("Runaway.f3d".into()));
         let began = Instant::now();
@@ -1576,5 +1583,36 @@ mod left_out_tests {
         // A new design starts its own allowance.
         reading.design(Some("Next.f3d".into()));
         assert_eq!(reading.stuck(limit), None);
+
+        // An archive's preparation before its first design, memory moving all the while, runs
+        // past the ceiling without being stopped (a 396 MB archive took 54 minutes); a single
+        // file's decode does not get that pass.
+        for archive in [true, false] {
+            let mut reading = Reading::new(archive);
+            reading.stage(Stage::Decode);
+            let began = Instant::now();
+            let mut bytes = 1u64 << 30;
+            while began.elapsed() < limit * 4 {
+                bytes += PROGRESS_BYTES;
+                reading.memory(bytes);
+                if !archive && reading.stuck(limit).is_some() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            assert_eq!(
+                reading.stuck(limit).is_some(),
+                !archive,
+                "archive={archive}: {:?}",
+                began.elapsed()
+            );
+            if archive {
+                // Its first design gets the ceiling from the moment it starts.
+                reading.design(Some("Heavy.f3d".into()));
+                std::thread::sleep(limit * 3 + Duration::from_millis(10));
+                reading.memory(bytes + PROGRESS_BYTES);
+                assert_eq!(reading.stuck(limit), Some(Some("Heavy.f3d".into())));
+            }
+        }
     }
 }
