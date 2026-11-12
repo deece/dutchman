@@ -225,6 +225,7 @@ fn run_loop(
             timeout: Duration::from_secs(command.timeout.max(1)),
             max_memory: (command.max_memory > 0)
                 .then_some(command.max_memory.saturating_mul(1 << 20)),
+            design: Some(worker::DEFAULT_DESIGN_LIMIT),
         },
         ..batch::Settings::isolated()?
     };

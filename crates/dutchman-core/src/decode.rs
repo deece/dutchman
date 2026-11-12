@@ -402,6 +402,15 @@ impl cadmpeg_codec_f3d::F3zMemberObserver for Members {
     }
 
     fn member_started(&self, path: &str) {
+        // Test builds only: a named design that never finishes, for the stuck-design limit.
+        #[cfg(debug_assertions)]
+        if std::env::var_os("DUTCHMAN_TEST_STUCK_DESIGN").is_some_and(|stuck| stuck == path) {
+            self.sink
+                .member_event(path, crate::MemberEvent::Start, 0, None);
+            loop {
+                std::thread::sleep(std::time::Duration::from_secs(1));
+            }
+        }
         self.phase.borrow_mut().take();
         let mut started = self.started.borrow_mut();
         // The decoder also caps archive members; bound diagnostics independently.

@@ -937,6 +937,7 @@ pub fn run_isolated(
     let limits = Limits {
         timeout: std::time::Duration::from_secs(u64::MAX / 4),
         max_memory: None,
+        design: Some(crate::worker::DEFAULT_DESIGN_LIMIT),
     };
     run_with(
         work,

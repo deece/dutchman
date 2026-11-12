@@ -175,6 +175,7 @@ pub fn run(
                     &crate::worker::Limits {
                         timeout: settings.time_limit.saturating_mul(6),
                         max_memory: Some(per_worker),
+                        design: Some(crate::worker::DEFAULT_DESIGN_LIMIT),
                     },
                     None,
                 )

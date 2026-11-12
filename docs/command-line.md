@@ -265,9 +265,16 @@ The limit line always ends in a full stop. The name and limit (2 min for SolidCr
 
 FreeCAD's `--freecad-timeout` defaults to 300 s for its headless run. A native document
 conversion stops without writing an output document; a macro-only check keeps the macro
-unverified. Reading, mapping and writing have no independent wall-clock limit.
+unverified. Reading one design has a limit of its own: a design that makes no progress for
+20 minutes (no step finishing, no other design starting, memory not moving), or that runs 60
+minutes in all, counts as stuck and is stopped. `DUTCHMAN_DESIGN_TIME_LIMIT` sets the 20 in
+minutes (the 60 follows at three times it; `0` turns the limit off). In a Fusion `.f3z` archive the stuck design is left
+out and the archive converted again without it, so the other designs still convert; the report
+names the design that was left out (at most three per archive). A stuck single-design file
+fails with a message naming it. Mapping and writing have no independent wall-clock limit.
 `convert-all --timeout` is a separate whole-file limit (900 s by default): it stops that
-file's worker and reports failure. The desktop has no practical whole-file timeout. **Stop** starts no further files;
+file's worker and reports failure. The desktop has no practical whole-file timeout, but the
+per-design limit above applies there too. **Stop** starts no further files;
 files already converting finish. Closing the app ends its workers through their parent-exit
 guard. The shared CLI supervisor separately allows a 30 s grace period when a shutdown
 flag is supplied; the desktop does not supply that flag. CLI version queries stop after 3 s; a CLI that gives no version can still be used for

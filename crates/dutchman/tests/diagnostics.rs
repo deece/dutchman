@@ -563,3 +563,33 @@ fn explicit_log_from_another_version_warns_and_still_converts() {
     assert!(path.is_file());
     assert_eq!(records(&path).last().unwrap()["type"], "end");
 }
+
+#[test]
+fn a_stuck_design_stops_at_the_design_limit_and_is_named() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("Stuck.f3z");
+    archive(&input);
+    let started = Instant::now();
+    let out = Command::new(env!("CARGO_BIN_EXE_dutchman"))
+        .args(["convert-all", "--jobs", "1", "--no-verify", "--out-dir"])
+        .arg(dir.path().join("out"))
+        .arg(&input)
+        // Test builds only: the root design never finishes, and a design may read 10 s (a
+        // debug build reads a small design in a few seconds).
+        .env("DUTCHMAN_TEST_STUCK_DESIGN", "ZebraWidget.f3d")
+        .env("DUTCHMAN_TEST_DESIGN_LIMIT_MS", "10000")
+        .output()
+        .unwrap();
+    assert!(
+        started.elapsed() < Duration::from_secs(120),
+        "{:?}",
+        started.elapsed()
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    // Left out and tried again without it; with the root gone the archive cannot convert, so
+    // the failure names the design that was stuck.
+    assert!(text.contains("ZebraWidget.f3d"), "{text}");
+    assert!(text.contains("left out"), "{text}");
+    assert!(text.contains("limit for one design"), "{text}");
+    assert!(text.contains("DUTCHMAN_DESIGN_TIME_LIMIT"), "{text}");
+}

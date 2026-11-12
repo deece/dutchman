@@ -44,6 +44,9 @@ pub struct Limits {
     pub timeout: Duration,
     /// How much memory it may hold, in bytes; `None` for no limit.
     pub max_memory: Option<u64>,
+    /// How long reading one design may take before it counts as stuck; `None` for no limit.
+    /// In a Fusion archive (.f3z) a stuck design is left out and the rest converted again.
+    pub design: Option<Duration>,
 }
 
 /// Short helper programs have no window to show.
@@ -175,6 +178,57 @@ pub fn watch_own_memory(stopped: impl FnOnce(String) + Send + 'static) {
 /// The default time one file may take.
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(900);
 
+/// How long reading one design may take. A 137 MB Fusion design once sat 6.6 h with flat
+/// memory, stuck, and the 15 other designs in its archive never got a turn (2026-11-12). Large
+/// designs read in minutes; twenty is far past any seen finishing.
+pub const DEFAULT_DESIGN_LIMIT: Duration = Duration::from_secs(20 * 60);
+
+/// The setting for [`DEFAULT_DESIGN_LIMIT`]: minutes, `0` for no limit.
+pub const DESIGN_LIMIT_ENV: &str = "DUTCHMAN_DESIGN_TIME_LIMIT";
+
+/// How often the memory of a design being read is looked at, and how far it must move to count
+/// as progress: a design still allocating or freeing is working, not stuck.
+const PROGRESS_POLL: Duration = Duration::from_secs(10);
+const PROGRESS_BYTES: u64 = 64 << 20;
+
+/// The design limit `DUTCHMAN_DESIGN_TIME_LIMIT` asks for, in minutes (`0` turns it off), else
+/// `limits`'s own.
+fn design_limit(limits: &Limits, setting: Option<&str>) -> Option<Duration> {
+    match setting
+        .map(str::trim)
+        .and_then(|minutes| minutes.parse::<u64>().ok())
+    {
+        Some(0) => None,
+        Some(minutes) => Some(Duration::from_secs(minutes.saturating_mul(60))),
+        None => limits.design,
+    }
+}
+
+/// `limit` in whole minutes, as a phrase ("1 minute", "20 minutes").
+fn minutes(limit: Option<Duration>) -> String {
+    match limit.map_or(0, |limit| limit.as_secs().div_ceil(60)) {
+        1 => "1 minute".to_owned(),
+        n => format!("{n} minutes"),
+    }
+}
+
+/// A design may run this many times the limit in all, progress or not: a decoder caught in a
+/// runaway allocation keeps moving its memory and would otherwise never count as stuck.
+const CEILING_TIMES: u32 = 3;
+
+/// What a stuck design ran past, as a phrase: "20 minutes with no progress, or 60 minutes in
+/// all".
+fn limit_phrase(limit: Option<Duration>) -> String {
+    format!(
+        "{} with no progress, or {} in all",
+        minutes(limit),
+        minutes(limit.map(|limit| limit.saturating_mul(CEILING_TIMES)))
+    )
+}
+
+/// How many stuck designs one archive may lose before the conversion gives up.
+const MAX_LEFT_OUT: usize = 3;
+
 /// The default memory one file may hold, in megabytes; `0` for no limit. A file may use what
 /// this computer has: a conversion stops when memory really runs low.
 pub const DEFAULT_MAX_MEMORY_MB: u64 = 0;
@@ -184,6 +238,7 @@ impl Default for Limits {
         Limits {
             timeout: DEFAULT_TIMEOUT,
             max_memory: None,
+            design: Some(DEFAULT_DESIGN_LIMIT),
         }
     }
 }
@@ -428,6 +483,9 @@ pub fn convert_isolated_with_progress(
     })
 }
 
+/// Converts `job` in a child process. A design in a Fusion archive (.f3z) that stays stuck
+/// past [`Limits::design`] is left out and the archive converted again without it, up to
+/// [`MAX_LEFT_OUT`] times, so one design no longer keeps the rest from converting.
 fn convert_isolated_inner(
     program: &Path,
     job: &Job,
@@ -437,6 +495,239 @@ fn convert_isolated_inner(
     on_progress: &(dyn Fn(dutchman_core::ProgressEvent) + Send + Sync),
     log: Option<&crate::diagnostics::Log>,
 ) -> Value {
+    let set_limits = Limits {
+        design: design_limit(limits, std::env::var(DESIGN_LIMIT_ENV).ok().as_deref()),
+        ..limits.clone()
+    };
+    let limits = &set_limits;
+    #[cfg(debug_assertions)]
+    let test_limits;
+    #[cfg(debug_assertions)]
+    let limits = match std::env::var("DUTCHMAN_TEST_DESIGN_LIMIT_MS")
+        .ok()
+        .and_then(|ms| ms.parse::<u64>().ok())
+    {
+        Some(ms) => {
+            test_limits = Limits {
+                design: Some(Duration::from_millis(ms)),
+                ..limits.clone()
+            };
+            &test_limits
+        }
+        None => limits,
+    };
+    let (mut report, mut stuck) =
+        convert_once(program, job, options, limits, shutdown, on_progress, log);
+    let mut left_out: Vec<String> = Vec::new();
+    // Each copy without a stuck design lives until the conversion of it is done.
+    let mut copies: Vec<tempfile::TempDir> = Vec::new();
+    let mut current = job.clone();
+    while let Some(Some(design)) = stuck.take() {
+        if !is_archive(&job.input) || left_out.len() >= MAX_LEFT_OUT || left_out.contains(&design) {
+            break;
+        }
+        let Some((dir, input)) = archive_without(&current.input, &design) else {
+            break;
+        };
+        left_out.push(design);
+        copies.push(dir);
+        current = Job {
+            input,
+            ..job.clone()
+        };
+        (report, stuck) = convert_once(
+            program,
+            &current,
+            options,
+            limits,
+            shutdown,
+            on_progress,
+            log,
+        );
+    }
+    if !left_out.is_empty() {
+        mark_left_out(&mut report, &job.input, &left_out, limits);
+    }
+    drop(copies);
+    report
+}
+
+/// Whether `path` is a Fusion archive, whose designs can be left out one at a time.
+fn is_archive(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("f3z"))
+}
+
+/// A private copy of the archive `input` without its entry `design`, under the same file name;
+/// `None` when it cannot be made or has no such entry.
+fn archive_without(input: &Path, design: &str) -> Option<(tempfile::TempDir, PathBuf)> {
+    let dir = tempfile::Builder::new()
+        .prefix("dutchman-archive-")
+        .tempdir()
+        .ok()?;
+    let copy = dir.path().join(input.file_name()?);
+    matches!(without_entry(input, design, &copy), Ok(true)).then_some((dir, copy))
+}
+
+/// Writes the zip `input` to `out` without its entry `name`, copying every other entry as it
+/// is stored (nothing is decompressed). Whether `name` was there.
+pub(crate) fn without_entry(input: &Path, name: &str, out: &Path) -> zip::result::ZipResult<bool> {
+    let mut source = zip::ZipArchive::new(std::fs::File::open(input)?)?;
+    let mut writer = zip::ZipWriter::new(std::fs::File::create(out)?);
+    let mut found = false;
+    for index in 0..source.len() {
+        let entry = source.by_index_raw(index)?;
+        if entry.name().is_ok_and(|entry_name| entry_name == name) {
+            found = true;
+            continue;
+        }
+        writer.raw_copy_file(entry)?;
+    }
+    writer.finish()?;
+    Ok(found)
+}
+
+/// Says in `report` which stuck designs were left out of `input`: as losses when the rest
+/// converted, in the error otherwise. Names are quoted so anonymous reports take them out.
+pub(crate) fn mark_left_out(
+    report: &mut Value,
+    input: &Path,
+    left_out: &[String],
+    limits: &Limits,
+) {
+    let ran = limit_phrase(limits.design);
+    let quoted = |names: &[String]| {
+        names
+            .iter()
+            .map(|name| format!("\"{name}\""))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    if let Some(fields) = report.as_object_mut() {
+        fields.insert("input".into(), json::input(input));
+        fields.insert("left_out_designs".into(), serde_json::json!(left_out));
+    }
+    let ok = report.get("ok").and_then(Value::as_bool) == Some(true);
+    if ok {
+        let losses: Vec<Value> = left_out
+            .iter()
+            .map(|design| {
+                let users = users_of(input, design);
+                let users = if users.is_empty() {
+                    String::new()
+                } else {
+                    let (uses, is) = if users.len() == 1 {
+                        ("uses", "is")
+                    } else {
+                        ("use", "are")
+                    };
+                    format!("; {} {uses} it and {is} missing its parts", quoted(&users))
+                };
+                serde_json::json!({
+                    "level": "Dropped",
+                    "code": null,
+                    "subject": design,
+                    "message": format!(
+                        "\"{design}\" was left out: reading it ran past {ran}, Dutchman's \
+                         limit for one design. The rest of the archive converted \
+                         without it{users}. To give it longer, set {DESIGN_LIMIT_ENV} to more \
+                         minutes (0 for no limit) and convert again"
+                    ),
+                    "stage": Stage::Decode.id(),
+                    "upstream": "cadmpeg",
+                })
+            })
+            .collect();
+        match report.get_mut("losses").and_then(Value::as_array_mut) {
+            Some(existing) => existing.extend(losses),
+            None => {
+                if let Some(fields) = report.as_object_mut() {
+                    fields.insert("losses".into(), Value::Array(losses));
+                }
+            }
+        }
+        if report.get("loss_groups").is_some() {
+            *report = json::with_loss_groups(std::mem::take(report));
+        }
+    } else if let Some(message) = report
+        .get_mut("error")
+        .and_then(|error| error.get_mut("message"))
+    {
+        let text = format!(
+            "{} (Dutchman had already left out {}: each ran past {ran}, Dutchman's limit for \
+             one design; to give it longer, set {DESIGN_LIMIT_ENV} to more minutes (0 for no \
+             limit) and convert again)",
+            message.as_str().unwrap_or(""),
+            quoted(left_out)
+        );
+        *message = Value::String(text);
+    }
+}
+
+/// The designs in the archive `input` that its design description says use `design`, by
+/// their paths in the archive; empty when it has none or it cannot be read.
+fn users_of(input: &Path, design: &str) -> Vec<String> {
+    let read = || -> Option<Value> {
+        let mut archive = zip::ZipArchive::new(std::fs::File::open(input).ok()?).ok()?;
+        let entry = archive.by_name("DesignDescription.json").ok()?;
+        let mut text = String::new();
+        entry.take(16 << 20).read_to_string(&mut text).ok()?;
+        serde_json::from_str(&text).ok()
+    };
+    let Some(description) = read() else {
+        return Vec::new();
+    };
+    let objects: Vec<&Value> = description
+        .pointer("/designDescription/designGraphs")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|graph| graph.get("designObjects")?.as_array())
+        .flatten()
+        .collect();
+    let path = |object: &Value| {
+        object
+            .get("relativePath")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+    };
+    let ids: Vec<&Value> = objects
+        .iter()
+        .filter(|object| path(object).as_deref() == Some(design))
+        .filter_map(|object| object.get("id"))
+        .collect();
+    let mut users: Vec<String> = objects
+        .iter()
+        .filter(|object| {
+            object
+                .get("references")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|reference| reference.get("ids")?.as_array())
+                .flatten()
+                .any(|id| ids.contains(&id))
+        })
+        .filter_map(|object| path(object))
+        .filter(|user| user != design)
+        .collect();
+    users.sort();
+    users.dedup();
+    users.truncate(20);
+    users
+}
+
+/// One conversion of `job` in a child process, and the design it was stopped on as stuck, if
+/// it was (`Some(None)` when stuck outside any named design).
+fn convert_once(
+    program: &Path,
+    job: &Job,
+    options: &ConvertOptions,
+    limits: &Limits,
+    shutdown: Option<&std::sync::atomic::AtomicBool>,
+    on_progress: &(dyn Fn(dutchman_core::ProgressEvent) + Send + Sync),
+    log: Option<&crate::diagnostics::Log>,
+) -> (Value, Option<Option<String>>) {
     let mut options = options.clone();
     options.no_clobber = !job.replace;
     let mut command = Command::new(program);
@@ -451,11 +742,9 @@ fn convert_isolated_inner(
         const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
         command.creation_flags(CREATE_NEW_PROCESS_GROUP);
     }
-    if log.is_some() {
-        command.env("DUTCHMAN_MEMBER_PROGRESS", "1");
-    } else {
-        command.env_remove("DUTCHMAN_MEMBER_PROGRESS");
-    }
+    // Design events always: they time each design for the stuck-design limit. Names stay in
+    // this process; only a diagnostics log, when asked for, records them (hashed).
+    command.env("DUTCHMAN_MEMBER_PROGRESS", "1");
     let child = command
         .arg(WORKER_ARG)
         .arg(&job.input)
@@ -470,10 +759,13 @@ fn convert_isolated_inner(
     let mut child = match child {
         Ok(child) => child,
         Err(err) => {
-            return json::failure(
-                CONVERT,
-                json::input(&job.input),
-                &format!("cannot start the converter: {err}"),
+            return (
+                json::failure(
+                    CONVERT,
+                    json::input(&job.input),
+                    &format!("cannot start the converter: {err}"),
+                ),
+                None,
             )
         }
     };
@@ -484,6 +776,7 @@ fn convert_isolated_inner(
     }
     std::thread::scope(|scope| {
         let stage = Arc::new(Mutex::new(Stage::Input));
+        let reading = Arc::new(Mutex::new(Reading::new()));
         let stdout = child.stdout.take().map(|out| {
             std::thread::spawn(move || {
                 let mut text = String::new();
@@ -493,10 +786,17 @@ fn convert_isolated_inner(
         });
         let stderr = child.stderr.take().map(|err| {
             let stage = Arc::clone(&stage);
-            scope.spawn(move || follow_stages(err, &stage, on_progress, log))
+            let reading = Arc::clone(&reading);
+            scope.spawn(move || follow_stages(err, &stage, &reading, on_progress, log))
         });
 
-        let stopped = supervise(&mut child, limits, !options.no_memory_check, shutdown);
+        let stopped = supervise(
+            &mut child,
+            limits,
+            &reading,
+            !options.no_memory_check,
+            shutdown,
+        );
         let text = stdout
             .and_then(|reader| reader.join().ok())
             .unwrap_or_default();
@@ -517,7 +817,11 @@ fn convert_isolated_inner(
                 upstream_of(at),
             )
         };
-        match stopped {
+        let stuck = match &stopped {
+            Stopped::Stuck(design) => Some(design.clone()),
+            _ => None,
+        };
+        let report = match stopped {
             Stopped::Exited(status) => match serde_json::from_str::<Value>(text.trim()) {
                 Ok(report) if report.is_object() => report,
                 _ => fail(format!(
@@ -525,6 +829,24 @@ fn convert_isolated_inner(
                     at.id()
                 )),
             },
+            Stopped::Stuck(design) => {
+                let ran = limit_phrase(limits.design);
+                let raise = format!(
+                    "; to give it longer, set {DESIGN_LIMIT_ENV} to more minutes (0 for no \
+                     limit) and convert again"
+                );
+                fail(match design {
+                    Some(design) => format!(
+                        "stopped reading the design \"{design}\": it ran past {ran}, Dutchman's \
+                         limit for one design{raise}"
+                    ),
+                    None => format!(
+                        "stopped: a design ran past {ran} while at the {} stage, Dutchman's \
+                         limit for one design{raise}",
+                        at.id()
+                    ),
+                })
+            }
             Stopped::TimedOut => fail(format!(
                 "stopped after {} s, Dutchman's limit for one file, while at the {} stage",
                 limits.timeout.as_secs(),
@@ -545,8 +867,73 @@ fn convert_isolated_inner(
                 fail(format!("{message}, while at the {} stage", at.id()))
             }
             Stopped::Lost(err) => fail(format!("lost track of the converter: {err}")),
-        }
+        };
+        (report, stuck)
     })
+}
+
+/// What the child is reading, from its stage marks and design events: the clock behind the
+/// stuck-design limit restarts at every stage change and every design start or finish.
+struct Reading {
+    stage: Stage,
+    design: Option<String>,
+    since: Instant,
+    /// When this design (or this stage, before any design) began; progress does not move it.
+    began: Instant,
+    /// The memory the child held when the clock last restarted.
+    held: Option<u64>,
+}
+
+impl Reading {
+    fn new() -> Self {
+        Self {
+            stage: Stage::Input,
+            design: None,
+            since: Instant::now(),
+            began: Instant::now(),
+            held: None,
+        }
+    }
+
+    /// Any sign of work (an archive preparation step, a design classified): the clock restarts.
+    fn progress(&mut self) {
+        self.since = Instant::now();
+    }
+
+    /// The child holds `bytes` now: moving [`PROGRESS_BYTES`] from the last mark is progress.
+    fn memory(&mut self, bytes: u64) {
+        match self.held {
+            Some(held) if held.abs_diff(bytes) < PROGRESS_BYTES => {}
+            Some(_) => {
+                self.held = Some(bytes);
+                self.progress();
+            }
+            None => self.held = Some(bytes),
+        }
+    }
+
+    fn stage(&mut self, stage: Stage) {
+        if stage != self.stage {
+            self.stage = stage;
+            self.since = Instant::now();
+            self.began = self.since;
+        }
+    }
+
+    fn design(&mut self, design: Option<String>) {
+        self.design = design;
+        self.since = Instant::now();
+        self.began = self.since;
+    }
+
+    /// The design read past `limit` with no progress, or past [`CEILING_TIMES`] the limit in
+    /// all (`Some(None)` when none is named).
+    fn stuck(&self, limit: Duration) -> Option<Option<String>> {
+        let reading = matches!(self.stage, Stage::Decode | Stage::Project);
+        let over = self.since.elapsed() > limit
+            || self.began.elapsed() > limit.saturating_mul(CEILING_TIMES);
+        (reading && over).then(|| self.design.clone())
+    }
 }
 
 /// The project whose code a stage runs, when it is not Dutchman's own.
@@ -562,12 +949,35 @@ fn upstream_of(stage: Stage) -> Option<&'static str> {
 fn follow_stages(
     stream: impl Read,
     stage: &Mutex<Stage>,
+    reading: &Mutex<Reading>,
     on_progress: &(dyn Fn(dutchman_core::ProgressEvent) + Send + Sync),
     log: Option<&crate::diagnostics::Log>,
 ) {
     use std::io::BufRead;
     for line in std::io::BufReader::new(stream).lines() {
         let Ok(line) = line else { break };
+        if let Ok(record) = serde_json::from_str::<Value>(&line) {
+            if let Ok(mut reading) = reading.lock() {
+                if let Some(design) = record.get("dutchman_member").and_then(Value::as_str) {
+                    match record.get("event").and_then(Value::as_str) {
+                        Some("start") => reading.design(Some(design.to_owned())),
+                        Some("finish" | "fail") => reading.design(None),
+                        _ => {}
+                    }
+                } else if record.get("dutchman_phase").is_some()
+                    || record.get("dutchman_member_classified").is_some()
+                {
+                    reading.progress();
+                }
+            }
+            if log.is_none()
+                && (record.get("dutchman_member").is_some()
+                    || record.get("dutchman_phase").is_some()
+                    || record.get("dutchman_member_classified").is_some())
+            {
+                continue;
+            }
+        }
         if let (Some(log), Ok(record)) = (log, serde_json::from_str::<Value>(&line)) {
             if let Some(phase) = record.get("dutchman_phase").and_then(Value::as_str) {
                 let event = match record.get("event").and_then(Value::as_str) {
@@ -629,6 +1039,9 @@ fn follow_stages(
             if let Ok(mut stage) = stage.lock() {
                 *stage = event.stage;
             }
+            if let Ok(mut reading) = reading.lock() {
+                reading.stage(event.stage);
+            }
             on_progress(event);
             continue;
         }
@@ -640,6 +1053,9 @@ fn follow_stages(
             stage.lock(),
         ) {
             *stage = found;
+            if let Ok(mut reading) = reading.lock() {
+                reading.stage(found);
+            }
         }
     }
 }
@@ -658,12 +1074,15 @@ enum Stopped {
     LowMemory(String),
     /// It could not be waited on.
     Lost(std::io::Error),
+    /// Stopped for reading one design past [`Limits::design`]: that design, when named.
+    Stuck(Option<String>),
 }
 
 /// Waits for `child`, stopping it when it runs past `limits`.
 fn supervise(
     child: &mut Child,
     limits: &Limits,
+    reading: &Mutex<Reading>,
     watch_memory: bool,
     shutdown: Option<&std::sync::atomic::AtomicBool>,
 ) -> Stopped {
@@ -674,6 +1093,7 @@ fn supervise(
     let mut first_look = true;
     let mut was_low = false;
     let holder = Holder::new(child.id());
+    let mut sampled = started;
     loop {
         match child.try_wait() {
             Ok(Some(status)) => return Stopped::Exited(status),
@@ -693,6 +1113,21 @@ fn supervise(
         if started.elapsed() > limits.timeout {
             stop(child);
             return Stopped::TimedOut;
+        }
+        if limits.design.is_some() && sampled.elapsed() >= PROGRESS_POLL {
+            sampled = Instant::now();
+            if let (Some(bytes), Ok(mut reading)) =
+                (resident_tree_bytes(child.id()), reading.lock())
+            {
+                reading.memory(bytes);
+            }
+        }
+        if let Some(design) = limits
+            .design
+            .and_then(|limit| reading.lock().ok()?.stuck(limit))
+        {
+            stop(child);
+            return Stopped::Stuck(design);
         }
         if let Some(limit) = limits.max_memory {
             if measured.elapsed() >= MEMORY_POLL {
@@ -951,6 +1386,7 @@ mod classification_tests {
         follow_stages(
             stream.as_bytes(),
             &Mutex::new(Stage::Input),
+            &Mutex::new(Reading::new()),
             &|_| {},
             Some(&log),
         );
@@ -975,5 +1411,170 @@ mod classification_tests {
         for secret in ["Private", "/private", "SecretMember", "Second.f3d"] {
             assert!(!text.contains(secret));
         }
+    }
+}
+
+#[cfg(test)]
+mod left_out_tests {
+    #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
+    use super::*;
+    use std::io::Write as _;
+
+    fn zip_of(path: &Path, entries: &[(&str, &[u8])]) {
+        let mut zip = zip::ZipWriter::new(std::fs::File::create(path).unwrap());
+        for (name, bytes) in entries {
+            zip.start_file(*name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zip.write_all(bytes).unwrap();
+        }
+        zip.finish().unwrap();
+    }
+
+    #[test]
+    fn an_archive_copy_drops_only_the_stuck_design() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("in.f3z");
+        zip_of(
+            &input,
+            &[
+                ("Root.f3d", b"root"),
+                ("Stuck.f3d", b"stuck"),
+                ("Manifest.json", b"{}"),
+            ],
+        );
+        let out = dir.path().join("out.f3z");
+        assert!(without_entry(&input, "Stuck.f3d", &out).unwrap());
+        let mut copy = zip::ZipArchive::new(std::fs::File::open(&out).unwrap()).unwrap();
+        let names: Vec<String> = copy
+            .file_names()
+            .map(|name| name.unwrap().into_owned())
+            .collect();
+        assert_eq!(names, ["Root.f3d", "Manifest.json"]);
+        let mut text = String::new();
+        copy.by_name("Root.f3d")
+            .unwrap()
+            .read_to_string(&mut text)
+            .unwrap();
+        assert_eq!(text, "root");
+        assert!(!without_entry(&input, "Absent.f3d", &dir.path().join("x.f3z")).unwrap());
+        assert!(archive_without(&input, "Absent.f3d").is_none());
+        let (_keep, copy) = archive_without(&input, "Stuck.f3d").unwrap();
+        assert_eq!(copy.file_name(), input.file_name());
+        assert!(is_archive(&input) && !is_archive(Path::new("part.f3d")));
+    }
+
+    #[test]
+    fn a_left_out_design_is_a_quoted_loss_or_part_of_the_error() {
+        let limits = Limits {
+            design: Some(Duration::from_secs(20 * 60)),
+            ..Limits::default()
+        };
+        let input = Path::new("/home/me/Assembly.f3z");
+        let mut ok = serde_json::json!({"ok": true, "input": {"path": "/tmp/copy/Assembly.f3z"},
+            "losses": [], "loss_groups": []});
+        mark_left_out(&mut ok, input, &["Gear Box.f3d".into()], &limits);
+        assert_eq!(ok["input"], json::input(input));
+        assert_eq!(ok["left_out_designs"], serde_json::json!(["Gear Box.f3d"]));
+        let loss = &ok["losses"][0];
+        assert_eq!(loss["level"], "Dropped");
+        assert_eq!(loss["stage"], "decode");
+        let message = loss["message"].as_str().unwrap();
+        assert!(
+            message.starts_with("\"Gear Box.f3d\" was left out"),
+            "{message}"
+        );
+        assert!(
+            message.contains("ran past 20 minutes with no progress, or 60 minutes in all"),
+            "{message}"
+        );
+        assert_eq!(minutes(Some(Duration::from_secs(30))), "1 minute");
+        assert_eq!(ok["loss_groups"][0]["count"], 1);
+        let mut failed = serde_json::json!({"ok": false, "error": {"message": "no root"}});
+        mark_left_out(
+            &mut failed,
+            input,
+            &["A.f3d".into(), "B.f3d".into()],
+            &limits,
+        );
+        let message = failed["error"]["message"].as_str().unwrap();
+        assert!(message.contains("\"A.f3d\", \"B.f3d\""), "{message}");
+    }
+
+    #[test]
+    fn the_design_limit_is_a_setting_and_users_come_from_the_description() {
+        let limits = Limits::default();
+        assert_eq!(design_limit(&limits, None), Some(DEFAULT_DESIGN_LIMIT));
+        assert_eq!(
+            design_limit(&limits, Some(" 45 ")),
+            Some(Duration::from_secs(45 * 60))
+        );
+        assert_eq!(design_limit(&limits, Some("0")), None);
+        assert_eq!(
+            design_limit(&limits, Some("lots")),
+            Some(DEFAULT_DESIGN_LIMIT)
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("a.f3z");
+        zip_of(
+            &input,
+            &[(
+                "DesignDescription.json",
+                br#"{"designDescription":{"designGraphs":[{"rootIds":[0],"designObjects":[
+                    {"id":0,"relativePath":"root.f3d","references":[{"type":"XREF","ids":[1,2]}]},
+                    {"id":1,"relativePath":"gear.f3d","references":[]},
+                    {"id":2,"relativePath":"shaft.f3d","references":[{"type":"XREF","ids":[1]}]}]}]}}"#,
+            )],
+        );
+        assert_eq!(users_of(&input, "gear.f3d"), ["root.f3d", "shaft.f3d"]);
+        assert!(users_of(&input, "root.f3d").is_empty());
+        assert!(users_of(&dir.path().join("missing.f3z"), "gear.f3d").is_empty());
+    }
+
+    #[test]
+    fn the_stuck_clock_runs_only_while_reading_and_restarts_per_design() {
+        let mut reading = Reading::new();
+        let none = Duration::ZERO;
+        assert_eq!(reading.stuck(none), None);
+        reading.stage(Stage::Decode);
+        std::thread::sleep(Duration::from_millis(5));
+        assert_eq!(reading.stuck(none), Some(None));
+        reading.design(Some("Part.f3d".into()));
+        assert_eq!(reading.stuck(Duration::from_secs(60)), None);
+        std::thread::sleep(Duration::from_millis(5));
+        assert_eq!(reading.stuck(none), Some(Some("Part.f3d".into())));
+        // Memory that moves is work, not a stuck design; a small wobble is not.
+        reading.memory(1 << 30);
+        std::thread::sleep(Duration::from_millis(5));
+        reading.memory((1 << 30) + (1 << 20));
+        assert!(reading.stuck(Duration::from_millis(2)).is_some());
+        reading.memory(2 << 30);
+        assert_eq!(reading.stuck(Duration::from_secs(60)), None);
+        reading.stage(Stage::Write);
+        assert_eq!(reading.stuck(none), None);
+    }
+
+    #[test]
+    fn a_design_that_keeps_moving_memory_still_stops_at_three_times_the_limit() {
+        let limit = Duration::from_millis(40);
+        let mut reading = Reading::new();
+        reading.stage(Stage::Decode);
+        reading.design(Some("Runaway.f3d".into()));
+        let began = Instant::now();
+        let mut bytes = 1u64 << 30;
+        // Memory grows past the progress mark every few ms, as a runaway allocation would.
+        let stopped = loop {
+            bytes += PROGRESS_BYTES;
+            reading.memory(bytes);
+            if let Some(design) = reading.stuck(limit) {
+                break (design, began.elapsed());
+            }
+            assert!(began.elapsed() < Duration::from_secs(5), "never stopped");
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        assert_eq!(stopped.0.as_deref(), Some("Runaway.f3d"));
+        assert!(stopped.1 >= limit * 3, "{:?}", stopped.1);
+        // A new design starts its own allowance.
+        reading.design(Some("Next.f3d".into()));
+        assert_eq!(reading.stuck(limit), None);
     }
 }

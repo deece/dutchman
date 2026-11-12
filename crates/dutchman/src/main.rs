@@ -891,6 +891,7 @@ fn main() -> ExitCode {
                     limits: worker::Limits {
                         timeout: std::time::Duration::from_secs(timeout.max(1)),
                         max_memory: (max_memory > 0).then_some(max_memory.saturating_mul(1 << 20)),
+                        design: Some(worker::DEFAULT_DESIGN_LIMIT),
                     },
                     ..settings
                 },

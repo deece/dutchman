@@ -741,6 +741,7 @@ fn convert(arguments: &Arguments) -> Result<Value, String> {
         let limits = crate::worker::Limits {
             timeout: std::time::Duration::from_secs(u64::MAX / 4),
             max_memory: None,
+            design: Some(crate::worker::DEFAULT_DESIGN_LIMIT),
         };
         Ok(crate::worker::convert_isolated(
             &program, &job, &options, &limits,
@@ -833,6 +834,7 @@ fn convert_all(arguments: &Arguments) -> Result<Value, String> {
                 std::time::Duration::from_secs(n.get() as u64)
             }),
             max_memory,
+            design: Some(crate::worker::DEFAULT_DESIGN_LIMIT),
         },
         ..crate::batch::Settings::isolated()?
     };

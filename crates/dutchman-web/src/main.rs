@@ -171,6 +171,7 @@ fn main() -> ExitCode {
         limits: Limits {
             timeout: Duration::from_secs(args.timeout.max(1)),
             max_memory: (args.max_memory > 0).then(|| args.max_memory.saturating_mul(1 << 20)),
+            design: Some(dutchman::worker::DEFAULT_DESIGN_LIMIT),
         },
         worker: Some(worker),
         login,
