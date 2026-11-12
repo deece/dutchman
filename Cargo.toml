@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/dutchman-dxf", "crates/dutchman-launcher", "crates/dutchman", "crates/dutchman-core", "crates/dutchman-gui", "crates/dutchman-freecad", "crates/dutchman-solidcraft", "crates/dutchman-web", "crates/dutchman-serve"]
 
 [workspace.package]
-version = "0.2.8"
+version = "0.2.9"
 edition = "2021"
 rust-version = "1.88"
 license = "Apache-2.0"
@@ -14,8 +14,8 @@ dutchman-launcher = { path = "crates/dutchman-launcher", version = "0.2.1" }
 # Without their default features, so each crate's own `freecad` feature decides (a build
 # without FreeCAD: `cargo build -p dutchman --no-default-features`).
 dutchman = { path = "crates/dutchman", version = "0.2.1", default-features = false }
-dutchman-core = { path = "crates/dutchman-core", version = "0.2.8", default-features = false }
-dutchman-solidcraft = { path = "crates/dutchman-solidcraft", version = "0.2.8", default-features = false }
+dutchman-core = { path = "crates/dutchman-core", version = "0.2.9", default-features = false }
+dutchman-solidcraft = { path = "crates/dutchman-solidcraft", version = "0.2.9", default-features = false }
 dutchman-dxf = { path = "crates/dutchman-dxf", version = "0.2.4" }
 dutchman-freecad = { path = "crates/dutchman-freecad", version = "0.2.1", default-features = false }
 clap = { version = "4.5", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
