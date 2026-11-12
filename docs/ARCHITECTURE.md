@@ -86,6 +86,39 @@ When SolidCraft grows a plugin interface, a small shim crate implements that int
 calling `dutchman-core` to decode and `dutchman-solidcraft` to build the design (or hands the
 design to SolidCraft in memory instead of as bytes). Neither crate changes.
 
+### SolidCraft evaluation
+
+`dutchman-solidcraft::SolidCraftEvaluator` is the object-safe host boundary for every
+blend/face proof, partial-history replay, history comparison and final geometry check.
+Pass an `Arc<dyn SolidCraftEvaluator>` to `SolidCraftWriter::evaluator` and set
+`target_version` to the host's release. Native callers that supply nothing retain CLI
+discovery and `CliEvaluator`, including launch retries, timeouts, memory monitoring and
+platform launch diagnostics. `Verification::Off` still disables final verification;
+blend/face proofs have their separate `replay` switch.
+
+The two methods accept an in-memory design archive and a timeout. `evaluate` returns the
+unchanged SolidCraft eval JSON (body volumes, areas, bounding boxes, timeline errors and
+warnings). `run` executes an ordered engine-command list and returns the unchanged JSON
+result for every command, including errors. Each call opens its own isolated design;
+state persists between commands within a call. Labels identify requests for diagnostics.
+An unavailable answer is `Err`; a design refusal uses `evaluation_failed` in the eval
+JSON. Measurement parsing, matching, tolerances and fallback policy remain shared in
+`verify.rs`, independent of the transport.
+
+A plugin host must open a design archive with its STEP blobs, evaluate it with `inspect.measure` plus `document.inspect` (the same combined JSON
+that CLI eval returns), and dispatch `timeline.roll_to`, `document.inspect`,
+`model.edges` and `model.faces`. Edge results include names, endpoints, midpoints and
+lengths; face results include names, areas, sample points and optional planar normals.
+It must enforce deadlines, bound responses, isolate evaluations from the user's open
+design and serialize engine access if needed. The `Send + Sync` contract also permits
+native assembly workers to share an evaluator.
+
+On `target_family = "wasm"`, CLI execution, registry/xattr probes, the memory watchdog,
+worker threads and heartbeat threads are excluded. Preparation runs serially and progress
+still reports synchronous steps; the host may drive heartbeats itself. Both library crates
+build for `wasm32-wasip2` with `--no-default-features`; choose core input-format features
+explicitly for a plugin. Native advisory snapshot rendering remains native-only.
+
 ## Depending on cadmpeg
 
 - From cadmpeg's git repository, pinned to one tested commit of its `main` (`cadmpeg-ir`,

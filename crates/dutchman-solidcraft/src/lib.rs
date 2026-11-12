@@ -11,9 +11,15 @@
 //! so it carries none of SolidCraft's kernel or renderer.
 
 mod assembly;
+// Advisory comparisons include native CLI snapshots; conversion checks use the evaluator.
+#[cfg(not(target_family = "wasm"))]
 pub mod compare;
 mod container;
 mod document;
+mod evaluator;
+#[cfg(not(target_family = "wasm"))]
+pub use evaluator::CliEvaluator;
+pub use evaluator::SolidCraftEvaluator;
 mod history;
 mod placements;
 mod repeats;
@@ -23,7 +29,6 @@ mod step;
 mod testing;
 mod verify;
 
-use std::path::PathBuf;
 use std::sync::OnceLock;
 use std::time::Duration;
 
@@ -34,18 +39,20 @@ use dutchman_core::{
 use serde_json::Value;
 
 pub use verify::{
-    cached_solidcraft_version, chosen_cli, discover, find_cli, hide_console, search_report,
-    solidcraft_minor, solidcraft_status, solidcraft_version, target_loses_history, usable_cli,
-    watch_check_memory, Discovery, NoCli, Place, SolidCraftVersion, Verification, VersionGate,
-    CLI_ENV, DEFAULT_TIMEOUT, NEWEST_SOLIDCRAFT, OLDEST_SOLIDCRAFT, VOLUME_TOLERANCE,
-    WINDOW_OLDEST,
+    cached_solidcraft_version, chosen_cli, discover, find_cli, search_report, solidcraft_minor,
+    solidcraft_status, solidcraft_version, target_loses_history, usable_cli, Discovery, NoCli,
+    Place, SolidCraftVersion, Verification, VersionGate, CLI_ENV, DEFAULT_TIMEOUT,
+    NEWEST_SOLIDCRAFT, OLDEST_SOLIDCRAFT, VOLUME_TOLERANCE, WINDOW_OLDEST,
 };
+
+#[cfg(not(target_family = "wasm"))]
+pub use verify::{hide_console, watch_check_memory};
 
 use document::Live;
 pub use replay::replay_script;
 
 /// Debug-only fixture hook; release builds never read this variable.
-#[cfg(debug_assertions)]
+#[cfg(all(debug_assertions, not(target_family = "wasm")))]
 fn slow_part(name: &str) {
     if std::env::var("DUTCHMAN_TEST_SLOW_PART").ok().as_deref() == Some(name) {
         std::thread::sleep(Duration::from_secs(6));
@@ -68,6 +75,7 @@ const GEOMETRY: &str = "geometry";
 /// Writes `.sc` designs.
 #[derive(Clone, Debug)]
 pub struct SolidCraftWriter {
+    evaluator: Option<std::sync::Arc<dyn SolidCraftEvaluator>>,
     threads: usize,
     #[cfg(test)]
     prepare_hook: Option<fn(&Model)>,
@@ -89,6 +97,7 @@ pub struct SolidCraftWriter {
 impl Default for SolidCraftWriter {
     fn default() -> Self {
         SolidCraftWriter {
+            evaluator: None,
             threads: 0,
             #[cfg(test)]
             prepare_hook: None,
@@ -113,6 +122,42 @@ impl SolidCraftWriter {
     /// A writer that writes history when it can, checked with the SolidCraft CLI it finds.
     pub fn new() -> Self {
         SolidCraftWriter::default()
+    }
+
+    /// Supply the host evaluator for all proofs and final checks. The existing
+    /// verification and replay switches still apply.
+    /// Set target_version explicitly to the host's SolidCraft release.
+    pub fn evaluator(mut self, evaluator: std::sync::Arc<dyn SolidCraftEvaluator>) -> Self {
+        self.evaluator = Some(evaluator);
+        self.detected_version = OnceLock::new();
+        self
+    }
+
+    fn selected_evaluator(
+        &self,
+        verification: &Verification,
+    ) -> Result<std::sync::Arc<dyn SolidCraftEvaluator>, NoCli> {
+        if !matches!(verification, Verification::Off) {
+            if let Some(evaluator) = &self.evaluator {
+                return Ok(evaluator.clone());
+            }
+        }
+        #[cfg(not(target_family = "wasm"))]
+        {
+            verify::usable_cli(verification)
+                .map(|path| std::sync::Arc::new(CliEvaluator::new(path)) as _)
+        }
+        #[cfg(target_family = "wasm")]
+        {
+            Err(NoCli::NotFound(
+                if matches!(verification, Verification::Off) {
+                    "verification turned off"
+                } else {
+                    "no SolidCraft evaluator supplied"
+                }
+                .to_owned(),
+            ))
+        }
     }
 
     /// Maximum simultaneous assembly part preparations (0: automatic, 1: serial).
@@ -140,9 +185,13 @@ impl SolidCraftWriter {
     /// The release the written features must open in.
     pub fn resolved_version(&self) -> SolidCraftVersion {
         self.target_version.unwrap_or_else(|| {
-            *self
-                .detected_version
-                .get_or_init(|| SolidCraftVersion::detected(&self.verification))
+            *self.detected_version.get_or_init(|| {
+                if self.evaluator.is_some() {
+                    SolidCraftVersion::default()
+                } else {
+                    SolidCraftVersion::detected(&self.verification)
+                }
+            })
         })
     }
 
@@ -447,8 +496,10 @@ impl SolidCraftWriter {
     /// What inspecting says of the blends, which it does not replay: refused when no
     /// SolidCraft CLI would find their edges, as writing would refuse them.
     fn plan_blends(&self, mapping: &mut history::Mapping) {
-        if let Err(why) = verify::find_cli(&self.replay) {
-            history::prove_blends(mapping, |_, _, _| Err(why));
+        if self.evaluator.is_none() || matches!(self.replay, Verification::Off) {
+            if let Err(why) = verify::find_cli(&self.replay) {
+                history::prove_blends(mapping, |_, _, _| Err(why));
+            }
         }
     }
 
@@ -467,7 +518,9 @@ impl SolidCraftWriter {
             if let Some(why) = self.memory_refusal() {
                 return Err(why);
             }
-            let cli = verify::usable_cli(&self.replay).map_err(|why| why.to_string())?;
+            let cli = self
+                .selected_evaluator(&self.replay)
+                .map_err(|why| why.to_string())?;
             // SolidCraft evaluates a whole design when it opens it, rolled back or not, so
             // the replay gets the history only up to the last step it inspects: a slow later
             // feature would otherwise cost every proof run its full time.
@@ -489,7 +542,7 @@ impl SolidCraftWriter {
                     Some(dutchman_core::progress_words::blend_limit()),
                 )
             });
-            verify::replay_edges(&cli, self.timeout, &design, after, faces)
+            verify::replay_edges(cli.as_ref(), self.timeout, &design, after, faces)
         });
         match failure {
             Some(err) => Err(err),
@@ -523,7 +576,7 @@ impl SolidCraftWriter {
                 }
             }
         }
-        let cli = verify::usable_cli(&self.verification);
+        let cli = self.selected_evaluator(&self.verification);
         let started = std::time::Instant::now();
         let _checking = progress.map(|p| {
             p.step(
@@ -558,7 +611,7 @@ impl SolidCraftWriter {
             if let Some(why) = self.memory_refusal() {
                 return Ok(Check::Partial(format!("{summary}; {why}")));
             }
-            let (outcome, bodies) = verify::replay(cli, remaining, &design);
+            let (outcome, bodies) = verify::replay(cli.as_ref(), remaining, &design);
             match outcome {
                 verify::Outcome::Matches => {
                     let stored = history.stored_bodies_at_end();
@@ -710,7 +763,7 @@ impl SolidCraftWriter {
         if let Some(why) = self.memory_refusal() {
             return Ok(verify::Outcome::Unverified(why));
         }
-        let cli: PathBuf = match verify::usable_cli(&self.verification) {
+        let cli = match self.selected_evaluator(&self.verification) {
             Ok(cli) => cli,
             Err(why) => return Ok(verify::Outcome::Unverified(why.to_string())),
         };
@@ -719,7 +772,7 @@ impl SolidCraftWriter {
             return Ok(verify::Outcome::Unverified(why));
         }
         let result = verify::compare_with_progress(
-            &cli,
+            cli.as_ref(),
             self.timeout,
             written,
             &original,
@@ -970,7 +1023,7 @@ impl SolidCraftWriter {
             report.push(Severity::Info, HISTORY, why);
             return;
         }
-        let cli = match verify::usable_cli(&self.verification) {
+        let cli = match self.selected_evaluator(&self.verification) {
             Ok(cli) => cli,
             // Report a CLI that was found but cannot check the design.
             Err(verify::NoCli::TooOld(why) | verify::NoCli::Blocked(why)) => {
@@ -996,7 +1049,7 @@ impl SolidCraftWriter {
                 Some(dutchman_core::progress_words::geometry_limit()),
             )
         });
-        let shown = verify::check_import(&cli, self.timeout, design, expected);
+        let shown = verify::check_import(cli.as_ref(), self.timeout, design, expected);
         if expected.sheets > 0 && !matches!(shown, verify::Shown::Unchecked(_)) {
             report.push_at(
                 Stage::SolidCraft,
@@ -1057,7 +1110,7 @@ impl Writer for SolidCraftWriter {
         let _preparing = progress
             .filter(|_| model.assembly.is_none())
             .map(|p| p.stage_step(dutchman_core::StepKind::Preparing, Some(&model.name)));
-        #[cfg(debug_assertions)]
+        #[cfg(all(debug_assertions, not(target_family = "wasm")))]
         if model.assembly.is_none() {
             slow_part(&model.name);
         }

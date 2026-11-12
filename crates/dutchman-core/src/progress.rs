@@ -1,7 +1,9 @@
 //! Stage and scoped running-step progress. No work is done per geometry entity.
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{mpsc, Arc, Mutex};
+#[cfg(not(target_family = "wasm"))]
+use std::sync::mpsc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::Stage;
@@ -130,9 +132,21 @@ impl ProgressEvent {
 }
 struct ActiveStep {
     id: u64,
+    #[cfg(not(target_family = "wasm"))]
     thread: std::thread::ThreadId,
     started: Instant,
     step: RunningStep,
+}
+fn same_worker(a: &ActiveStep, b: &ActiveStep) -> bool {
+    #[cfg(not(target_family = "wasm"))]
+    {
+        a.thread == b.thread
+    }
+    #[cfg(target_family = "wasm")]
+    {
+        let _ = (a, b);
+        true
+    }
 }
 /// Ends a step on every return path, including unwinding.
 pub struct StepGuard<'p, 'a> {
@@ -292,6 +306,7 @@ impl<'a> Progress<'a> {
         if let Ok(mut steps) = self.steps.lock() {
             steps.push(ActiveStep {
                 id,
+                #[cfg(not(target_family = "wasm"))]
                 thread: std::thread::current().id(),
                 started: Instant::now(),
                 step: RunningStep {
@@ -364,7 +379,7 @@ impl<'a> Progress<'a> {
                             .filter(|s| {
                                 !steps
                                     .iter()
-                                    .any(|other| other.thread == s.thread && other.id > s.id)
+                                    .any(|other| same_worker(other, s) && other.id > s.id)
                             })
                             .min_by_key(|s| s.started)
                             .map(|s| {
@@ -398,6 +413,7 @@ impl<'a> Progress<'a> {
         self.run_every(Duration::from_secs(5), work)
     }
 
+    #[cfg(not(target_family = "wasm"))]
     fn run_every<T>(&self, interval: Duration, work: impl FnOnce() -> T) -> T {
         std::thread::scope(|scope| {
             let (stop, receive) = mpsc::channel::<()>();
@@ -412,6 +428,13 @@ impl<'a> Progress<'a> {
             let _stop = stop;
             work()
         })
+    }
+}
+
+#[cfg(target_family = "wasm")]
+impl Progress<'_> {
+    fn run_every<T>(&self, _interval: Duration, work: impl FnOnce() -> T) -> T {
+        work()
     }
 }
 

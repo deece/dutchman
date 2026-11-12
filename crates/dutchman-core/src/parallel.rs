@@ -1,11 +1,14 @@
 //! Bounded independent work, with results consumed in input order.
 
+#[cfg(not(target_family = "wasm"))]
 use std::sync::atomic::{AtomicUsize, Ordering};
+#[cfg(not(target_family = "wasm"))]
 use std::sync::Mutex;
 
 /// Prepares independent items on scoped workers. A missing result means the coordinator
 /// must retry that item serially: a worker failed, panicked, or could not be started.
 /// Preparations must leave shared caller state unchanged.
+#[cfg(not(target_family = "wasm"))]
 pub fn prepare_ordered<T: Sync, R: Send, E, F>(
     items: &[T],
     workers: usize,
@@ -47,6 +50,26 @@ where
         .collect()
 }
 
+/// Serial preparation in a plugin, preserving the native retry contract.
+#[cfg(target_family = "wasm")]
+pub fn prepare_ordered<T: Sync, R: Send, E, F>(
+    items: &[T],
+    _workers: usize,
+    prepare: F,
+) -> Vec<Option<R>>
+where
+    F: Fn(&T) -> Result<R, E> + Sync,
+{
+    items
+        .iter()
+        .map(|item| {
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| prepare(item)))
+                .ok()
+                .and_then(Result::ok)
+        })
+        .collect()
+}
+
 /// Conservative temporary peak for preparing a part, including STEP text, mapping copies,
 /// and a SolidCraft replay process. Body count alone misses dense single-body parts.
 /// The 3.5 GB serial / 8.6 GB parallel assembly peaks motivate keeping automatic work
@@ -75,6 +98,11 @@ pub fn workers_with_memory(
     bytes_per_part: u64,
     available: Option<u64>,
 ) -> usize {
+    #[cfg(target_family = "wasm")]
+    let requested = requested.min(1);
+    #[cfg(target_family = "wasm")]
+    let cpus = 1;
+    #[cfg(not(target_family = "wasm"))]
     let cpus = std::thread::available_parallelism().map_or(1, usize::from);
     worker_limit(requested, parts, bytes_per_part, cpus, available)
 }

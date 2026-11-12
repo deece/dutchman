@@ -137,6 +137,24 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
+  # The plugin build: the core libraries must keep compiling for WebAssembly, so a native-only
+  # change (a thread, a process, a platform call) fails here instead of in the plugin.
+  # dutchman-solidcraft turns on every input format plus FreeCAD, so the codecs are checked too.
+  wasm:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip2
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: wasm32-wasip2
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo check --locked --target wasm32-wasip2 -p dutchman-core -p dutchman-solidcraft --no-default-features
+
   test:
     needs: changes
     if: needs.changes.outputs.code == 'true'
@@ -429,7 +447,7 @@ jobs:
   # failed or was cancelled. Jobs a change skips (a docs-only change skips the builds and tests)
   # count as passed, so a required check never waits for a job that never starts.
   ci-result:
-    needs: [changes, fmt, release-notes, clippy, test, test-arm, test-arm-again, docs, test-macos, docker, msrv, solidcraft-roundtrip]
+    needs: [changes, fmt, release-notes, clippy, wasm, test, test-arm, test-arm-again, docs, test-macos, docker, msrv, solidcraft-roundtrip]
     if: always()
     runs-on: ubuntu-latest
     steps:

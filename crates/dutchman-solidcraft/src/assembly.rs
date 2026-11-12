@@ -630,7 +630,7 @@ fn prepare_part(
             None,
         )
     });
-    #[cfg(debug_assertions)]
+    #[cfg(all(debug_assertions, not(target_family = "wasm")))]
     crate::slow_part(&part.name);
     let mut report = Report::default();
     let step = if part.ir.model.bodies.is_empty() {
@@ -1107,7 +1107,7 @@ impl Builder<'_> {
         } else {
             None
         };
-        #[cfg(debug_assertions)]
+        #[cfg(all(debug_assertions, not(target_family = "wasm")))]
         if prepared.is_none() && part.assembly.is_none() {
             crate::slow_part(&part.name);
         }

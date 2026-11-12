@@ -3,16 +3,20 @@
 //! SolidCraft makes any kernel difference cancel out), and geometry written as an import
 //! against what the model holds.
 
+use crate::SolidCraftEvaluator;
 use std::path::{Path, PathBuf};
+#[cfg(not(target_family = "wasm"))]
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
+#[cfg(not(target_family = "wasm"))]
 #[path = "version_cache.rs"]
 mod version_cache;
 
 /// How long CLI version discovery may run.
+#[cfg(not(target_family = "wasm"))]
 pub(crate) const VERSION_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// The relative difference in volume at which a replay no longer matches the original, when
@@ -49,6 +53,7 @@ pub const CLI_ENV: &str = "SOLIDCRAFT_CLI";
 const CLI_NAME: &str = "solidcraft-cli";
 
 /// How often a running evaluation is polled.
+#[cfg(not(target_family = "wasm"))]
 const POLL: Duration = Duration::from_millis(20);
 
 /// How a written history is checked.
@@ -659,6 +664,7 @@ fn registered() -> Option<PathBuf> {
 /// What `reg.exe query key /v name` (`/ve` for the default value) prints in one registry
 /// view, when it succeeds.
 #[cfg_attr(not(windows), allow(dead_code))]
+#[cfg(not(target_family = "wasm"))]
 fn reg_query(key: &str, name: &str, view: &str) -> Option<String> {
     #[cfg(windows)]
     {
@@ -817,12 +823,14 @@ fn bundle_version(app: &Path) -> Vec<u64> {
 
 /// The version the SolidCraft CLI `verification` finds prints (`solidcraft-cli 0.18.2`),
 /// when there is one and it answers within a few seconds.
+#[cfg(not(target_family = "wasm"))]
 pub fn solidcraft_version(verification: &Verification) -> Option<String> {
     version_of(&find_cli(verification).ok()?).ok().flatten()
 }
 
 /// Return a previously discovered CLI version without starting the CLI.
 /// Consults both the process cache and the executable's matching disk cache entry.
+#[cfg(not(target_family = "wasm"))]
 pub fn cached_solidcraft_version(verification: &Verification) -> Option<String> {
     version_cache::version(&find_cli(verification).ok()?, false)
         .ok()
@@ -830,13 +838,16 @@ pub fn cached_solidcraft_version(verification: &Verification) -> Option<String> 
 }
 
 /// How many times to try running a CLI the system says is busy being written.
+#[cfg(not(target_family = "wasm"))]
 const BUSY_TRIES: u32 = 50;
 
 /// The first line `cli --version` prints, when it answers within a few seconds.
+#[cfg(not(target_family = "wasm"))]
 fn version_of(cli: &Path) -> Result<Option<String>, String> {
     version_cache::version(cli, true)
 }
 
+#[cfg(not(target_family = "wasm"))]
 fn probe_version(cli: &Path) -> Result<Option<(String, bool)>, String> {
     let mut child = match spawn(cli, |command| {
         command
@@ -905,6 +916,7 @@ fn quarantine_blocks(value: &str) -> bool {
         && u16::from_str_radix(flags, 16).is_ok_and(|flags| flags & 0x0040 == 0)
 }
 
+#[cfg(not(target_family = "wasm"))]
 fn blocked_failure(cli: &Path) -> Option<String> {
     #[cfg(target_os = "macos")]
     {
@@ -929,6 +941,7 @@ fn blocked_failure(cli: &Path) -> Option<String> {
     }
 }
 
+#[cfg(not(target_family = "wasm"))]
 fn launch_failure(cli: &Path, err: std::io::Error) -> String {
     blocked_failure(cli).unwrap_or_else(|| format!("cannot run {}: {err}", cli.display()))
 }
@@ -946,7 +959,7 @@ fn newest_cli(
 /// with, and a replay that runs is kept unverified, saying why.
 #[cfg(all(test, unix))]
 pub(crate) fn compare(
-    cli: &Path,
+    cli: &(impl SolidCraftEvaluator + ?Sized),
     timeout: Duration,
     history: &[u8],
     original: &[u8],
@@ -965,7 +978,7 @@ pub(crate) fn compare(
 }
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn compare_with_progress(
-    cli: &Path,
+    cli: &(impl SolidCraftEvaluator + ?Sized),
     timeout: Duration,
     history: &[u8],
     original: &[u8],
@@ -974,7 +987,7 @@ pub(crate) fn compare_with_progress(
     part: &str,
     consequence: &str,
 ) -> Outcome {
-    let evaluate = |cli: &Path, timeout: Duration, dir: &Path, name: &str, design: &[u8]| {
+    let evaluate = |timeout: Duration, name: &str, design: &[u8]| {
         let _checking = progress.map(|p| {
             p.step(
                 if name == "original" {
@@ -987,19 +1000,15 @@ pub(crate) fn compare_with_progress(
                 Some(consequence),
             )
         });
-        evaluate(cli, timeout, dir, name, design)
+        evaluate(cli, timeout, name, design)
     };
-    let dir = match tempfile::tempdir() {
-        Ok(dir) => dir,
-        Err(err) => return Outcome::Unverified(format!("no scratch folder: {err}")),
-    };
-    let expected = match evaluate(cli, timeout, dir.path(), "original", original) {
+    let expected = match evaluate(timeout, "original", original) {
         Ok(Evaluation::Done(eval)) => eval,
         Ok(Evaluation::Failed(why)) | Err(why) => {
             return Outcome::Unverified(format!("cannot evaluate the original geometry: {why}"))
         }
     };
-    let replayed = match evaluate(cli, timeout, dir.path(), "history", history) {
+    let replayed = match evaluate(timeout, "history", history) {
         Ok(Evaluation::Done(eval)) => eval,
         Ok(Evaluation::Failed(why)) => {
             return Outcome::Differs(format!("SolidCraft cannot replay it: {why}"))
@@ -1023,20 +1032,11 @@ pub(crate) fn compare_with_progress(
 ///
 /// Also says where the replay's bodies are, when it replayed.
 pub(crate) fn replay(
-    cli: &Path,
+    cli: &(impl SolidCraftEvaluator + ?Sized),
     timeout: Duration,
     design: &[u8],
 ) -> (Outcome, Option<Vec<Placed>>) {
-    let dir = match tempfile::tempdir() {
-        Ok(dir) => dir,
-        Err(err) => {
-            return (
-                Outcome::Unverified(format!("no scratch folder: {err}")),
-                None,
-            )
-        }
-    };
-    match evaluate(cli, timeout, dir.path(), "prefix", design) {
+    match evaluate(cli, timeout, "prefix", design) {
         Ok(Evaluation::Done(eval)) => match eval.errors.first() {
             Some(why) => (Outcome::Differs(why.clone()), None),
             None => {
@@ -1193,16 +1193,12 @@ pub(crate) struct Expected {
 const NO_VOLUME: f64 = 1e-6;
 
 pub(crate) fn check_import(
-    cli: &Path,
+    cli: &(impl SolidCraftEvaluator + ?Sized),
     timeout: Duration,
     design: &[u8],
     expected: Expected,
 ) -> Shown {
-    let dir = match tempfile::tempdir() {
-        Ok(dir) => dir,
-        Err(err) => return Shown::Unchecked(format!("no scratch folder: {err}")),
-    };
-    let eval = match evaluate(cli, timeout, dir.path(), "import", design) {
+    let eval = match evaluate(cli, timeout, "import", design) {
         Ok(Evaluation::Done(eval)) => eval,
         Ok(Evaluation::Failed(why)) => {
             return Shown::Short(format!("SolidCraft cannot open it: {why}"))
@@ -1384,19 +1380,19 @@ enum Evaluation {
 
 /// Evaluates `design` with the CLI. `Err` when the CLI could not give an answer at all.
 fn evaluate(
-    cli: &Path,
+    cli: &(impl SolidCraftEvaluator + ?Sized),
     timeout: Duration,
-    dir: &Path,
     name: &str,
     design: &[u8],
 ) -> Result<Evaluation, String> {
-    let value = evaluate_json(cli, timeout, dir, name, design)?;
+    let value = cli.evaluate(design, timeout, name)?;
     if let Some(why) = value.get("evaluation_failed").and_then(Value::as_str) {
         return Ok(Evaluation::Failed(why.to_owned()));
     }
     parse(&value).map(Evaluation::Done)
 }
 
+#[cfg(not(target_family = "wasm"))]
 pub(crate) fn evaluate_json(
     cli: &Path,
     timeout: Duration,
@@ -1509,22 +1505,24 @@ const REPLAY_EDGES: usize = 200_000;
 /// together: one finds the bodies at every step, the next their edges. Each step is `Err`
 /// when a feature before it fails there; the whole is `Err` when SolidCraft gives no answer.
 pub(crate) fn replay_edges(
-    cli: &Path,
+    cli: &(impl SolidCraftEvaluator + ?Sized),
     timeout: Duration,
     design: &[u8],
     after: &[u64],
     faces: bool,
 ) -> Result<Vec<Result<Replay, String>>, String> {
     let deadline = Instant::now() + timeout;
-    let dir = tempfile::tempdir().map_err(|err| format!("no scratch folder: {err}"))?;
-    let input = dir.path().join("history.solidcraft");
-    std::fs::write(&input, design).map_err(|err| format!("cannot stage the design: {err}"))?;
     let roll = |id: u64| crate::replay::roll_commands(id)[0].clone();
     let mut script = Vec::new();
     for id in after {
         script.extend(crate::replay::roll_commands(*id));
     }
-    let results = run_script(cli, deadline, dir.path(), "bodies", &input, &script)?;
+    let results = cli.run(
+        design,
+        &script,
+        deadline.saturating_duration_since(Instant::now()),
+        "bodies",
+    )?;
     let mut steps = Vec::new();
     for (k, _) in after.iter().enumerate() {
         let inspect = results
@@ -1550,7 +1548,12 @@ pub(crate) fn replay_edges(
             }
         }
     }
-    let results = run_script(cli, deadline, dir.path(), "edges", &input, &script)?;
+    let results = cli.run(
+        design,
+        &script,
+        deadline.saturating_duration_since(Instant::now()),
+        "edges",
+    )?;
     let mut at = 0usize;
     for step in &mut steps {
         at = at.saturating_add(1);
@@ -1694,7 +1697,8 @@ fn edge_fields(row: &Value) -> Option<ReplayedEdge> {
 }
 
 /// Runs `script` on `design` with the CLI and returns its per-command results.
-fn run_script(
+#[cfg(not(target_family = "wasm"))]
+pub(crate) fn run_script(
     cli: &Path,
     deadline: Instant,
     dir: &Path,
@@ -1742,6 +1746,7 @@ fn run_script(
 /// Keeps a console program this one starts from opening a window of its own, as it does when
 /// this one has no console: the desktop app, and the children it converts in. Attached to a
 /// terminal it shares that one, where Ctrl+C reaches it.
+#[cfg(not(target_family = "wasm"))]
 pub fn hide_console(command: &mut Command) {
     #[cfg(windows)]
     {
@@ -1756,6 +1761,7 @@ pub fn hide_console(command: &mut Command) {
     let _ = command;
 }
 
+#[cfg(not(target_family = "wasm"))]
 pub(crate) fn spawn(
     cli: &Path,
     configure: impl Fn(&mut Command),
@@ -1779,30 +1785,37 @@ pub(crate) fn spawn(
 
 /// Free memory below which a SolidCraft check stops and the design is kept unverified. Above
 /// the floor where a conversion itself stops, so a built design is never lost to its check.
+#[cfg(not(target_family = "wasm"))]
 const CHECK_MEMORY_FLOOR: u64 = 3 << 29;
 
 /// Why a check stopped for memory.
+#[cfg(not(target_family = "wasm"))]
 const CHECK_STOPPED_FOR_MEMORY: &str =
     "History check stopped: the computer was running low on memory";
 
 /// Set once a check stops for memory: the checks after it would only run out again.
+#[cfg(not(target_family = "wasm"))]
 static CHECKS_STOPPED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Whether checks watch memory at all: on unless memory checks are turned off for the run.
+#[cfg(not(target_family = "wasm"))]
 static CHECKS_WATCH_MEMORY: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
 /// Turns the memory watch on running checks on or off, for this run.
+#[cfg(not(target_family = "wasm"))]
 pub fn watch_check_memory(on: bool) {
     CHECKS_WATCH_MEMORY.store(on, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// Whether this much free memory is too little for a check to carry on.
+#[cfg(not(target_family = "wasm"))]
 fn below_check_floor(available: Option<u64>) -> bool {
     available.is_some_and(|free| free < CHECK_MEMORY_FLOOR)
 }
 
 /// Whether a running check should stop for memory, measuring it now.
+#[cfg(not(target_family = "wasm"))]
 fn check_must_stop() -> bool {
     use std::sync::atomic::Ordering;
     #[cfg(debug_assertions)]
@@ -1825,6 +1838,7 @@ fn check_must_stop() -> bool {
 }
 
 /// Waits for `child` until `deadline`, killing it then.
+#[cfg(not(target_family = "wasm"))]
 fn wait(
     child: &mut std::process::Child,
     cli: &Path,
@@ -3191,4 +3205,21 @@ mod version_tests {
             "too_old"
         );
     }
+}
+
+#[cfg(target_family = "wasm")]
+fn version_of(_: &Path) -> Result<Option<String>, String> {
+    Ok(None)
+}
+#[cfg(target_family = "wasm")]
+pub fn solidcraft_version(_: &Verification) -> Option<String> {
+    None
+}
+#[cfg(target_family = "wasm")]
+pub fn cached_solidcraft_version(_: &Verification) -> Option<String> {
+    None
+}
+#[cfg(target_family = "wasm")]
+fn reg_query(_: &str, _: &str, _: &str) -> Option<String> {
+    None
 }

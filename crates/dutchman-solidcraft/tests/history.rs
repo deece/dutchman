@@ -11890,3 +11890,105 @@ fn an_extrude_with_no_end_cap_in_the_model_is_kept_but_its_profile_is_unproven()
     assert_eq!(extrude.status, dutchman_core::FeatureStatus::Mapped);
     assert!(extrude.profile_unverified);
 }
+
+/// Recorded responses for the synthetic cube fixture above. No CLI or temporary tool
+/// is used: the same JSON parser handles these and the native CLI's answers.
+#[derive(Debug, Default)]
+struct RecordedEvaluator {
+    calls: std::sync::Mutex<Vec<String>>,
+    different_history: bool,
+    warning: bool,
+}
+
+impl dutchman_solidcraft::SolidCraftEvaluator for RecordedEvaluator {
+    fn evaluate(
+        &self,
+        design: &[u8],
+        timeout: std::time::Duration,
+        label: &str,
+    ) -> Result<Value, String> {
+        assert!(!timeout.is_zero());
+        let mut archive = ZipArchive::new(Cursor::new(design)).unwrap();
+        assert!(archive.by_name("document.json").is_ok());
+        self.calls.lock().unwrap().push(label.to_owned());
+        Ok(json!({
+            "bodies": [{"volume_mm3": if label == "history" && self.different_history {900.0} else {1000.0},
+                "area_mm2": 600.0, "bbox": {"min": [0, 0, 0], "max": [10, 10, 10]}}],
+            "timeline": [{"name": "Original geometry", "error": null,
+                "warning": if self.warning { "1 face(s) could not be meshed" } else { "" }}],
+            "total": {"faces": 6}
+        }))
+    }
+
+    fn run(
+        &self,
+        design: &[u8],
+        commands: &[Value],
+        timeout: std::time::Duration,
+        label: &str,
+    ) -> Result<Vec<Value>, String> {
+        assert!(!design.is_empty());
+        assert!(!timeout.is_zero());
+        self.calls.lock().unwrap().push(label.to_owned());
+        commands
+            .iter()
+            .map(|command| {
+                Ok(match command["command"].as_str().unwrap() {
+                    "timeline.roll_to" => json!({"marker": command["params"]["feature"]}),
+                    "document.inspect" => {
+                        json!({"bodies": [{"name": "unit cube"}], "timeline": []})
+                    }
+                    "model.edges" => json!({"body": "unit cube", "edges": [{
+                        "name": "front|left", "start": [0, 0, 0], "end": [0, 0, 10],
+                        "mid": [0, 0, 5], "length": 10.0
+                    }]}),
+                    other => return Err(format!("Unexpected command: {other}")),
+                })
+            })
+            .collect()
+    }
+}
+
+#[test]
+fn a_host_evaluator_proves_a_blend_and_verifies_the_fixture() {
+    let host = std::sync::Arc::new(RecordedEvaluator::default());
+    let writer = SolidCraftWriter::new()
+        // A host must not depend on an installed CLI, even when this path is missing.
+        .verification(Verification::With(PathBuf::from("/missing/solidcraft-cli")))
+        .replay(Verification::With(PathBuf::from("/missing/solidcraft-cli")))
+        .evaluator(host.clone())
+        .target_version(Some(dutchman_solidcraft::SolidCraftVersion::default()));
+    let model = input_blend("fillet", json!({"kind": "constant", "radius": 1.0}), false);
+    let (document, report) = convert(&model, &writer);
+    assert_eq!(document["features"][2]["type"], "fillet");
+    assert_eq!(document["features"][2]["edges"], json!([[0.0, 0.0, 5.0]]));
+    assert_eq!(report.outcome().unwrap().check, Check::Verified);
+    assert_eq!(
+        *host.calls.lock().unwrap(),
+        ["bodies", "edges", "original", "history"]
+    );
+}
+
+#[test]
+fn a_host_evaluator_carries_prefix_measurements_and_final_geometry_warnings() {
+    let host = std::sync::Arc::new(RecordedEvaluator {
+        different_history: true,
+        warning: true,
+        ..RecordedEvaluator::default()
+    });
+    let writer = SolidCraftWriter::new()
+        .evaluator(host.clone())
+        .target_version(Some(dutchman_solidcraft::SolidCraftVersion::default()));
+    let model = cube_with_history(10.0, first_profile(), None);
+    let (_, report) = convert(&model, &writer);
+    assert_eq!(report.outcome().unwrap().mode, Mode::PartialHistory);
+    assert!(matches!(report.outcome().unwrap().check, Check::Partial(_)));
+    assert_eq!(
+        *host.calls.lock().unwrap(),
+        ["original", "history", "prefix", "import"]
+    );
+    assert!(report
+        .losses()
+        .iter()
+        .any(|loss| loss.detail.contains("could not be meshed")));
+}
