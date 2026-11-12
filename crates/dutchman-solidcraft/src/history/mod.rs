@@ -965,10 +965,8 @@ fn map_into(
             let kind = kind(feature);
             !(kind == "sketch"
                 || kind.starts_with("datum")
-                || matches!(
-                    kind.as_str(),
-                    "tree_node" | "insert_component" | "assembly_joint" | "reference_image"
-                )
+                || matches!(kind.as_str(), "tree_node" | "reference_image")
+                || is_assembly_feature(feature)
                 || helpers::is_helper(feature))
         })
         .count()
@@ -1011,14 +1009,9 @@ fn map_into(
         let definition = operation(feature);
         let structural = matches!(
             definition.get("definition").and_then(Value::as_str),
-            Some(
-                "datum_principal_plane"
-                    | "tree_node"
-                    | "insert_component"
-                    | "assembly_joint"
-                    | "reference_image"
-            )
-        ) || helpers::is_helper(feature);
+            Some("datum_principal_plane" | "tree_node" | "reference_image")
+        ) || is_assembly_feature(feature)
+            || helpers::is_helper(feature);
         if blocked.is_some() && (kind(feature) != "sketch" || !keep_sketches) && !structural {
             out.push(outcome(
                 FeatureStatus::Blocked,
@@ -1517,14 +1510,15 @@ fn map_feature(
     ) {
         return datum::map(feature, ctx).map(|()| Mapped::Nothing);
     }
+    if is_assembly_feature(feature) {
+        return Ok(Mapped::Nothing);
+    }
     if helpers::is_helper(feature) {
         return helpers::map(feature, ctx, report);
     }
     match definition.get("definition").and_then(Value::as_str) {
         // A folder, a PartDesign Body or another node that orders the tree and builds nothing.
         Some("tree_node") => Ok(Mapped::Nothing),
-        // A component inserted, or a joint made, in the timeline: the assembly carries it.
-        Some("insert_component" | "assembly_joint") => Ok(Mapped::Nothing),
         // A raster image placed for reference (a Fusion Canvas): it builds no geometry.
         Some("reference_image") => Ok(Mapped::Nothing),
         Some("sketch") => sketch::map(feature, definition, ctx, report).map(Mapped::Feature),
@@ -1601,6 +1595,20 @@ fn map_feature(
         Some("base_feature") if base::holds_none(definition) => Ok(Mapped::Nothing),
         Some("base_feature") => base::map(feature, definition, ctx).map(Mapped::Feature),
         _ => Err(format!("{} is not mapped yet", kind(feature))),
+    }
+}
+
+/// Assembly timeline rows build no part geometry; occurrences and joints carry them.
+fn is_assembly_feature(feature: &Value) -> bool {
+    match operation(feature).get("definition").and_then(Value::as_str) {
+        Some("insert_component" | "assembly_joint") => true,
+        // cadmpeg retains unresolved As-built joints as native operations with a stable
+        // source tag. Display names may be edited and must never identify an operation.
+        Some("native") => matches!(
+            feature.get("source_tag").and_then(Value::as_str),
+            Some("As-built" | "As-built Joint")
+        ),
+        _ => false,
     }
 }
 

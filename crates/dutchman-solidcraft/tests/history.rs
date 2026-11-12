@@ -1726,6 +1726,87 @@ fn a_sketch_and_extrude_history_is_written() {
 }
 
 #[test]
+fn as_built_joints_between_features_do_not_stop_history() {
+    for source_tag in ["As-built", "As-built Joint"] {
+        let model = cube_with_history(10.0, first_profile(), None);
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        wire["model"]["features"][1]["ordinal"] = json!(2);
+        wire["model"]["features"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({
+                "id": "f3d:model:feature#3", "ordinal": 1,
+                // Recognition must use the source kind, not a user-editable display name.
+                "name": "Renamed joint", "source_tag": source_tag, "suppressed": false,
+                "definition": {"definition": "native", "kind": source_tag, "parameters": {}},
+            }));
+        let changed = Model {
+            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ..model
+        };
+        let (document, report) = convert(
+            &changed,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        let features = &report.outcome().unwrap().features;
+        assert_eq!(features.len(), 3);
+        assert_eq!(features[1].status, dutchman_core::FeatureStatus::NotNeeded);
+        assert_eq!(features[2].status, dutchman_core::FeatureStatus::Mapped);
+        assert_eq!(
+            types(&document),
+            [
+                ("sketch".to_owned(), false),
+                ("extrude".to_owned(), false),
+                ("import".to_owned(), true),
+            ]
+        );
+        assert_eq!(
+            history_line(&report),
+            "2 of 2 features rebuilt; unverified: verification turned off"
+        );
+    }
+}
+
+#[test]
+fn a_native_feature_named_as_built_still_stops_history() {
+    let model = cube_with_history(10.0, first_profile(), None);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["features"][1]["ordinal"] = json!(3);
+    wire["model"]["features"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({
+            "id": "f3d:model:feature#3", "ordinal": 1, "name": "As-built Joint 1",
+            "suppressed": false,
+            "definition": {"definition": "native", "kind": "Other operation", "parameters": {}},
+        }));
+    wire["model"]["features"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({
+            "id": "f3d:model:feature#4", "ordinal": 2, "name": "Renamed joint",
+            "source_tag": "As-built", "suppressed": false,
+            "definition": {"definition": "native", "kind": "As-built", "parameters": {}},
+        }));
+    let changed = Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..model
+    };
+    let (_, report) = convert(
+        &changed,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    let features = &report.outcome().unwrap().features;
+    assert_eq!(features[1].status, dutchman_core::FeatureStatus::Blocked);
+    assert_eq!(
+        features[1].reason.as_deref(),
+        Some("native is not mapped yet")
+    );
+    assert_eq!(features[2].status, dutchman_core::FeatureStatus::NotNeeded);
+    assert_eq!(features[3].status, dutchman_core::FeatureStatus::Blocked);
+}
+
+#[test]
 fn an_unverified_history_can_be_kept_hidden_beside_the_visible_original() {
     let model = cube_with_history(10.0, first_profile(), None);
     let writer = SolidCraftWriter::new()
