@@ -1308,6 +1308,18 @@ fn solidcraft_lofts_to_resolved_point_ends() {
 #[test]
 fn solidcraft_lofts_through_regions_of_a_shared_sketch() {
     let Some(cli) = solidcraft() else { return };
+    // Known SolidCraft 0.40 failure: this loft builds with no mass there
+    // (https://github.com/tangency-labs/solidcraft/issues/15263); it passes on 0.30.
+    let version = std::process::Command::new(&cli)
+        .arg("--version")
+        .output()
+        .ok()
+        .map(|out| String::from_utf8_lossy(&out.stdout).into_owned())
+        .and_then(|line| dutchman_solidcraft::solidcraft_minor(&line));
+    if version.as_deref() == Some("0.40") {
+        eprintln!("skipped on SolidCraft 0.40: tangency-labs/solidcraft#15263");
+        return;
+    }
     let volume = volumes(&cli, &written(&shared_sketch_loft()).0);
     assert_eq!(volume.len(), 1);
     assert!(volume[0].is_finite() && volume[0] > 0.0, "{volume:?}");
@@ -2012,7 +2024,14 @@ fn volumes(cli: &Path, design: &[u8]) -> Vec<f64> {
         .as_array()
         .unwrap()
         .iter()
-        .map(|body| body["volume_mm3"].as_f64().unwrap())
+        .map(|body| {
+            let volume = body["volume_mm3"].as_f64();
+            assert!(
+                volume.is_some(),
+                "SolidCraft returned no numeric body volume: {body}"
+            );
+            volume.unwrap()
+        })
         .collect()
 }
 

@@ -46,7 +46,7 @@ sending anything anywhere. The button only copies text; nothing is sent.
    `dutchman` command inside it, which the guide shows how to put on your `PATH`); elsewhere, the release archive. Check that `dutchman --version`
    prints the version.
 2. Optional, recommended: install a current SolidCraft (any release from the last
-   two weeks, currently 0.18–0.30). Older targets down to 0.18.2 get simplified features. With it, Dutchman checks every converted design
+   two weeks, currently 0.18.2–0.40). Older targets down to 0.18.2 get simplified features. With it, Dutchman checks every converted design
    in SolidCraft: whether a feature history replays to the same shape, and whether the
    geometry shows whole, with a volume. Dutchman finds the command-line tool inside an
    installed SolidCraft app (`SolidCraft.app` on macOS, under Program Files on Windows). If

@@ -5,9 +5,9 @@ Each release is built once, as its final release candidate. A candidate is a tag
 1. Refresh the SolidCraft window alongside the cadmpeg pin. `WINDOW_OLDEST` stays an
    exact, checksum-pinned release from the rolling 14-day window, never below the internal
    `OLDEST_SOLIDCRAFT` floor (0.18.2). `NEWEST_SOLIDCRAFT` names only the newest known
-   minor, currently `[0, 30]`; a patch release requires no Dutchman constant or docs update.
+   minor, currently `[0, 40]`; a patch release requires no Dutchman constant or docs update.
    Choose the oldest release and newest minor from SolidCraft's release dates, then run
-   `GITHUB_TOKEN=... scripts/solidcraft-window.sh 0.18.2 0.30` with a read-only GitHub token.
+   `GITHUB_TOKEN=... scripts/solidcraft-window.sh 0.18.2 0.40` with a read-only GitHub token.
    The script reads the authenticated GitHub releases list, selects the highest published
    stable patch of that minor, and checks its checksum metadata. It prints the constants,
    the oldest pinned checksum, and the newest minor's dynamic CI matrix entry. Copy those

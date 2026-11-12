@@ -1633,7 +1633,7 @@ mod output_tests {
             if command != "convert" {
                 args.extend(["--out-dir", "out"]);
             }
-            for version in ["0.18.2", "0.25.1", "0.30.0"] {
+            for version in ["0.18.2", "0.25.1", "0.40.0"] {
                 let mut valid = args.clone();
                 valid.extend(["--solidcraft-version", version, "--no-verify"]);
                 let cli = Cli::try_parse_from(valid).unwrap();

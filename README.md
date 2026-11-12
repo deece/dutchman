@@ -115,6 +115,8 @@ FreeCAD TechDraw drawings also convert to DXF (`--to dxf`): page curves, dimensi
 Output is a SolidCraft design (`.sc`), or, experimental, a FreeCAD rebuild macro (`.FCMacro`, `--to freecad`).
 <!-- /formats -->
 
+Designs open in SolidCraft 0.18.2 to 0.40; 0.40 is the newest known target.
+
 [Formats](docs/formats.md) has the details for each program, and [Feature history](docs/history.md) what maps onto SolidCraft.
 
 ## Report a file that fails or converts wrong

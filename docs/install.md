@@ -286,9 +286,9 @@ it says so under the check option:
 
 Dutchman is made for the current SolidCraft (any release from the last two weeks);
 older versions get simplified features, or pass `--solidcraft-version x.y.z` on
-`convert`, `convert-all`, or `watch`. The current window is 0.18–0.30; roundtrip
+`convert`, `convert-all`, or `watch`. The current window is 0.18.2–0.40; roundtrip
 checks cover its oldest and newest releases. Each design targets the found CLI's version,
-even with `--no-verify`, else the newest release known at build time (currently 0.30).
+even with `--no-verify`, else the newest release known at build time (currently 0.40).
 Versions below 0.18.2 and malformed versions are refused. Older targets remain accepted
 down to 0.18.2. Features that need a newer release block history with a named reason
 and preserve the original geometry as for other blockers.

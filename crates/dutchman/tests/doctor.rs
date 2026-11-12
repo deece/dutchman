@@ -112,7 +112,7 @@ fn diagnose_discovers_step_and_reports_a_planted_measurement_difference() {
     std::fs::write(input.with_extension("STEP"), step).unwrap();
     let cli = dir.path().join("synthetic-cli");
     std::fs::write(&cli,r#"#!/bin/bash
-if [ "$1" = --version ]; then echo 'solidcraft-cli 0.30.1'; exit; fi
+if [ "$1" = --version ]; then echo 'solidcraft-cli 0.40.1'; exit; fi
 volume=1000
 case "$2" in *reference.solidcraft) volume=500;; esac
 while [ "$#" -gt 0 ]; do
