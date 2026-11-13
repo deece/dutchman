@@ -439,7 +439,7 @@ mod history_tests {
     #[test]
     fn only_hidden_copies_hide_history_on_new_targets() {
         let model = crate::testing::cube();
-        for target in ["0.29.0", "0.30.0", "0.31.0", "0.40.0"] {
+        for target in ["0.29.0", "0.30.0", "0.31.0", "0.40.0", "0.41.0"] {
             let version = target.parse().unwrap();
             for live in [
                 Live::Partial,
@@ -450,8 +450,8 @@ mod history_tests {
             ] {
                 let doc = history_design(&model, &history(), "blobs/x.step", live, version);
                 assert_eq!(doc["format"], FORMAT);
-                // The 0.40 target keeps the 0.30 representation, including hidden history.
-                if target == "0.40.0" {
+                // Both newest targets keep format 23 and the 0.30 representation.
+                if matches!(target, "0.40.0" | "0.41.0") {
                     assert_eq!(
                         doc,
                         history_design(

@@ -249,7 +249,7 @@ fn an_assembly_parts_unverified_history_can_be_kept_hidden_beside_its_original()
     part.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
     assembly.parts.push(part);
     assembly.placements[1].part = 1;
-    for target in ["0.29.0", "0.30.0", "0.40.0"] {
+    for target in ["0.29.0", "0.30.0", "0.40.0", "0.41.0"] {
         let mut report = Report::default();
         let mut bytes = Vec::new();
         SolidCraftWriter::new()

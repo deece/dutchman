@@ -50,8 +50,8 @@ It checks histories in SolidCraft when it finds `solidcraft-cli`, as the command
 ([Feature history](history.md)): set `SOLIDCRAFT_CLI` to
 its path, or put it on the server's `PATH`. The form's **Target SolidCraft version**
 accepts x.y.z, at least 0.18.2. Leave it empty to target the found CLI's version, else
-the newest known at build time (currently 0.40). The rolling 14-day window is currently
-0.18.2–0.40; older targets get simplified features. FreeCAD helix history needs a target of 0.25 patch 1 or newer; older targets preserve
+the newest known at build time (currently 0.41). The rolling 14-day window is currently
+0.18.2–0.41; older targets get simplified features. FreeCAD helix history needs a target of 0.25 patch 1 or newer; older targets preserve
 the original geometry and report the required version.
 
 ## Settings

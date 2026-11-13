@@ -247,9 +247,9 @@ are not present in the pinned CADIR version.
 - `solidcraft_version: "0.25.1"` (CLI `--solidcraft-version 0.25.1` on `convert`,
   `convert-all`, or `watch`) chooses the target release. It must be x.y.z and at least
   0.18.2. The default is the found CLI's version capped at newest known, else the newest known at build time
-  (currently 0.40), even with CLI `--no-verify` or MCP `verify: false`.
+  (currently 0.41), even with CLI `--no-verify` or MCP `verify: false`.
   Dutchman targets the current SolidCraft with a rolling 14-day window (currently
-  0.18.2–0.40); older targets get simplified features with a named reason.
+  0.18.2–0.41); older targets get simplified features with a named reason.
 - `preset: "fast"` when the user wants only the shape. `history: false` (also
   `import_only: true`) removes history while keeping the preset's reference sketches and
   joints. Leave `verify` at its default.
@@ -577,7 +577,7 @@ SolidCraft reports also include `solidcraft.known_newest` (a version string) and
 fields require no network check. See [JSON reports](../../docs/json.md).
 
 SolidCraft names and report targets use minors: `solidcraft.target` and
-`solidcraft.known_newest` are `x.y` strings such as `"0.40"`. `solidcraft.found`
+`solidcraft.known_newest` are `x.y` strings such as `"0.41"`. `solidcraft.found`
 retains the full installed version. All patches of the newest minor count as current;
 writer gates still use full versions internally. Explicit target inputs remain `x.y.z`.
 

@@ -397,7 +397,7 @@ pub fn chosen_cli(chosen: &Path) -> Result<PathBuf, String> {
 pub const OLDEST_SOLIDCRAFT: [u64; 3] = [0, 18, 2];
 
 /// The newest minor known at build time. Patch releases need no constant update.
-pub const NEWEST_SOLIDCRAFT: [u64; 2] = [0, 40];
+pub const NEWEST_SOLIDCRAFT: [u64; 2] = [0, 41];
 
 /// The oldest SolidCraft release published in the 14 days before the tag, never below
 /// OLDEST_SOLIDCRAFT. Update alongside NEWEST_SOLIDCRAFT and the CI roundtrip pins at release time.
@@ -2728,14 +2728,14 @@ mod cli_tests {
         let dir = tempfile::tempdir().unwrap();
         let program = dir.path().join("dutchman");
         assert_eq!(beside(&program), None);
-        let cli = version_script(dir.path(), "solidcraft-cli", "solidcraft-cli 0.40.0");
+        let cli = version_script(dir.path(), "solidcraft-cli", "solidcraft-cli 0.41.0");
         assert_eq!(beside(&program), Some(cli));
     }
 
     #[test]
     fn a_chosen_cli_must_answer_as_solidcraft() {
         let dir = tempfile::tempdir().unwrap();
-        let cli = version_script(dir.path(), "solidcraft-cli", "solidcraft-cli 0.40.0");
+        let cli = version_script(dir.path(), "solidcraft-cli", "solidcraft-cli 0.41.0");
         assert_eq!(chosen_cli(&cli), Ok(cli));
         let other = version_script(dir.path(), "other-tool", "other-tool 1.2.3");
         assert!(chosen_cli(&other)
@@ -2758,7 +2758,7 @@ mod cli_tests {
         .unwrap();
         std::fs::set_permissions(&app, std::fs::Permissions::from_mode(0o755)).unwrap();
         assert!(chosen_cli(&app).unwrap_err().contains("portable ZIP"));
-        let cli = version_script(dir.path(), "solidcraft-cli", "solidcraft-cli 0.40.1");
+        let cli = version_script(dir.path(), "solidcraft-cli", "solidcraft-cli 0.41.1");
         assert_eq!(chosen_cli(&app), Ok(cli));
         assert!(!started.exists());
     }
@@ -3059,8 +3059,8 @@ mod cli_tests {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         for version in [
-            "0.18.2", "0.20.0", "0.25.1", "0.27.1", "0.40.0", "0.40.9", "0.41.0", "nonsense",
-            "0.17.0",
+            "0.18.2", "0.20.0", "0.25.1", "0.27.1", "0.40.0", "0.41.0", "0.41.9", "0.42.0",
+            "nonsense", "0.17.0",
         ] {
             let cli = dir.path().join(version);
             std::fs::write(
@@ -3195,13 +3195,30 @@ mod version_tests {
     }
 
     #[test]
+    fn target_041_keeps_040_writer_capabilities() {
+        let target: SolidCraftVersion = "0.41.0".parse().unwrap();
+        let previous: SolidCraftVersion = "0.40.0".parse().unwrap();
+        for gate in [
+            VersionGate::EntryRecessTip,
+            VersionGate::ConePrimitive,
+            VersionGate::SketchProfileCoil,
+            VersionGate::MirrorChain,
+        ] {
+            assert_eq!(gate.supported(target), gate.supported(previous));
+        }
+        assert_eq!(target.extension(), previous.extension());
+        assert!(!target_loses_history(target));
+    }
+
+    #[test]
     fn minor_status_preserves_patch_sensitive_writer_rules() {
         for (found, status) in [
             ("0.27.0", "current"),
             ("0.27.9", "current"),
             ("0.40.0", "current"),
-            ("0.40.9", "current"),
-            ("0.41.0", "newer"),
+            ("0.41.0", "current"),
+            ("0.41.9", "current"),
+            ("0.42.0", "newer"),
             ("0.17.99", "too_old"),
         ] {
             assert_eq!(

@@ -164,7 +164,7 @@ format provides the 0.18.2 compatibility floor. This stays `solidcraft/23` for 0
 targets too: its format 45 additions (nested Browser groups, point cloud properties and
 filters, and print faces) are not used by Dutchman. Feature mapping also respects the writer's
 target SolidCraft release: the found CLI's version capped at newest known, even with verification off, else
-`NEWEST_SOLIDCRAFT` (currently 0.40), unless an explicit target is supplied.
+`NEWEST_SOLIDCRAFT` (currently 0.41), unless an explicit target is supplied.
 `WINDOW_OLDEST` (currently 0.18.2) marks the oldest release in the rolling 14-day window;
 older targets down to the floor remain accepted with the existing feature gates. The
 CLI's `--solidcraft-version x.y.z` selects a target on `convert`, `convert-all`, and `watch`.
