@@ -1562,7 +1562,9 @@ mod left_out_tests {
 
     #[test]
     fn a_design_that_keeps_moving_memory_still_stops_at_three_times_the_limit() {
-        let limit = Duration::from_millis(40);
+        // Long against the loop's 5 ms sleeps: a busy CI runner can stretch one sleep past a few
+        // tens of ms, which would read as "no progress" and stop an archive that is still moving.
+        let limit = Duration::from_millis(250);
         let mut reading = Reading::new(false);
         reading.stage(Stage::Decode);
         reading.design(Some("Runaway.f3d".into()));
