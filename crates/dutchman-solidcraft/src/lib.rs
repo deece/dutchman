@@ -498,7 +498,7 @@ impl SolidCraftWriter {
     fn plan_blends(&self, mapping: &mut history::Mapping) {
         if self.evaluator.is_none() || matches!(self.replay, Verification::Off) {
             if let Err(why) = verify::find_cli(&self.replay) {
-                history::prove_blends(mapping, |_, _, _| Err(why));
+                history::prove_blends(mapping, |_, _, _| Err(why.clone()));
             }
         }
     }
@@ -513,6 +513,7 @@ impl SolidCraftWriter {
         step: &str,
         progress: Option<&dutchman_core::Progress<'_>>,
     ) -> Result<(), Error> {
+        let mut remaining = self.timeout;
         let mut failure = None;
         history::prove_blends(mapping, |history, after, faces| {
             if let Some(why) = self.memory_refusal() {
@@ -538,11 +539,14 @@ impl SolidCraftWriter {
                 p.step(
                     dutchman_core::StepKind::CheckingBlends,
                     Some(&model.name),
-                    Some(self.timeout),
+                    Some(remaining),
                     Some(dutchman_core::progress_words::blend_limit()),
                 )
             });
-            verify::replay_edges(cli.as_ref(), self.timeout, &design, after, faces)
+            let started = std::time::Instant::now();
+            let replayed = verify::replay_edges(cli.as_ref(), remaining, &design, after, faces);
+            remaining = remaining.saturating_sub(started.elapsed());
+            replayed
         });
         match failure {
             Some(err) => Err(err),

@@ -434,6 +434,8 @@ references require decoded label identities. Check geometry after editing parame
 
 Constant-radius fillets and equal-setback chamfers map when the feature's own input edge
 geometry proves which edge each one acts on in SolidCraft's replay before the blend.
+Picks on several bodies become one independent blend per body with numbered source names;
+the report still has one mapped feature outcome for the source feature.
 Unused FreeCAD binders and datum helpers are `not_needed`, with the Info note
 `helper not converted: nothing uses it`. Used datum points and coordinate systems can be
 carried by resolved sketch placements, pattern axes, or another resolved datum. A used helper without the required

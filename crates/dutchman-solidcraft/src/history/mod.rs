@@ -42,7 +42,7 @@ use std::cell::OnceCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use dutchman_core::{FeatureOutcome, FeatureStatus, Model, Report, Severity};
-use serde_json::Value;
+use serde_json::{json, Value};
 
 /// The CADIR wire versions the mapping reads. Version 7 adds only assembly joint kinds and a
 /// sheet-metal thickness side, neither of which the mapping uses. Version 11 adds
@@ -692,13 +692,7 @@ impl<'a> Context<'a> {
                     .clone()
                     .any(|feature| feature.get("name").and_then(Value::as_str) == Some(name))
         };
-        let mut name = base.clone();
-        let mut n = 2;
-        while taken(&name) {
-            name = format!("{base} ({n})");
-            n += 1;
-        }
-        name
+        numbered_name(&base, taken)
     }
 
     /// A row of a CADIR arena by id.
@@ -1305,10 +1299,107 @@ pub(crate) fn sketches_where(
 /// What SolidCraft rebuilt before each blend, as [`crate::verify::replay_edges`] reports it.
 pub(crate) type Replayed = Result<Vec<Result<crate::verify::Replay, String>>, String>;
 
+/// The existing one-source/many-features naming convention, shared by mapping and proving.
+fn numbered_name(base: &str, taken: impl Fn(&str) -> bool) -> String {
+    let mut name = base.to_owned();
+    let mut n = 2;
+    while taken(&name) {
+        name = format!("{base} ({n})");
+        n += 1;
+    }
+    name
+}
+
+/// Replace a blend with its independent per-body operations. Keep its original ID last:
+/// rollback markers and the source's complete post-feature comparison then include every
+/// operation. Added IDs share the source outcome, so replay failures shorten it as a unit.
+fn split_blend(
+    history: &mut History,
+    at: usize,
+    source: usize,
+    selections: Vec<blend::Selection>,
+) -> Result<(), String> {
+    let template = history
+        .features
+        .get(at)
+        .cloned()
+        .ok_or("the mapped blend is missing")?;
+    let base = template
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or("Blend");
+    let last = selections.len().saturating_sub(1);
+    let mut features: Vec<Value> = Vec::new();
+    for (index, selection) in selections.into_iter().enumerate() {
+        let mut feature = template.clone();
+        let name = numbered_name(base, |name| {
+            history
+                .features
+                .iter()
+                .enumerate()
+                .any(|(i, f)| i != at && f.get("name").and_then(Value::as_str) == Some(name))
+                || features
+                    .iter()
+                    .any(|f| f.get("name").and_then(Value::as_str) == Some(name))
+        });
+        if let Some(fields) = feature.as_object_mut() {
+            fields.insert("body".to_owned(), json!(selection.body));
+            fields.insert("edges".to_owned(), json!(selection.points));
+            fields.insert("name".to_owned(), json!(name));
+            if index != last {
+                let id = history.next_id;
+                history.next_id = history.next_id.saturating_add(1);
+                fields.insert("id".to_owned(), json!(id));
+                history.sources.insert(id, source);
+            }
+        }
+        features.push(feature);
+    }
+    if last > 0 {
+        let names: Vec<Value> = features
+            .iter()
+            .filter_map(|f| f.get("name").cloned())
+            .collect();
+        for target in history.features.iter_mut().skip(at.saturating_add(1)) {
+            if !matches!(
+                target.get("type").and_then(Value::as_str),
+                Some("pattern" | "mirror")
+            ) {
+                continue;
+            }
+            let Some(seeds) = target.get_mut("features").and_then(Value::as_array_mut) else {
+                continue;
+            };
+            let matches = seeds
+                .iter()
+                .filter(|seed| seed.as_str() == Some(base))
+                .count();
+            if matches == 0 {
+                continue;
+            }
+            if seeds.len().saturating_add(matches.saturating_mul(last)) > pattern::MAX_SEEDS {
+                return Err("patterns with more than 10000 seeds are not supported yet".to_owned());
+            }
+            *seeds = seeds
+                .iter()
+                .flat_map(|seed| {
+                    if seed.as_str() == Some(base) {
+                        names.clone()
+                    } else {
+                        vec![seed.clone()]
+                    }
+                })
+                .collect();
+        }
+    }
+    history.features.splice(at..at.saturating_add(1), features);
+    Ok(())
+}
+
 /// What proving a pending feature settled.
 enum Proven {
-    /// The body a blend's edges are on.
-    Body(String),
+    /// The blend is proven and emitted, with this many additional per-body operations.
+    Bodies(usize),
     /// A face profile's sketch rewritten on the other side of its plane, if it had to be.
     Sketch(Option<Value>),
 }
@@ -1319,7 +1410,7 @@ enum Proven {
 /// the history with the reason; without a replay (`replay` returning `Err`) none can be.
 pub(crate) fn prove_blends(
     mapping: &mut Mapping,
-    replay: impl FnOnce(&History, &[u64], bool) -> Replayed,
+    mut replay: impl FnMut(&History, &[u64], bool) -> Replayed,
 ) {
     let Ok(history) = &mut mapping.result else {
         return;
@@ -1340,7 +1431,7 @@ pub(crate) fn prove_blends(
         })
         .collect();
     let steps: Vec<u64> = after.iter().flatten().copied().collect();
-    let replayed = if steps.is_empty() {
+    let mut replayed = if steps.is_empty() {
         Ok(Vec::new())
     } else {
         let faces = history.blends.iter().any(|pending| pending.face.is_some());
@@ -1349,8 +1440,9 @@ pub(crate) fn prove_blends(
     let blends = std::mem::take(&mut history.blends);
     let mut step = 0usize;
     let mut first = None;
-    for (pending, after) in blends.iter().zip(&after) {
-        let proven = match (after, &replayed) {
+    let mut inserted = 0usize;
+    for (index, (pending, marker)) in blends.iter().zip(&after).enumerate() {
+        let proven = match (marker, &replayed) {
             (None, _) => Err("no feature before it builds a body to blend".to_owned()),
             (Some(_), Err(why)) => Err(format!(
                 "its input edges are found only on SolidCraft's replay of the history before \
@@ -1361,7 +1453,16 @@ pub(crate) fn prove_blends(
                 step = step.saturating_add(1);
                 match at {
                     Some(Ok(replay)) => match &pending.face {
-                        None => blend::prove(pending, &replay.bodies).map(Proven::Body),
+                        None => blend::prove(pending, &replay.bodies).and_then(|selections| {
+                            let added = selections.len().saturating_sub(1);
+                            split_blend(
+                                history,
+                                pending.feature.saturating_add(inserted),
+                                pending.outcome,
+                                selections,
+                            )?;
+                            Ok(Proven::Bodies(added))
+                        }),
                         Some(face) => face_profile::prove(face, replay).and_then(|mirrored| {
                             if mirrored {
                                 face.sketch(true)
@@ -1381,13 +1482,23 @@ pub(crate) fn prove_blends(
             }
         };
         match proven {
-            Ok(Proven::Body(body)) => {
-                if let Some(fields) = history
-                    .features
-                    .get_mut(pending.feature)
-                    .and_then(Value::as_object_mut)
-                {
-                    fields.insert("body".to_owned(), Value::String(body));
+            Ok(Proven::Bodies(added)) => {
+                inserted = inserted.saturating_add(added);
+                if added > 0 && index.saturating_add(1) < blends.len() {
+                    // Later blends must see all per-body operations, including earlier
+                    // radius groups. Their original last IDs remain rollback markers.
+                    let remaining: Vec<u64> = after
+                        .iter()
+                        .skip(index.saturating_add(1))
+                        .flatten()
+                        .copied()
+                        .collect();
+                    let faces = blends
+                        .iter()
+                        .skip(index.saturating_add(1))
+                        .any(|p| p.face.is_some());
+                    replayed = replay(history, &remaining, faces);
+                    step = 0;
                 }
             }
             // The face's sketch on the other side, which runs along the face's outward normal.
@@ -1754,6 +1865,66 @@ mod tests {
 
     use super::*;
     use crate::testing::{cube, feature, with};
+
+    #[test]
+    fn split_blends_keep_source_state_and_expand_later_feature_seeds() {
+        let mut history = History {
+            features: vec![
+                json!({"id": 1, "name": "Block", "type": "extrude"}),
+                json!({"id": 2, "name": "Treatment", "type": "fillet", "radius": "1 mm"}),
+                json!({"id": 3, "name": "Treatment (2)", "type": "pattern", "features": ["Block", "Treatment"]}),
+            ],
+            next_id: 4,
+            sources: BTreeMap::from([(1, 0), (2, 1), (3, 2)]),
+            stored_bodies: BTreeMap::from([(2, Vec::new())]),
+            ..History::default()
+        };
+        let original = history.clone();
+        split_blend(
+            &mut history,
+            1,
+            1,
+            vec![
+                blend::Selection {
+                    body: "First".to_owned(),
+                    points: vec![[0.0; 3]],
+                },
+                blend::Selection {
+                    body: "Second".to_owned(),
+                    points: vec![[10.0; 3]],
+                },
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            history.features[3]["features"],
+            json!(["Block", "Treatment", "Treatment (3)"])
+        );
+        assert_eq!(history.features[1]["id"], 4);
+        assert_eq!(history.features[1]["name"], "Treatment");
+        assert_eq!(history.features[2]["id"], 2);
+        assert_eq!(history.features[2]["name"], "Treatment (3)");
+        assert_eq!(history.features[1]["radius"], history.features[2]["radius"]);
+        assert_eq!(history.sources.get(&4), Some(&1));
+        assert_eq!(history.sources.get(&2), Some(&1));
+        assert_eq!(
+            history.stored_bodies.keys().copied().collect::<Vec<_>>(),
+            [2]
+        );
+        assert_eq!(history.next_id, 5);
+        let mut over_limit = original;
+        over_limit.features[2]["features"] = json!(vec!["Treatment"; pattern::MAX_SEEDS]);
+        let selections = ["First", "Second"]
+            .into_iter()
+            .map(|body| blend::Selection {
+                body: body.to_owned(),
+                points: vec![[0.0; 3]],
+            })
+            .collect();
+        assert!(split_blend(&mut over_limit, 1, 1, selections)
+            .unwrap_err()
+            .contains("10000 seeds"));
+    }
 
     /// The reference sketches map the same from the arenas they read as from the whole
     /// model, and read no other arena (a debug build panics on one).

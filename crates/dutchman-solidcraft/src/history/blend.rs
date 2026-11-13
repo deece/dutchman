@@ -1,5 +1,5 @@
 //! Blends picked exclusively from their own historical input-edge geometry, including
-//! stored base-feature edges preserved by the core before hidden shapes are removed, on the body
+//! stored base-feature edges preserved by the core before hidden shapes are removed, on the bodies
 //! SolidCraft rebuilds from the history before the blend, never on the final body.
 //!
 //! Mapping keeps each selected input edge ([`Pending`]); once SolidCraft has replayed the
@@ -460,10 +460,17 @@ fn sweep<'a>(
     Ok((sketch, mapped, direction, depth))
 }
 
-/// The body the blend's input edges lie on, among `bodies`: what SolidCraft rebuilt from the
-/// history before it. Each input edge must select exactly one rebuilt edge (see the module
-/// note), and all of them one body.
-pub(crate) fn prove(pending: &Pending, bodies: &ReplayedBodies) -> Result<String, String> {
+/// One independent body's selection, in order of first appearance in the input edges.
+#[derive(Debug, PartialEq)]
+pub(crate) struct Selection {
+    pub(crate) body: String,
+    pub(crate) points: Vec<V3>,
+}
+
+/// Match every input edge against the entire rebuilt history before grouping by body.
+/// Only constant circular fillets and equal-setback chamfers reach this proof: applying
+/// their identical parameters independently to disjoint bodies is equivalent.
+pub(crate) fn prove(pending: &Pending, bodies: &ReplayedBodies) -> Result<Vec<Selection>, String> {
     let mut chosen: Vec<(usize, usize)> = Vec::new();
     for input in &pending.edges {
         let mut on = Vec::new();
@@ -510,17 +517,22 @@ pub(crate) fn prove(pending: &Pending, bodies: &ReplayedBodies) -> Result<String
         }
         chosen.push((*b, *e));
     }
-    let body = chosen.first().map(|(b, _)| *b).ok_or(INPUT)?;
-    if chosen.iter().any(|(b, _)| *b != body) {
-        return Err(
-            "its input edges lie on more than one rebuilt body; blends across bodies are not supported yet"
-                .to_owned(),
-        );
+    if chosen.is_empty() {
+        return Err(INPUT.to_owned());
     }
-    bodies
-        .get(body)
-        .map(|(name, _)| name.clone())
-        .ok_or_else(|| INPUT.to_owned())
+    let mut selections: Vec<Selection> = Vec::new();
+    for ((body, _), input) in chosen.iter().zip(&pending.edges) {
+        let name = bodies.get(*body).map(|(name, _)| name).ok_or(INPUT)?;
+        if let Some(selection) = selections.iter_mut().find(|s| s.body == *name) {
+            selection.points.push(input.point);
+        } else {
+            selections.push(Selection {
+                body: name.clone(),
+                points: vec![input.point],
+            });
+        }
+    }
+    Ok(selections)
 }
 
 /// Whether the faces either side of a straight `edge` meet square, judged at both its ends by
@@ -655,6 +667,132 @@ mod tests {
 
     use super::{generated, Context};
     use crate::history::sketch::Mapped;
+
+    fn proof(edges: Vec<super::Input>) -> super::Pending {
+        super::Pending {
+            feature: 0,
+            outcome: 0,
+            subject: "Treatment".to_owned(),
+            edges,
+            angle_chamfer: false,
+            face: None,
+            extra: None,
+            trimmed: false,
+        }
+    }
+
+    fn straight_input(x: f64) -> super::Input {
+        super::Input {
+            point: [x, 0.0, 5.0],
+            ends: ([x, 0.0, 0.0], [x, 0.0, 10.0]),
+            tangent: [0.0, 0.0, 1.0],
+            length: 10.0,
+            straight: true,
+        }
+    }
+
+    fn rebuilt(input: &super::Input) -> crate::verify::ReplayedEdge {
+        crate::verify::ReplayedEdge {
+            start: input.ends.0,
+            end: input.ends.1,
+            mid: input.point,
+            length: input.length,
+            name: String::new(),
+        }
+    }
+
+    #[test]
+    fn proof_groups_bodies_and_edges_by_first_appearance() {
+        let (a, b, c) = (
+            straight_input(0.0),
+            straight_input(20.0),
+            straight_input(30.0),
+        );
+        let bodies = vec![
+            ("A".to_owned(), vec![rebuilt(&a)]),
+            ("B".to_owned(), vec![rebuilt(&b), rebuilt(&c)]),
+        ];
+        let pending = proof(vec![c.clone(), a.clone(), b.clone()]);
+        assert_eq!(
+            super::prove(&pending, &bodies).unwrap(),
+            vec![
+                super::Selection {
+                    body: "B".to_owned(),
+                    points: vec![c.point, b.point]
+                },
+                super::Selection {
+                    body: "A".to_owned(),
+                    points: vec![a.point]
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn splitting_keeps_every_edge_check_and_trimmed_group_check() {
+        let (a, b) = (straight_input(0.0), straight_input(20.0));
+        let bodies = vec![
+            ("A".to_owned(), vec![rebuilt(&a)]),
+            ("B".to_owned(), vec![rebuilt(&b)]),
+        ];
+        let pending = proof(vec![a.clone(), b.clone()]);
+        for changed in 0..4 {
+            let mut bad = bodies.clone();
+            match changed {
+                0 => bad[1].1[0].end[2] = 9.0,
+                1 => bad[1].1[0].length = 11.0,
+                2 => bad[1].1[0].start[0] += 1.0,
+                _ => bad.push(("Ambiguous".to_owned(), vec![rebuilt(&b)])),
+            }
+            assert!(super::prove(&pending, &bad).is_err());
+        }
+        let mut repeated = pending.clone();
+        repeated.edges.push(a);
+        assert!(super::prove(&repeated, &bodies)
+            .unwrap_err()
+            .contains("repeats"));
+        let mut tangent = pending.clone();
+        tangent.edges[1].tangent = [1.0, 0.0, 0.0];
+        assert!(super::prove(&tangent, &bodies).is_err());
+        let mut shortened = bodies.clone();
+        shortened[1].1[0].start[2] = 1.0;
+        shortened[1].1[0].end[2] = 9.0;
+        shortened[1].1[0].length = 8.0;
+        assert!(super::prove(&pending, &shortened).is_err());
+        let mut trimmed = pending.clone();
+        trimmed.trimmed = true;
+        assert_eq!(super::prove(&trimmed, &shortened).unwrap().len(), 2);
+        let mut angle = pending;
+        angle.angle_chamfer = true;
+        // Bare edges have no perpendicular incident faces to prove at either end.
+        assert!(super::prove(&angle, &bodies)
+            .unwrap_err()
+            .contains("non-perpendicular"));
+    }
+
+    #[test]
+    fn unsupported_radius_laws_never_reach_body_splitting() {
+        for radius in [
+            json!({"kind": "variable"}),
+            json!({"kind": "chordal"}),
+            json!({"kind": "asymmetric"}),
+            json!({"kind": "unresolved"}),
+            json!({"kind": "setback"}),
+        ] {
+            let model = json!({});
+            let mut ctx = Context::new(&model);
+            let error = super::map(
+                &json!({"name": "Treatment"}),
+                &json!({"definition": "fillet", "groups": [{"radius": radius}]}),
+                &mut ctx,
+                &mut dutchman_core::Report::default(),
+            )
+            .unwrap_err();
+            assert!(error.contains("not supported yet"), "{error}");
+            assert!(ctx.blends.is_empty());
+            assert!(ctx.extra.is_empty());
+        }
+    }
 
     /// An extrusion of sketch `s` (XY plane, raised 2 mm) 10 mm along `direction`, a corner
     /// point and the near side line in that sketch, and a native feature.

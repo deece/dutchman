@@ -379,6 +379,11 @@ This page used to hold everything. Each part now has its own page:
 
 [Feature history and the SolidCraft check](history.md)
 
+Constant-radius fillets and equal-setback chamfers whose proven input edges span several
+bodies become one SolidCraft blend per body, with numbered names from the same source
+feature. The report keeps one `mapped` feature outcome for that source feature.
+
+
 Offset datum planes need no building feature when their support resolves or all their
 consumers carry independent resolved sketch placements. Otherwise the history reason
 names the unresolved plane reference; resolved skipped planes count as `not_needed`.

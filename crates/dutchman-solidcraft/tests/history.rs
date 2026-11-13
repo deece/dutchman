@@ -9239,6 +9239,158 @@ fn blend_on(base: Model, kind: &str, dimension: Value, opposite: bool, z0: f64) 
     }
 }
 
+/// Synthetic prisms on opposite sides of one sketch, kept as separate bodies. Their
+/// stored example B-rep is deliberately unchanged, as in `input_blend`: the input
+/// topology and SolidCraft's replay, never that final B-rep, select the blend edges.
+fn multibody_blend(kind: &str, dimension: Value) -> Model {
+    let base = input_blend(kind, dimension, false);
+    let mut wire = serde_json::to_value(&base.ir).unwrap();
+    let m = &mut wire["model"];
+    let mut body = m["bodies"][0].clone();
+    body["id"] = json!("synthetic:lower:body#0");
+    body["name"] = json!("Lower block");
+    let mut region = m["regions"][0].clone();
+    region["id"] = json!("synthetic:lower:region#0");
+    body["regions"] = json!(["synthetic:lower:region#0"]);
+    m["regions"].as_array_mut().unwrap().push(region);
+    m["bodies"].as_array_mut().unwrap().push(body);
+    let mut extrude = m["features"][1].clone();
+    extrude["id"] = json!("synthetic:lower:feature#0");
+    extrude["ordinal"] = json!(2);
+    extrude["name"] = json!("Lower extrusion");
+    extrude["outputs"] = json!(["synthetic:lower:body#0"]);
+    extrude["definition"]["direction"] =
+        json!({"kind": "explicit", "vector": {"x": 0.0, "y": 0.0, "z": -1.0}});
+    m["features"].as_array_mut().unwrap().insert(2, extrude);
+    m["features"][3]["ordinal"] = json!(3);
+    m["features"][3]["outputs"] = json!(["synthetic:cube:body#0", "synthetic:lower:body#0"]);
+    m["features"][3]["definition"]["groups"][0]["edges"]["value"]["edges"] =
+        json!(["lower", "near"]);
+    let state = &mut m["feature_input_topologies"][0];
+    state["edges"].as_array_mut().unwrap().push(json!("lower"));
+    let mut lower = state["edge_geometry"][1].clone();
+    lower["edge"] = json!("lower");
+    lower["start"]["z"] = json!(-10.0);
+    lower["end"]["z"] = json!(0.0);
+    lower["interior"]["z"] = json!(-5.0);
+    state["edge_geometry"].as_array_mut().unwrap().push(lower);
+    // A later blend proves that replay refreshes after the split. Its untouched edge
+    // on the upper prism still has the original input geometry.
+    let mut later = m["features"][3].clone();
+    later["id"] = json!("synthetic:later:feature#0");
+    later["ordinal"] = json!(4);
+    later["name"] = json!("Later treatment");
+    later["outputs"] = json!(["synthetic:cube:body#0"]);
+    later["definition"]["groups"][0]["edges"]["value"]["state"] =
+        json!("synthetic:later:feature-input-topology#0");
+    later["definition"]["groups"][0]["edges"]["value"]["edges"] = json!(["opposite"]);
+    let mut later_state = m["feature_input_topologies"][0].clone();
+    later_state["id"] = json!("synthetic:later:feature-input-topology#0");
+    later_state["input_of"] = json!("synthetic:later:feature#0");
+    m["feature_input_topologies"]
+        .as_array_mut()
+        .unwrap()
+        .push(later_state);
+    m["features"].as_array_mut().unwrap().push(later);
+    Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..base
+    }
+}
+
+#[test]
+fn solidcraft_splits_multibody_blends_and_continues_history() {
+    let Some(cli) = solidcraft() else { return };
+    for target in ["0.18.2", "0.40.1"] {
+        for (kind, dimension) in blend_cases() {
+            let model = multibody_blend(kind, dimension);
+            let (bytes, report) = written_with(
+                &model,
+                &replaying(&cli).target_version(Some(target.parse().unwrap())),
+            );
+            let mut archive = ZipArchive::new(Cursor::new(&bytes)).unwrap();
+            let mut text = String::new();
+            archive
+                .by_name("document.json")
+                .unwrap()
+                .read_to_string(&mut text)
+                .unwrap();
+            let document: Value = serde_json::from_str(&text).unwrap();
+            let features = document["features"].as_array().unwrap();
+            let blends: Vec<_> = features.iter().filter(|f| f["type"] == kind).collect();
+            assert_eq!(blends.len(), 3, "{report:?}");
+            assert_eq!(blends[0]["body"], "Lower block");
+            assert_eq!(blends[0]["edges"], json!([[10.0, 10.0, -5.0]]));
+            assert_eq!(blends[0]["name"], "Edge treatment");
+            assert_eq!(blends[1]["body"], "unit cube");
+            assert_eq!(blends[1]["edges"], json!([[0.0, 0.0, 5.0]]));
+            assert_eq!(blends[1]["name"], "Edge treatment (2)");
+            assert_eq!(blends[2]["name"], "Later treatment");
+            assert_eq!(blends[2]["body"], "unit cube");
+            let outcomes = &report.outcome().unwrap().features;
+            assert_eq!(outcomes.len(), 5);
+            assert!(
+                outcomes
+                    .iter()
+                    .all(|f| f.status == dutchman_core::FeatureStatus::Mapped),
+                "{report:?}"
+            );
+            assert_eq!(
+                outcomes
+                    .iter()
+                    .filter(|f| f.name.as_deref() == Some("Edge treatment"))
+                    .count(),
+                1
+            );
+            // Run the resulting file through SolidCraft too: every emitted feature must
+            // succeed, and both bodies must have lost material from the original prisms.
+            let measured = evaluated(&cli, &bytes);
+            assert_eq!(measured["bodies"].as_array().unwrap().len(), 2);
+            for body in measured["bodies"].as_array().unwrap() {
+                assert!(body["volume_mm3"].as_f64().unwrap() < 1000.0, "{measured}");
+            }
+        }
+    }
+}
+
+#[test]
+fn multibody_blends_keep_unsupported_dimensions_refused() {
+    for (kind, dimension, reason) in [
+        (
+            "fillet",
+            json!({"kind": "variable", "points": [
+            {"parameter": 0.0, "radius": 1.0}, {"parameter": 1.0, "radius": 2.0}]}),
+            "proven chain direction",
+        ),
+        (
+            "fillet",
+            json!({"kind": "chordal", "chord_length": 1.0}),
+            "other than constant-radius",
+        ),
+        (
+            "fillet",
+            json!({"kind": "asymmetric", "offset_one": 1.0, "offset_two": 2.0}),
+            "other than constant-radius",
+        ),
+        (
+            "fillet",
+            json!({"kind": "unresolved"}),
+            "other than constant-radius",
+        ),
+        (
+            "chamfer",
+            json!({"kind": "two_distances", "first": 1.0, "second": 2.0}),
+            "input reference face ordering",
+        ),
+    ] {
+        let (_, report) = convert(
+            &multibody_blend(kind, dimension),
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert!(history_line(&report).contains(reason), "{report:?}");
+    }
+}
+
 fn blend_cases() -> Vec<(&'static str, Value)> {
     vec![
         ("fillet", json!({"kind": "constant", "radius": 1.0})),

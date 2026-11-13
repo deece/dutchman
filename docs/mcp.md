@@ -326,6 +326,10 @@ FreeCAD external Body and Part links are resolved beside the assembly first, the
 `completeness.left_out`; available components still convert. Link arrays place each element
 once. Grounding and supported Assembly-workbench joints map like other assembly joints.
 
+Constant-radius fillets and equal-setback chamfers whose proven input edges span several
+bodies become one SolidCraft blend per body, with numbered names from the same source
+feature. The report keeps one `mapped` feature outcome for that source feature.
+
 FreeCAD fillets and chamfers use their base feature's stored edges only when the earlier
 result and each pick on SolidCraft's replay are proven. Otherwise `history.features[].reason`
 says why the edge selection is refused, and conversion keeps the original geometry.

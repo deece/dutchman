@@ -351,6 +351,10 @@ and in `losses`. Available linked Bodies and Parts convert as placed components;
 elements count once. Grounded parts appear as rigid joints, and unsupported joints have
 loss notes while stored placements are retained. No report schema fields are added.
 
+Constant-radius fillets and equal-setback chamfers whose proven input edges span several
+bodies become one SolidCraft blend per body, with numbered names from the same source
+feature. The report keeps one `mapped` feature outcome for that source feature.
+
 For FreeCAD fillets and chamfers, `history.features[].reason` reports missing stored input
 edge geometry or a failed replay proof. Resolved edges without proven membership in an
 earlier stored feature result are refused. This uses the existing feature status and reason

@@ -16,6 +16,8 @@ const FULL_TURN: f64 = 1e-9;
 
 /// Bound the work a pattern asks SolidCraft to replay.
 const MAX_INSTANCES: u64 = 10_000;
+/// Bound feature/body seed lists, including blends expanded after replay.
+pub(super) const MAX_SEEDS: usize = 10_000;
 
 /// Maps a pattern feature whose operation is `definition`.
 pub(crate) fn map(
@@ -35,7 +37,7 @@ pub(crate) fn map(
         } else {
             "it patterns nothing"
         })?;
-    if seeds.len() > 10_000 {
+    if seeds.len() > MAX_SEEDS {
         return Err("patterns with more than 10000 seeds are not supported yet".to_owned());
     }
     let mut features = Vec::with_capacity(seeds.len());
@@ -56,13 +58,13 @@ pub(crate) fn map(
                 } else {
                     features.push(name.clone());
                 }
-                if features.len() > 10_000 {
+                if features.len() > MAX_SEEDS {
                     return Err("patterns with more than 10000 seeds are not supported yet".to_owned());
                 }
             }
             Some("bodies") => {
                 bodies.extend(body_seeds(seed.get("value"), ctx)?);
-                if bodies.len() > 10_000 {
+                if bodies.len() > MAX_SEEDS {
                     return Err("patterns with more than 10000 body seeds are not supported yet".to_owned());
                 }
             }
@@ -206,7 +208,7 @@ fn chain(
                 )
             };
         instances = instances.saturating_mul(count);
-        if instances > MAX_INSTANCES || features.len() > 10_000 {
+        if instances > MAX_INSTANCES || features.len() > MAX_SEEDS {
             return Err("patterns with more than 10000 instances are not supported yet".to_owned());
         }
         let stage_name = if index + 1 == stages.len() {

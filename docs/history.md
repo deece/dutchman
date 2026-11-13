@@ -157,8 +157,13 @@ Constant-radius fillets and equal-setback chamfers keep editable history when th
 feature input topology supplies edge midpoints, tangents, and endpoints, and each midpoint
 can be proven to pick exactly one edge of the pre-feature body, whatever history builds it.
 SolidCraft itself rebuilds that body: Dutchman replays the mapped history in `solidcraft-cli`
-once per design (two runs, however many blends, within the check's time limit), up to the last
-feature a blend starts after, and reads the edges each blend starts from. Without `solidcraft-cli`, or when the replay fails or runs out
+in a batch (two runs within the check's time limit), up to the last feature a blend
+starts after, and reads the edges each blend starts from. If the picks span several
+bodies, each body gets its own blend with the same parameters, in the order its edges
+first appear. Names share the source name with numbered suffixes, as for radius groups;
+the report still records one mapped source feature. Later feature patterns and mirrors
+select every emitted part of the blend. Later blends replay the expanded
+history before their edges are proven. Without `solidcraft-cli`, or when the replay fails or runs out
 of time, blends are refused, saying why. SolidCraft reports each edge's ends, midpoint and
 length but no tangent, so an input edge must be a line or a circular arc; its midpoint must
 lie on exactly one rebuilt edge across every body, and that edge must have the same ends (in
