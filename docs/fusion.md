@@ -5,7 +5,7 @@ cadmpeg's most complete native reader. This page says what Dutchman makes of wha
 gives and which upstream gaps remain. Improvements land in cadmpeg and reach Dutchman when the
 pin is bumped.
 
-State at the cadmpeg commit pinned in `Cargo.toml` (`651fe819`, cadmpeg 0.6.11).
+State at the cadmpeg commit pinned in `Cargo.toml` (`9d7592c6`, cadmpeg 0.6.12).
 More thread and hole forms, healed Delete Face operations, shell wall selections, loft
 sections and rails, circular pipes, and pattern placements decode for history mapping.
 More extrude profiles and face ends, fillet edge selections, body moves, and component
@@ -15,6 +15,23 @@ Sketch names follow their timeline sketch features.
 Historical body centres use bounded samples along curved edges as well as vertices and
 proven circular extrema. cadmpeg identifies incomplete edge or topology evidence separately;
 only bodies certified as exact have exact bounding-box centres.
+
+## Mesh bodies
+
+When cadmpeg reports mesh-body members for a Fusion design with no decoded B-rep bodies
+or placed components, Dutchman says "it has mesh bodies (N), which Dutchman
+doesn't convert yet, and no solid bodies could be read" and asks you to convert the meshes to
+solids in Fusion, then save a new copy. The count comes from typed mesh selections; an
+undecoded mesh container or an unresolved source alone cannot supply a count, so the
+existing read error remains.
+Designs with both B-rep and mesh bodies still convert their B-rep bodies and report reader
+losses for meshes it could not decode.
+
+Cadmpeg projects decoded mesh containers as CADIR tessellations in model millimetres,
+with placement applied, and links them from mesh-import features. When a container cannot
+be decoded, a mesh-import feature may instead retain native body members with the loss
+`f3d/feature.mesh-import-tessellations-unresolved`. Those references carry no triangles.
+Dutchman does not reconstruct mesh geometry from native records.
 
 ## Parts and history
 

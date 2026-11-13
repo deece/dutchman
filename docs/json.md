@@ -427,6 +427,19 @@ A failure carries `"ok": false`, `input` and `error`, and exits 1:
            "stage": "decode", "upstream": "cadmpeg"}}
 ```
 
+When cadmpeg reports mesh-body members for a Fusion design with no decoded B-rep bodies
+or placed components, Dutchman says "it has mesh bodies (N), which Dutchman
+doesn't convert yet, and no solid bodies could be read" and asks you to convert the meshes to
+solids in Fusion, then save a new copy. The count comes from typed mesh selections; an
+undecoded mesh container or an unresolved source alone cannot supply a count, so the
+existing read error remains.
+Designs with both B-rep and mesh bodies still convert their B-rep bodies and report reader
+losses for meshes it could not decode.
+
+The mesh-body refusal keeps `error.stage: "decode"` when no geometry was transferred,
+or `"project"` when mesh geometry was read but no B-rep bodies can be converted.
+`error.upstream` stays `"cadmpeg"`; no report fields or error kinds are added.
+
 `error.message` is for people; do not parse its wording. Unreadable-container errors retain
 cadmpeg's cause and add recovery advice and a link to the
 **A file didn't convert** issue form. The CLI and MCP return the same message, stage, and upstream.

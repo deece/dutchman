@@ -200,6 +200,11 @@ fn decode_unguarded(
     drop(reading);
     let decoded = decoded.map_err(|err| decode_failure(format, err))?;
     let (mut ir, decode_report, fidelity) = decoded.into_parts();
+    if let Some(error) =
+        mesh_only_error(format, &ir, decode_report.geometry_transferred()).filter(|_| !drawings)
+    {
+        return Err(error);
+    }
     // An assembly's geometry is in its parts' files, read afterwards.
     if !drawings
         && !decode_report.geometry_transferred()
@@ -254,6 +259,64 @@ fn decode_unguarded(
     }
     checked?;
     Ok(model)
+}
+
+/// Diagnose only typed mesh selections with known members. An unresolved import or an
+/// undecoded-container loss alone does not establish how many mesh bodies exist.
+fn mesh_only_error(
+    format: Format,
+    ir: &cadmpeg_ir::CadIr,
+    geometry_transferred: bool,
+) -> Option<Error> {
+    use cadmpeg_ir::features::mesh::MeshSelection;
+    use cadmpeg_ir::FeatureOperation;
+    use std::collections::BTreeSet;
+
+    if !matches!(format, Format::FusionArchive | Format::FusionMultiDocument)
+        || !ir.model.bodies.is_empty()
+        || !ir.model.occurrences.is_empty()
+    {
+        return None;
+    }
+    let mut bodies = BTreeSet::new();
+    for feature in &ir.model.features {
+        if feature.suppressed == Some(true) {
+            continue;
+        }
+        let FeatureOperation::MeshImport { tessellations } =
+            feature.evaluation.definition().operation()
+        else {
+            continue;
+        };
+        match tessellations {
+            MeshSelection::Tessellations(ids) => {
+                for id in ids {
+                    bodies.insert((None, id.as_str()));
+                }
+            }
+            MeshSelection::Native {
+                native,
+                members: Some(members),
+            } => {
+                for member in members.as_slice() {
+                    bodies.insert((Some(native.as_str()), member.as_str()));
+                }
+            }
+            _ => return None,
+        }
+    }
+    if bodies.is_empty() {
+        return None;
+    }
+    let message = format!(
+        "it has mesh bodies ({}), which Dutchman doesn't convert yet, and no solid bodies could be read. Convert the meshes to solids in Fusion, then save a new copy",
+        bodies.len()
+    );
+    Some(if geometry_transferred {
+        Error::NoGeometry(message)
+    } else {
+        Error::Decode(message)
+    })
 }
 
 /// Visit independent F3Z members through cadmpeg's bounded session API. Models are released
@@ -900,6 +963,64 @@ mod tests {
             &mut Report::default(),
         )
         .unwrap()
+    }
+
+    fn mesh_import(selection: serde_json::Value) -> cadmpeg_ir::features::Feature {
+        serde_json::from_value(serde_json::json!({
+            "id": "test:model:feature#mesh", "ordinal": 0, "suppressed": false,
+            "definition": {"definition": "mesh_import", "tessellations": selection}
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn mesh_only_diagnostic_uses_decoded_members_before_the_geometry_gate() {
+        let mut model = cube();
+        model.ir.model.features = vec![mesh_import(serde_json::json!({
+            "native": "test:model:source#mesh", "members": ["17", "23"]
+        }))];
+        // A mixed design keeps its existing conversion and losses.
+        assert!(mesh_only_error(Format::FusionArchive, &model.ir, false).is_none());
+        model.ir.model.bodies.clear();
+        let error = mesh_only_error(Format::FusionArchive, &model.ir, false).unwrap();
+        assert_eq!(error.stage(), Stage::Decode);
+        assert_eq!(error.upstream(), Some("cadmpeg"));
+        let transferred = mesh_only_error(Format::FusionArchive, &model.ir, true).unwrap();
+        assert_eq!(transferred.stage(), Stage::Project);
+        assert_eq!(transferred.kind(), "no_geometry");
+        assert!(transferred
+            .to_string()
+            .starts_with("cannot convert this design:"));
+        assert_eq!(error.to_string(), "cannot read this design: it has mesh bodies (2), which Dutchman doesn't convert yet, and no solid bodies could be read. Convert the meshes to solids in Fusion, then save a new copy");
+        assert!(mesh_only_error(Format::InventorPart, &model.ir, false).is_none());
+        assert!(mesh_only_error(Format::FusionMultiDocument, &model.ir, false).is_some());
+        model.ir.model.features[0].suppressed = Some(true);
+        assert!(mesh_only_error(Format::FusionArchive, &model.ir, false).is_none());
+    }
+
+    #[test]
+    fn mesh_only_diagnostic_does_not_invent_counts_for_unresolved_sources() {
+        let mut model = cube();
+        model.ir.model.bodies.clear();
+        for selection in [
+            serde_json::json!({"native": "test:model:source#mesh"}),
+            serde_json::json!({"feature": "test:model:feature#mesh"}),
+        ] {
+            model.ir.model.features = vec![mesh_import(selection)];
+            assert!(mesh_only_error(Format::FusionArchive, &model.ir, false).is_none());
+        }
+        model.ir.model.features.clear();
+        assert!(mesh_only_error(Format::FusionArchive, &model.ir, false).is_none());
+    }
+
+    #[test]
+    fn mesh_only_diagnostic_deduplicates_resolved_tessellation_identities() {
+        let mut model = cube();
+        model.ir.model.bodies.clear();
+        let feature = mesh_import(serde_json::json!(["test:model:tessellation#mesh"]));
+        model.ir.model.features = vec![feature.clone(), feature];
+        let error = mesh_only_error(Format::FusionArchive, &model.ir, false).unwrap();
+        assert!(error.to_string().contains("has mesh bodies (1)"));
     }
 
     #[test]

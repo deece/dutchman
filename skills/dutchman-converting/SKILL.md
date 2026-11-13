@@ -844,3 +844,12 @@ retention or stop policy in a full sentence. Durations use a single format such 
 or `2 min`. Desktop folder runs keep the longest-running file, stage and step visible below
 the completed count, with the number of other active files. Names in progress are private local text; do not copy them into
 anonymous diagnostic reports. See docs/command-line.md for per-step limits.
+
+When cadmpeg reports mesh-body members for a Fusion design with no decoded B-rep bodies
+or placed components, Dutchman says "it has mesh bodies (N), which Dutchman
+doesn't convert yet, and no solid bodies could be read" and asks you to convert the meshes to
+solids in Fusion, then save a new copy. The count comes from typed mesh selections; an
+undecoded mesh container or an unresolved source alone cannot supply a count, so the
+existing read error remains.
+Designs with both B-rep and mesh bodies still convert their B-rep bodies and report reader
+losses for meshes it could not decode.
