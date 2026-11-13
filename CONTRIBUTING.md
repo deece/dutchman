@@ -13,8 +13,9 @@ dutchman convert-all --out-dir converted --report-anon report-anon.json part.f3d
 ```
 
 Replace `part.f3d` with your file or folder. Review `report-anon.json`, then open an issue
-with the cause, counts, and versions it records. Ordinary logs, JSON output, and journals
-contain file names and paths; keep them, the report key, and the salt private.
+with the cause, counts, and versions it records. Include the three required versions
+as described in [Report what you found](docs/testing-your-library.md#5-report-what-you-found).
+Ordinary logs, JSON output, and journals contain file names and paths; keep them, the report key, and the salt private.
 
 Keep the original design private. You may attach a small rebuilt reproduction if it
 reproduces and you are free to share it; follow the
@@ -25,8 +26,10 @@ from libraries. See
 
 Always report it here, on Dutchman, even when the report names cadmpeg or SolidCraft (an
 `upstream` field, or a `f3d/…`, `inventor/…` or `sldprt/…` loss code). Don't file it on cadmpeg
-or SolidCraft yourself: we work out where the fix belongs, take it upstream, and tell you here
-when a Dutchman release has it. [docs/triage.md](docs/triage.md) says how.
+or SolidCraft for the initial report: we work out where the fix belongs, take it upstream,
+and tell you here when a Dutchman release has it. To help with a fix, choose the
+[optional contribution tiers](docs/testing-your-library.md#want-to-go-further), using only
+synthetic files. [docs/triage.md](docs/triage.md) says how reports are handled.
 
 To test Dutchman on a whole library of your own without sharing a file, see
 [Testing Dutchman on your library](docs/testing-your-library.md) and its issue form.

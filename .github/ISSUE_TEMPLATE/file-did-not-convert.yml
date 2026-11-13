@@ -29,14 +29,33 @@ body:
     id: source-version
     attributes:
       label: Version that made the file
-      description: The Fusion, Inventor, SolidWorks, or FreeCAD version or year, if you know it.
-      placeholder: "Fusion 2.0.20xxx, Inventor 2024, SolidWorks 2022, FreeCAD 1.0, unknown"
+      description: >-
+        Give the source program and version from its About screen or the file's metadata.
+        If the exact build is unknown, give the program, desktop or web, and the years
+        the files are from. Do not write only "unknown".
+      placeholder: "Fusion desktop, unknown builds, files from 2020 to 2025"
+    validations:
+      required: true
   - type: input
     id: dutchman-version
     attributes:
       label: Dutchman version
-      description: "What `dutchman --version` prints (on a Mac, `"/Applications/Dutchman Convert.app/Contents/Helpers/dutchman" --version`, or `/Applications/Dutchman.app/…` for 0.1.5 and earlier), and whether it is a stable or nightly build."
+      description: >-
+        Paste what `dutchman --version` prints, and say whether it is stable or nightly.
+        On a Mac, run `"/Applications/Dutchman Convert.app/Contents/Helpers/dutchman" --version`
+        (or use `/Applications/Dutchman.app/…` for 0.1.5 and earlier).
       placeholder: "dutchman 0.1.5, stable"
+    validations:
+      required: true
+  - type: input
+    id: solidcraft-version
+    attributes:
+      label: SolidCraft version
+      description: >-
+        Paste what `solidcraft-cli --version` prints. Use the tool in your SolidCraft
+        installation, or the path set in `SOLIDCRAFT_CLI`, if it is not on PATH.
+        Write "none" when no SolidCraft was installed.
+      placeholder: "solidcraft-cli 0.41, or none"
     validations:
       required: true
   - type: input

@@ -27,8 +27,13 @@ body:
     id: source-version
     attributes:
       label: Version that made the files
-      description: The Fusion, Inventor, SolidWorks, or FreeCAD version or year, if you know it.
-      placeholder: "Fusion 2.0.20xxx, Inventor 2024, SolidWorks 2022, FreeCAD 1.0, unknown"
+      description: >-
+        Give the source program and version from its About screen or the file's metadata.
+        If the exact build is unknown, give the program, desktop or web, and the years
+        the files are from. Do not write only "unknown".
+      placeholder: "Fusion desktop, unknown builds, files from 2020 to 2025"
+    validations:
+      required: true
   - type: dropdown
     id: stage
     attributes:
@@ -81,7 +86,12 @@ body:
     id: versions
     attributes:
       label: Versions
-      description: The report's `versions` block.
+      description: >-
+        Copy the report's `versions` block verbatim, including Dutchman, cadmpeg,
+        SolidCraft, operating system, and processor. In Anything else, also paste
+        `dutchman --version` and `solidcraft-cli --version` (use the installed tool's path or
+        `SOLIDCRAFT_CLI` if needed); write "none" if no SolidCraft was installed.
+        Keep a report's null unchanged even if SolidCraft is installed now.
       render: json
     validations:
       required: true

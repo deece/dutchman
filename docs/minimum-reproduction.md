@@ -52,14 +52,23 @@ A killed process can leave a temporary directory under the output folder; keep i
    only if the same stage and codes remain. If no recipe matches, the generic instructions
    suggest copying the failing body into a new design locally, then rebuilding the small
    shape from scratch with simple dimensions you are free to share.
-4. Review an issue draft made only from anonymous.json: versions, format, stage, category,
-   code counts, kinds, anonymous ordinals and limits. Post it on Dutchman's issues yourself.
-   If rebuilding did not reproduce, report the anonymous facts and say so.
+4. Review an issue draft with anonymous.json's `versions` block copied verbatim and its
+   format, stage, category, code counts, kinds, anonymous ordinals and limits. An agent runs
+   `dutchman --version` and `solidcraft-cli --version` if installed (using its full path or
+   `SOLIDCRAFT_CLI` if needed), adding the outputs separately, or "none" if no SolidCraft
+   was installed. State the source program/version from metadata already reported by
+   Dutchman or the program's About screen; the agent asks once if missing. If exact builds
+   are unknown, give the program, desktop or web, and the years the files are from.
+   Post it on Dutchman's issues yourself. If rebuilding did not reproduce, say so.
 
-Send anonymous.json and the small rebuilt file only if it reproduces and you are free to
-share it. Never send the original file. Never send local-key.json. The
+Share the reviewed anonymous.json; include a synthetic file rebuilt from scratch only
+if it reproduces and you are free to share it, with its STEP export and a public licence
+such as CC0. Never send the original file. Never send local-key.json. The
 [paste-ready prompt](testing-your-library.md#let-your-own-ai-make-a-minimum-reproduction)
 coaches this procedure without posting or uploading anything for you.
+
+Want to go further? The next tiers are [finding the cause in cadmpeg, fixing it, and finishing it in Dutchman](testing-your-library.md#want-to-go-further);
+an agent asks once how far to go, then does every tier up to that answer.
 
 ## Worked example: 88 use-curve range findings
 

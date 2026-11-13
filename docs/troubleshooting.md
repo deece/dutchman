@@ -18,7 +18,10 @@ form on Dutchman's issues (for a whole library, the **Library test report** form
 ordinary logs, JSON output, the journal, the report key, and the salt private: they contain
 names, paths, or a way to identify files. Keep the original design private. You may attach a
 small rebuilt reproduction only if it reproduces and you are free to share it. See
-[Testing Dutchman on your library](testing-your-library.md#5-report-what-you-found).
+[Report what you found](testing-your-library.md#5-report-what-you-found) for the three
+required versions and [Want to go further?](testing-your-library.md#want-to-go-further)
+for the four optional tiers, which use only a synthetic reproduction; an agent asks once how
+far to go.
 
 On Linux, run `dutchman-gui` from a terminal and confirm that your X11 or Wayland desktop
 session has working OpenGL and graphics drivers. Include the terminal diagnostics when
@@ -260,6 +263,11 @@ Without an assistant, choose **Diagnose this file** on the desktop failure card,
 With dutchman-mcp configured locally, paste this prompt and substitute your local paths:
 
 > Use Dutchman's anonymous diagnostic tools on INPUT, writing local results under OUT.
+> Run dutchman --version and solidcraft-cli --version if installed, using its full path
+> or SOLIDCRAFT_CLI if needed; record "none" if no SolidCraft was installed. Copy the
+> report's versions block verbatim for any issue draft, and add those outputs separately.
+> State the source program/version from metadata already reported by Dutchman; ask me once
+> if missing. If exact builds are unknown, give the program, desktop or web, and file years.
 > Start with diagnose_narrow; it resumes a stopped run and checks shipped known problems.
 > Explain any workaround first. If useful, try convert_part with the anonymous part number,
 > optionally with neighbours, and stop_at_feature to test a history prefix. Show me the
@@ -269,6 +277,9 @@ With dutchman-mcp configured locally, paste this prompt and substitute your loca
 > use make_report to prepare the local ZIP. Tell me where to review it locally. Do not read
 > local-key.json, the original file, the rebuilt file or the ZIP into the conversation.
 > Do not upload anything or open a submission link; I will review and choose what to send.
+> End by showing the remaining tiers from "Want to go further?" in Testing Dutchman on your
+> library and asking once: "How far do you want me to go? (stop here / Tier 2 / Tier 3 / all the way)";
+> then do every tier up to my answer without asking again, and stop early only if a tier fails or needs something from me (such as my GitHub login or a small design rebuilt by hand).
 
 The assistant sees categories, counts and signatures. The report ZIP itself contains the
 small file's geometry. A broad matching error category alone does not prove the same

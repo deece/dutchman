@@ -1,5 +1,9 @@
 # The anonymous report: `dutchman.report-anon/1`
 
+When filing an issue, copy `versions` verbatim, including `versions.dutchman`. See
+[Report what you found](testing-your-library.md#5-report-what-you-found) for the required
+Dutchman, SolidCraft, and source program versions and the optional steps after reporting.
+
 `dutchman convert-all --report-anon FILE …`, `dutchman convert --report-anon FILE …` for one
 file (the report of a batch of one, with `--report-salt` and `--report-key` as for
 `convert-all`, and the same stderr notice with the salt), or the MCP `convert_all` tool's

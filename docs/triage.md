@@ -2,7 +2,9 @@
 
 For maintainers. Dutchman is the one place users report problems, whatever code the problem
 is in: they never need to know whether cadmpeg, Dutchman or SolidCraft has to change. We sort
-each report and take what belongs upstream there ourselves.
+each report and take what belongs upstream there. Reporters who want to help can choose
+[optional steps from report to fix](testing-your-library.md#want-to-go-further), using only
+synthetic files. Every step needs their agreement; their own designs stay local.
 
 ## Labels
 
@@ -22,17 +24,22 @@ each report and take what belongs upstream there ourselves.
 
 ## Each new issue
 
-1. **Stage.** Take it from the report's `stage` (every loss and failure has one; see
+1. **Versions.** Check the Dutchman version, SolidCraft version (or "none" if not installed),
+   and source program/version, plus the report's `versions` block verbatim when available.
+   Follow [Report what you found](testing-your-library.md#5-report-what-you-found) for
+   command outputs and what to record when exact source builds are unknown.
+2. **Stage.** Take it from the report's `stage` (every loss and failure has one; see
    [Stages](json.md#stages)) and add its `stage:` label. Correct it when the cause says
    otherwise: a `map` refusal whose reason is that cadmpeg left something unresolved is
    `stage:project`.
-2. **Upstream.** Add `upstream:cadmpeg` or `upstream:solidcraft` from the report's `upstream`,
+3. **Upstream.** Add `upstream:cadmpeg` or `upstream:solidcraft` from the report's `upstream`,
    or from what you find. Leave it off when the fix is Dutchman's.
-3. **Duplicates.** Search open issues for the same message, code or blocked reason (numbers
+4. **Duplicates.** Search open issues for the same message, code or blocked reason (numbers
    aside). Close a duplicate with a link to the first, and add its counts and ids there.
-4. **A file to work from.** If no public file shows the cause, add `needs-fixture`. Ask the
-   reporter only whether they can make a small test part showing it, or would share one file
-   privately; never ask for their library.
+5. **A file to work from.** If no synthetic public file shows the cause, add `needs-fixture`.
+   Offer the [minimum-reproduction step](testing-your-library.md#want-to-go-further).
+   Never ask for their original design or library; only a synthetic file rebuilt from
+   scratch is shared in this flow.
 
 ## Taking a cause upstream
 
