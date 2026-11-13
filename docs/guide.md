@@ -1,5 +1,8 @@
 # Getting started
 
+Features whose source records that they changed no geometry are reported as `left_out`
+with reason "changes no geometry in the source"; later features can keep editable history.
+
 ## Ask your assistant about a saved desktop result
 
 A desktop conversion saves `<stem>.report.json` beside its design (`.failed.json` for a

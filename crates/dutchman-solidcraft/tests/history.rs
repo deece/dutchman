@@ -1694,6 +1694,99 @@ fn types(document: &Value) -> Vec<(String, bool)> {
         .collect()
 }
 
+fn transition_geometry_history(property: Option<&str>) -> Model {
+    let mut model = cube_with_history(10.0, first_profile(), None);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let features = wire["model"]["features"].as_array_mut().unwrap();
+    let mut cut = features[1].clone();
+    cut["id"] = json!("f3d:model:feature#3");
+    cut["ordinal"] = json!(2);
+    cut["name"] = json!("Missed cut");
+    cut["definition"]["op"] = json!("cut");
+    cut["definition"]["profile"] = json!({
+        "kind": "sketch_profiles", "value": {"sketch": SKETCH, "profiles": [99]}
+    });
+    if let Some(property) = property {
+        cut["source_properties"] = json!({"transition_geometry": property});
+    }
+    let mut later = features[1].clone();
+    later["id"] = json!("f3d:model:feature#4");
+    later["ordinal"] = json!(3);
+    later["name"] = json!("Later cut");
+    later["definition"]["op"] = json!("cut");
+    later["definition"]["extent"]["side"]["termination"]["length"] = json!(1.0);
+    features.extend([cut, later]);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+#[test]
+fn transition_geometry_unchanged_leaves_out_an_unmappable_cut_and_continues() {
+    use dutchman_core::FeatureStatus::{LeftOut, Mapped};
+
+    let model = transition_geometry_history(Some("unchanged"));
+    let (document, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    let outcome = report.outcome().unwrap();
+    assert_eq!(
+        outcome
+            .features
+            .iter()
+            .map(|f| f.status)
+            .collect::<Vec<_>>(),
+        [Mapped, Mapped, LeftOut, Mapped]
+    );
+    assert_eq!(
+        outcome.features[2].reason.as_deref(),
+        Some("changes no geometry in the source")
+    );
+    assert_eq!(
+        document["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|f| f["type"] == "extrude")
+            .count(),
+        2
+    );
+    assert!(history_line(&report).starts_with("3 of 3 features rebuilt"));
+}
+
+#[test]
+fn transition_geometry_absent_still_blocks_an_unmappable_cut() {
+    assert_transition_geometry_blocks(None);
+}
+
+#[test]
+fn transition_geometry_changed_still_blocks_an_unmappable_cut() {
+    assert_transition_geometry_blocks(Some("changed"));
+}
+
+fn assert_transition_geometry_blocks(property: Option<&str>) {
+    use dutchman_core::FeatureStatus::{Blocked, Mapped};
+
+    let model = transition_geometry_history(property);
+    let (_, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    let outcome = report.outcome().unwrap();
+    assert_eq!(
+        outcome
+            .features
+            .iter()
+            .map(|f| f.status)
+            .collect::<Vec<_>>(),
+        [Mapped, Mapped, Blocked, Blocked]
+    );
+    assert_eq!(
+        outcome.features[2].reason.as_deref(),
+        Some("it selects a sketch profile that does not exist")
+    );
+}
+
 #[test]
 fn a_sketch_and_extrude_history_is_written() {
     let model = cube_with_history(10.0, first_profile(), None);

@@ -992,6 +992,18 @@ fn map_into(
             ));
             continue;
         }
+        if unchanged_geometry(feature) {
+            report.push(
+                Severity::Info,
+                describe(feature),
+                "changes no geometry in the source; left out",
+            );
+            out.push(outcome(
+                FeatureStatus::LeftOut,
+                Some("changes no geometry in the source".to_owned()),
+            ));
+            continue;
+        }
         if !keep_sketches && blocked.is_some() && kind(feature) == "sketch" {
             out.push(outcome(
                 FeatureStatus::LeftOut,
@@ -1607,6 +1619,31 @@ fn check_version(document: &Value) -> Result<(), String> {
     }
 }
 
+/// Only body-building features can be omitted for an unchanged stored transition.
+fn unchanged_geometry(feature: &Value) -> bool {
+    if feature
+        .pointer("/source_properties/transition_geometry")
+        .and_then(Value::as_str)
+        != Some("unchanged")
+    {
+        return false;
+    }
+    let definition = operation(feature);
+    let kind = kind(feature);
+    !(matches!(
+        kind.as_str(),
+        "sketch"
+            | "spatial_sketch"
+            | "tree_node"
+            | "insert_component"
+            | "assembly_joint"
+            | "reference_image"
+            | "cosmetic_thread"
+    ) || kind.starts_with("datum")
+        || helpers::is_helper(feature)
+        || (kind == "base_feature" && base::holds_none(definition)))
+}
+
 /// One source feature as a SolidCraft feature, or why it cannot be.
 fn map_feature(
     feature: &Value,
@@ -2172,6 +2209,38 @@ mod tests {
         .result
         .unwrap_err();
         assert_eq!(err, "the design carries no feature history");
+    }
+
+    #[test]
+    fn transition_geometry_preserves_non_body_features() {
+        for kind in [
+            "sketch",
+            "spatial_sketch",
+            "datum_principal_plane",
+            "datum_plane",
+            "datum_offset_plane",
+            "datum_axis",
+            "datum_point",
+            "datum_coordinate_system",
+            "binder",
+            "tree_node",
+            "insert_component",
+            "assembly_joint",
+            "reference_image",
+            "cosmetic_thread",
+        ] {
+            let feature = json!({
+                "source_properties": {"transition_geometry": "unchanged"},
+                "definition": {"definition": kind},
+            });
+            assert!(!unchanged_geometry(&feature), "{kind}");
+        }
+        let empty_base = json!({
+            "source_properties": {"transition_geometry": "unchanged"},
+            "definition": {"definition": "base_feature",
+                "bodies": {"kind": "resolved", "value": {"bodies": []}}},
+        });
+        assert!(!unchanged_geometry(&empty_base));
     }
 
     #[test]

@@ -1,5 +1,8 @@
 # Feature history
 
+A feature whose source records that it changed no geometry is left out of the rebuilt
+history as a no-op and does not stop it.
+
 ## What maps
 
 A part that holds an imported solid becomes a base-body Import feature at its place in the

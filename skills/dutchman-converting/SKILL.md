@@ -5,6 +5,9 @@ description: Use when someone wants a CAD file (Fusion, Inventor, SolidWorks, Fr
 
 # Converting CAD files with Dutchman
 
+Features whose source records that they changed no geometry are reported as `left_out`
+with reason "changes no geometry in the source"; later features can keep editable history.
+
 On Windows, the per-user MSI installs `dutchman`, `dutchman-mcp`, and `dutchman-gui` under
 `%LOCALAPPDATA%\Programs\Dutchman` and adds that folder to the user PATH. Start a new
 terminal or restart the MCP client after installation. MSI copies update from the app's

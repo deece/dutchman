@@ -1,5 +1,8 @@
 # The MCP server
 
+Features whose source records that they changed no geometry are reported as `left_out`
+with reason "changes no geometry in the source"; later features can keep editable history.
+
 ## Read an existing result
 
 `read_report` takes `input`, the absolute path of a `.sc` design or its adjacent
