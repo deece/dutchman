@@ -54,14 +54,14 @@ Every download holds the desktop app (`dutchman-gui`), the `dutchman` command, a
 
    <a href="https://dutchman-cad.github.io/view.html?src=https://raw.githubusercontent.com/dutchman-cad/dutchman/main/docs/images/readme-result-day.png&alt=The%20CC0%20bracket%27s%20result%3A%20mapped%20feature%20history%20and%20Open%20in%20SolidCraft"><img alt="The CC0 bracket's result: mapped feature history and Open in SolidCraft" src="docs/images/readme-result-day.png" width="100%"></a>
 
-## What's new in 0.2.8
+## What's new in 0.2.9
 
-- **Right shapes, or none:** a shape Dutchman can't prove is refused or marked, not kept wrong. Fusion extrudes use the sketch region their end face proves, a rebuilt history is checked against the bodies Fusion stored, and the result card says when they don't match.
-- **More kinds of features kept:** extrudes from or to a face, holes at several points, counterbores and countersinks with a drill point, fillets with several radii, Move Face, Inventor plates attached at 90 degrees, and placed cylinders and cones (SolidCraft 0.24.1 or newer). A Fusion Canvas image no longer stops a part's history.
-- **Honest counts:** results count only features actually rebuilt and confirmed. The Voron V1.8 shows 253 of its 1,102 features that need rebuilding; 0.2.7 counted 290, including features it couldn't confirm.
-- **Less memory, measured not guessed:** the Voron Trident peaks at 5.6 GB instead of 10.5 GB, the V1.8 at 8.5 GB instead of 11.7 GB, and a large Fusion archive at 17.5 GB instead of 21.5 GB. A conversion isn't refused on an estimate any more; it stops with a clear message only when the computer really runs low, and keeps the design.
-- **No terminal windows on Windows:** converting in the desktop app no longer opens a terminal window for each SolidCraft check, and each file converts in its own process, so a crash ends that file and not the app.
-- **Cards that fit:** result cards fit the window, any result with a loss has **Report this file…**, and **Ask your AI about this file** gives a short prompt every time.
+- **SolidCraft 0.41:** designs now target SolidCraft 0.41 and still open in 0.40, and back to 0.18.2 with simplified features.
+- **Tighter verification:** a history that rebuilds a body in the wrong place is no longer reported as verified; position and bounding box are checked as well as volume and area.
+- **More complete SolidWorks parts:** more offset surfaces and edgeless faces convert, and parts convert in their saved configuration without bodies from other configurations.
+- **More history to rebuild:** more Fusion threads, holes, fillets, shells, lofts, pipes, and patterns, and more Inventor fillets, revolves, and body trims are read for history.
+- **Sketches reach more parts:** a feature can use a sketch from another component when its placement is unambiguous.
+- **No endless runs:** a design that stops making progress for 20 minutes is stopped and named in the report, and the rest of a Fusion archive still converts.
 
 [Release notes](https://github.com/dutchman-cad/dutchman/releases/latest) · [Changelog](CHANGELOG.md)
 

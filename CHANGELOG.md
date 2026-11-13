@@ -8,6 +8,107 @@ Unreleased changes live in [changelog.d/](changelog.d/).
 
 [Semantic Versioning]: https://semver.org/spec/v2.0.0.html
 
+## 0.2.9 (2026-11-13)
+
+### Known issues
+
+- In SolidCraft 0.40, a loft whose first and last sections are regions of the same sketch has no
+  mass. It opens correctly in SolidCraft 0.41 and 0.30
+  ([tangency-labs/solidcraft#15263](https://github.com/tangency-labs/solidcraft/issues/15263)).
+- In SolidCraft 0.40 and 0.41, a STEP file with an edge across a closed spline's seam can come in
+  with faces left out, so a closed solid opens without volume
+  ([tangency-labs/solidcraft#16118](https://github.com/tangency-labs/solidcraft/issues/16118)).
+
+### Formats
+
+- SolidWorks parts saved with several configurations leave out bodies belonging only to other configurations and report the saved configuration converted.
+- A design that makes no progress for 20 minutes, or runs 60 minutes in all (in an archive, from when that design starts), counts as stuck and is stopped, in the desktop app too; `DUTCHMAN_DESIGN_TIME_LIMIT` sets the minutes (0 turns it off). In a Fusion `.f3z` archive the stuck design is left out and the rest of the archive converts; the report names it. Before, one stuck design could hold a whole archive for hours with nothing else converting.
+
+### History
+
+- A kept partial history is now checked more tightly against where the source has each body, so a feature that rebuilds a body in the wrong place is no longer kept.
+- Rebuilt histories with large body position or box differences are no longer reported as verified.
+- Curved histories can verify despite small box measurement differences. Position and box checks allow the larger of 0.01 mm and 0.02% of the larger box diagonal.
+- A sketch region whose holes cross each other (a nut pocket drawn over a bolt hole) is now
+  found. SolidCraft refused the extrude with "unknown complete source profile", because the
+  region's hole is the union of the two; the region is now named by a point inside it.
+- Keep partial history unverified when any source body centre rests on incomplete edge evidence, even if every body has a centre entry.
+- A trimmed sketch region bounded partly by a piece of a line is now found. The piece was read
+  as a distance along the line instead of the fraction of it that cadmpeg gives, so the region
+  never closed. Such regions are now named by a point inside them, and their unused curves are
+  written as construction.
+- A loft section that takes several loops of one sketch is no longer mapped: the source can fill the outer loop where the loops read as a ring, so the rebuilt loft could have a hole the original does not.
+- A Fusion feature whose profile selection stays native, in a sketch with one profile loop that other curves divide into several regions, now stops the history there instead of using every region. Before, a cut through such a sketch could remove the whole part.
+- A feature that takes a list of a sketch's profiles no longer keeps that sketch's unused curves
+  solid. A line in no profile (one from the origin to the centre of a ring, say) is now written as
+  construction, as it already was for features that select regions, instead of splitting the
+  profile so that SolidCraft refused the extrude ("unknown complete source profile").
+- Write a spline SolidCraft cannot take directly as a chain of exact spline pieces instead of
+  leaving out the sketch, including its profiles and sweep paths.
+- Keep shared endpoints and smooth joins between spline pieces, and report constraints that
+  cannot apply to the chain.
+- A loft whose section or guide rail would use such a chain is not mapped yet, since more edges
+  in a section would change the lofted surface.
+- A sketch curve that bounds no region any feature uses is written as construction, even when it
+  belongs to one of the sketch's closed loops. A tab no feature takes, drawn along part of the
+  edge of the region an extrude takes, or a ring around a hole that region keeps, used to stay
+  solid and split the region in SolidCraft, which then refused the extrude ("unknown complete
+  source profile"). Features that select trimmed regions now count the curves they use instead
+  of keeping every curve of the sketch solid, when the region's boundary closes.
+- Regions that share part of an edge and are taken together (a tab and the plate it sits on)
+  are named by a point inside each, so SolidCraft finds them where it splits the shared edge.
+
+### Assemblies
+
+- Carry a sketch from another component into a part placed more than once when exactly one instance puts the selected profile on the part. Ambiguous placements leave the sketch out.
+- A Fusion component whose feature uses a sketch another component builds (designed in the
+  context of the assembly) keeps its history past that feature, when each of the two components
+  is placed once. The sketch comes into the component with its plane moved to where the other
+  component puts it. Such features used to stop the component's history ("its sketch is not an
+  earlier mapped sketch").
+
+### Desktop app
+
+- **Ask your AI about this file** now tells the assistant to start with `dutchman investigate`,
+  and the installed `AGENTS.md` is one procedure: run it, explain `summary.md`, and ask once
+  whether to send it.
+- In a folder run, the bar under the counts names the file that has run longest, its stage and its current step, and how many other files are running.
+- Progress shows one duration format ("45 s", "1 min 1 s", "2 min", "1 h 5 min"), and a check that took longer than its limit says in a full sentence what happened, for example "the check stopped, and the history is kept unverified".
+- While converting, the progress card names the part or stage running now and how long it has been on it, beneath the design counts ("Checking Bracket (rebuilt history): 12 s").
+- Past its usual time a step says "Still …", and past its check limit the card says what happens next, for example that the check is stopped and the history kept unverified.
+
+### Command line and install
+
+- Progress durations use one format ("45 s", "1 min 1 s", "2 min", "1 h 5 min") instead of repeating the total seconds, and a check that took longer than its limit says what happened to its output.
+- The plain progress line and `dutchman.progress/1` records name the running part or stage, its elapsed time, its usual duration and the check limit that applies, with what happens past it. Part names stay out of the diagnostic log and anonymous reports.
+- Release builds started by hand can build just the Linux x86_64 tarball and its checksum with `targets: linux-x86_64`.
+- Designs open in SolidCraft 0.18.2 to 0.41.
+- SolidCraft 0.41 is the newest known target and the default without an installed CLI.
+
+### Reports
+
+- `dutchman investigate` also converts the design with the newest nightly and the candidate
+  builds in `docs/candidates.toml`, downloaded and checked against their published SHA-256,
+  and the summary says what each changes, regressions first. `--no-compare` skips it.
+- `dutchman investigate design.f3d` looks into a conversion that went wrong, for the AI a user
+  asks for help. It reads the saved report (or converts once), narrows a failure, and writes
+  one shareable `summary.md` with no names, paths, or sizes from the design. It then asks once
+  whether to send that summary to the Dutchman team.
+
+### cadmpeg
+
+- The cadmpeg pin moves from `52ba5a1` to `f9d0a14` (cadmpeg 0.6.11).
+- Inventor: more history forms decode, among them more fillet forms (no longer left native), state-2 Thicken face selectors, full-turn revolves, through-all surface extrusions over a solid body, work-plane body trims, and mirror planes from work planes.
+- Fusion: face and fillet edge selections are read from the history their scope is bound to, and Cut and reordered Coil scopes decode.
+- SolidWorks: closed faces without edges and ring edges are kept, more offset surfaces convert, and source bodies used by derived or mirrored geometry no longer appear as current bodies.
+- Fusion: more threads, holes, healed face deletions, extrudes, fillets, shells, lofts, pipes, and patterns decode for history mapping. Sketches keep their timeline names, and historical body centres use sampled edges with incomplete evidence identified.
+- Inventor: fixed-spacing rectangular body patterns and more face selections decode for history mapping. CATIA: more shared sheet boundaries and sheet trims convert.
+
+### Docs
+
+- CI tries the Linux ARM64 tests once more when GitHub shuts their runner down mid-job; any
+  other failure still fails the required check.
+
 ## 0.2.8 (2026-11-08)
 
 ### History
