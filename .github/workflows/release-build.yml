@@ -125,7 +125,9 @@ jobs:
           packaging+='|assets/(install|dmg|windows)/|skills/'
           packaging+='|crates/dutchman-gui/assets/(Dutchman\.icns|dutchman-app-icon\.svg)$|crates/dutchman-gui/examples/ico\.rs$'
           packaging+='|crates/dutchman-gui/src/(update\.rs|update/))'
-          matched=$(git diff --name-only "$BASE" HEAD | grep -E "$packaging" || true)
+          # A Markdown text change under assets/install/ or skills/ (the installed agent guide, the skill) is copied
+          # into the archives as it is: it needs no release build.
+          matched=$(git diff --name-only "$BASE" HEAD | grep -E "$packaging" | grep -vE '^(assets/install|skills)/.*\.md$' || true)
           # Cargo.toml holds the release profiles, which only the release builds use: a change
           # to a [profile.*] table counts as packaging. Dependency and version changes (a pin
           # move, the release bump) are tested by ci.yml and built in full at the candidate.
