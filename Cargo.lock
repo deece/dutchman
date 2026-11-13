@@ -708,7 +708,7 @@ checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 [[package]]
 name = "cadmpeg-asm"
 version = "0.6.11"
-source = "git+https://github.com/cadmpeg/cadmpeg?rev=6c775550eba5647f4819826a0312feb356adab76#6c775550eba5647f4819826a0312feb356adab76"
+source = "git+https://github.com/cadmpeg/cadmpeg?rev=651fe819fd5670ba69910911be1d29d022456a1a#651fe819fd5670ba69910911be1d29d022456a1a"
 dependencies = [
  "cadmpeg-core",
  "cadmpeg-ir",
@@ -719,7 +719,7 @@ dependencies = [
 [[package]]
 name = "cadmpeg-codec-catia"
 version = "0.6.11"
-source = "git+https://github.com/cadmpeg/cadmpeg?rev=6c775550eba5647f4819826a0312feb356adab76#6c775550eba5647f4819826a0312feb356adab76"
+source = "git+https://github.com/cadmpeg/cadmpeg?rev=651fe819fd5670ba69910911be1d29d022456a1a#651fe819fd5670ba69910911be1d29d022456a1a"
 dependencies = [
  "cadmpeg-core",
  "cadmpeg-ir",
@@ -732,7 +732,7 @@ dependencies = [
 [[package]]
 name = "cadmpeg-codec-creo"
 version = "0.6.11"
-source = "git+https://github.com/cadmpeg/cadmpeg?rev=6c775550eba5647f4819826a0312feb356adab76#6c775550eba5647f4819826a0312feb356adab76"
+source = "git+https://github.com/cadmpeg/cadmpeg?rev=651fe819fd5670ba69910911be1d29d022456a1a#651fe819fd5670ba69910911be1d29d022456a1a"
 dependencies = [
  "cadmpeg-core",
  "cadmpeg-ir",
@@ -743,7 +743,7 @@ dependencies = [
 [[package]]
 name = "cadmpeg-codec-f3d"
 version = "0.6.11"
-source = "git+https://github.com/cadmpeg/cadmpeg?rev=6c775550eba5647f4819826a0312feb356adab76#6c775550eba5647f4819826a0312feb356adab76"
+source = "git+https://github.com/cadmpeg/cadmpeg?rev=651fe819fd5670ba69910911be1d29d022456a1a#651fe819fd5670ba69910911be1d29d022456a1a"
 dependencies = [
  "cadmpeg-asm",
  "cadmpeg-container",
@@ -764,7 +764,7 @@ dependencies = [
 [[package]]
 name = "cadmpeg-codec-freecad"
 version = "0.6.11"
-source = "git+https://github.com/cadmpeg/cadmpeg?rev=6c775550eba5647f4819826a0312feb356adab76#6c775550eba5647f4819826a0312feb356adab76"
+source = "git+https://github.com/cadmpeg/cadmpeg?rev=651fe819fd5670ba69910911be1d29d022456a1a#651fe819fd5670ba69910911be1d29d022456a1a"
 dependencies = [
  "cadmpeg-container",
  "cadmpeg-core",
@@ -779,7 +779,7 @@ dependencies = [
 [[package]]
 name = "cadmpeg-codec-iges"
 version = "0.6.11"
-source = "git+https://github.com/cadmpeg/cadmpeg?rev=6c775550eba5647f4819826a0312feb356adab76#6c775550eba5647f4819826a0312feb356adab76"
+source = "git+https://github.com/cadmpeg/cadmpeg?rev=651fe819fd5670ba69910911be1d29d022456a1a#651fe819fd5670ba69910911be1d29d022456a1a"
 dependencies = [
  "cadmpeg-core",
  "cadmpeg-ir",
@@ -793,7 +793,7 @@ dependencies = [
 [[package]]
 name = "cadmpeg-codec-inventor"
 version = "0.6.11"
-source = "git+https://github.com/cadmpeg/cadmpeg?rev=6c775550eba5647f4819826a0312feb356adab76#6c775550eba5647f4819826a0312feb356adab76"
+source = "git+https://github.com/cadmpeg/cadmpeg?rev=651fe819fd5670ba69910911be1d29d022456a1a#651fe819fd5670ba69910911be1d29d022456a1a"
 dependencies = [
  "cadmpeg-asm",
  "cadmpeg-container",
@@ -808,7 +808,7 @@ dependencies = [
 [[package]]
 name = "cadmpeg-codec-nx"
 version = "0.6.11"
-source = "git+https://github.com/cadmpeg/cadmpeg?rev=6c775550eba5647f4819826a0312feb356adab76#6c775550eba5647f4819826a0312feb356adab76"
+source = "git+https://github.com/cadmpeg/cadmpeg?rev=651fe819fd5670ba69910911be1d29d022456a1a#651fe819fd5670ba69910911be1d29d022456a1a"
 dependencies = [
  "cadmpeg-container",
  "cadmpeg-core",
@@ -824,7 +824,7 @@ dependencies = [
 [[package]]
 name = "cadmpeg-codec-pvz"
 version = "0.6.11"
-source = "git+https://github.com/cadmpeg/cadmpeg?rev=6c775550eba5647f4819826a0312feb356adab76#6c775550eba5647f4819826a0312feb356adab76"
+source = "git+https://github.com/cadmpeg/cadmpeg?rev=651fe819fd5670ba69910911be1d29d022456a1a#651fe819fd5670ba69910911be1d29d022456a1a"
 dependencies = [
  "cadmpeg-container",
  "cadmpeg-core",
@@ -836,7 +836,7 @@ dependencies = [
 [[package]]
 name = "cadmpeg-codec-rhino"
 version = "0.6.11"
-source = "git+https://github.com/cadmpeg/cadmpeg?rev=6c775550eba5647f4819826a0312feb356adab76#6c775550eba5647f4819826a0312feb356adab76"
+source = "git+https://github.com/cadmpeg/cadmpeg?rev=651fe819fd5670ba69910911be1d29d022456a1a#651fe819fd5670ba69910911be1d29d022456a1a"
 dependencies = [
  "cadmpeg-container",
  "cadmpeg-core",
@@ -854,7 +854,7 @@ dependencies = [
 [[package]]
 name = "cadmpeg-codec-sat"
 version = "0.6.11"
-source = "git+https://github.com/cadmpeg/cadmpeg?rev=6c775550eba5647f4819826a0312feb356adab76#6c775550eba5647f4819826a0312feb356adab76"
+source = "git+https://github.com/cadmpeg/cadmpeg?rev=651fe819fd5670ba69910911be1d29d022456a1a#651fe819fd5670ba69910911be1d29d022456a1a"
 dependencies = [
  "cadmpeg-asm",
  "cadmpeg-core",
@@ -864,7 +864,7 @@ dependencies = [
 [[package]]
 name = "cadmpeg-codec-sldprt"
 version = "0.6.11"
-source = "git+https://github.com/cadmpeg/cadmpeg?rev=6c775550eba5647f4819826a0312feb356adab76#6c775550eba5647f4819826a0312feb356adab76"
+source = "git+https://github.com/cadmpeg/cadmpeg?rev=651fe819fd5670ba69910911be1d29d022456a1a#651fe819fd5670ba69910911be1d29d022456a1a"
 dependencies = [
  "cadmpeg-container",
  "cadmpeg-core",
@@ -882,7 +882,7 @@ dependencies = [
 [[package]]
 name = "cadmpeg-codec-step"
 version = "0.6.11"
-source = "git+https://github.com/cadmpeg/cadmpeg?rev=6c775550eba5647f4819826a0312feb356adab76#6c775550eba5647f4819826a0312feb356adab76"
+source = "git+https://github.com/cadmpeg/cadmpeg?rev=651fe819fd5670ba69910911be1d29d022456a1a#651fe819fd5670ba69910911be1d29d022456a1a"
 dependencies = [
  "base64 0.23.1",
  "cadmpeg-container",
@@ -897,7 +897,7 @@ dependencies = [
 [[package]]
 name = "cadmpeg-container"
 version = "0.6.11"
-source = "git+https://github.com/cadmpeg/cadmpeg?rev=6c775550eba5647f4819826a0312feb356adab76#6c775550eba5647f4819826a0312feb356adab76"
+source = "git+https://github.com/cadmpeg/cadmpeg?rev=651fe819fd5670ba69910911be1d29d022456a1a#651fe819fd5670ba69910911be1d29d022456a1a"
 dependencies = [
  "cadmpeg-core",
  "crc32fast",
@@ -908,7 +908,7 @@ dependencies = [
 [[package]]
 name = "cadmpeg-core"
 version = "0.6.11"
-source = "git+https://github.com/cadmpeg/cadmpeg?rev=6c775550eba5647f4819826a0312feb356adab76#6c775550eba5647f4819826a0312feb356adab76"
+source = "git+https://github.com/cadmpeg/cadmpeg?rev=651fe819fd5670ba69910911be1d29d022456a1a#651fe819fd5670ba69910911be1d29d022456a1a"
 dependencies = [
  "flate2",
  "memchr",
@@ -923,7 +923,7 @@ dependencies = [
 [[package]]
 name = "cadmpeg-ir"
 version = "0.6.11"
-source = "git+https://github.com/cadmpeg/cadmpeg?rev=6c775550eba5647f4819826a0312feb356adab76#6c775550eba5647f4819826a0312feb356adab76"
+source = "git+https://github.com/cadmpeg/cadmpeg?rev=651fe819fd5670ba69910911be1d29d022456a1a#651fe819fd5670ba69910911be1d29d022456a1a"
 dependencies = [
  "base64 0.23.1",
  "cadmpeg-core",
@@ -939,7 +939,7 @@ dependencies = [
 [[package]]
 name = "cadmpeg-measure"
 version = "0.6.11"
-source = "git+https://github.com/cadmpeg/cadmpeg?rev=6c775550eba5647f4819826a0312feb356adab76#6c775550eba5647f4819826a0312feb356adab76"
+source = "git+https://github.com/cadmpeg/cadmpeg?rev=651fe819fd5670ba69910911be1d29d022456a1a#651fe819fd5670ba69910911be1d29d022456a1a"
 dependencies = [
  "cadmpeg-core",
  "cadmpeg-ir",
@@ -950,7 +950,7 @@ dependencies = [
 [[package]]
 name = "cadmpeg-parasolid"
 version = "0.6.11"
-source = "git+https://github.com/cadmpeg/cadmpeg?rev=6c775550eba5647f4819826a0312feb356adab76#6c775550eba5647f4819826a0312feb356adab76"
+source = "git+https://github.com/cadmpeg/cadmpeg?rev=651fe819fd5670ba69910911be1d29d022456a1a#651fe819fd5670ba69910911be1d29d022456a1a"
 dependencies = [
  "cadmpeg-core",
  "cadmpeg-ir",
@@ -960,7 +960,7 @@ dependencies = [
 [[package]]
 name = "cadmpeg-protein"
 version = "0.6.11"
-source = "git+https://github.com/cadmpeg/cadmpeg?rev=6c775550eba5647f4819826a0312feb356adab76#6c775550eba5647f4819826a0312feb356adab76"
+source = "git+https://github.com/cadmpeg/cadmpeg?rev=651fe819fd5670ba69910911be1d29d022456a1a#651fe819fd5670ba69910911be1d29d022456a1a"
 dependencies = [
  "cadmpeg-container",
  "cadmpeg-core",
@@ -974,7 +974,7 @@ dependencies = [
 [[package]]
 name = "cadmpeg-registry"
 version = "0.6.11"
-source = "git+https://github.com/cadmpeg/cadmpeg?rev=6c775550eba5647f4819826a0312feb356adab76#6c775550eba5647f4819826a0312feb356adab76"
+source = "git+https://github.com/cadmpeg/cadmpeg?rev=651fe819fd5670ba69910911be1d29d022456a1a#651fe819fd5670ba69910911be1d29d022456a1a"
 dependencies = [
  "cadmpeg-codec-catia",
  "cadmpeg-codec-creo",

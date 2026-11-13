@@ -5,7 +5,7 @@ cadmpeg's most complete native reader. This page says what Dutchman makes of wha
 gives and which upstream gaps remain. Improvements land in cadmpeg and reach Dutchman when the
 pin is bumped.
 
-State at the cadmpeg commit pinned in `Cargo.toml` (`6c775550`, cadmpeg 0.6.11).
+State at the cadmpeg commit pinned in `Cargo.toml` (`651fe819`, cadmpeg 0.6.11).
 More thread and hole forms, healed Delete Face operations, shell wall selections, loft
 sections and rails, circular pipes, and pattern placements decode for history mapping.
 More extrude profiles and face ends, fillet edge selections, body moves, and component
@@ -51,6 +51,12 @@ crossing selected whole circles are kept as construction geometry. This preserve
 layout lines through hole centres without splitting the circular holes during replay. If
 another active consumer needs the whole sketch or a different selection form, those lines
 stay solid.
+
+When a complete-loop extrusion needs a region those solid lines subdivide, it uses an
+editable profile copy of the sketch. The copy retains its points, curves, constraints, and
+parameter expressions, with unused splitters as construction geometry. Trimmed selections
+continue to use the shared sketch. Each selected boundary must still match exactly one
+SolidCraft region; unavailable or ambiguous boundaries remain history blockers.
 
 Resolved `to_plane` extrude ends map before any body-building feature when the terminating
 plane is parallel to the sketch. The plane origin becomes a fixed SolidCraft To Object point;
@@ -143,7 +149,9 @@ Two crossing circles bound several regions with the same curves, so naming the c
 them apart. A profile region that uses part of a circle is selected by a point inside it, taken
 from its stored boundary: its uses' parameters must close into one ring. If they don't, or if the
 readings that close disagree on the shape, the region stays selected by its curves, and SolidCraft
-refuses what stays ambiguous.
+refuses what stays ambiguous. Boundaries sharing a circle or arc resolve their parameter
+reading together: an asymmetric neighboring region can distinguish the two semicircles of a
+diameter. Boundaries using unrelated curves cannot settle that ambiguity.
 
 ## Assembly placements
 

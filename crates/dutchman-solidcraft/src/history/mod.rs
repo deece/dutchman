@@ -1636,7 +1636,7 @@ fn map_feature(
         Some("spatial_sketch") => {
             spatial::map(feature, definition, ctx, report).map(Mapped::Feature)
         }
-        Some("extrude") => extrude::map(feature, definition, ctx).map(Mapped::Feature),
+        Some("extrude") => extrude::map(feature, definition, ctx, preceding).map(Mapped::Feature),
         Some("revolve") => revolve::map(feature, definition, ctx).map(Mapped::Feature),
         Some("loft") => loft::map(feature, definition, ctx, preceding).map(Mapped::Feature),
         Some("sweep") => sweep::map(feature, definition, ctx).map(Mapped::Feature),

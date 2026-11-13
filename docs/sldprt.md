@@ -6,7 +6,7 @@ decoding land in cadmpeg and reach Dutchman when the pin is bumped. This page sa
 Dutchman makes of what that codec gives, and which upstream gaps keep SolidWorks history from
 replaying. It drives what is asked of cadmpeg next.
 
-State at the cadmpeg commit pinned in `Cargo.toml` (`6c775550`, cadmpeg 0.6.11).
+State at the cadmpeg commit pinned in `Cargo.toml` (`651fe819`, cadmpeg 0.6.11).
 `dutchman formats` reports the reader's current reader status alongside what Dutchman converts.
 
 ## Parts (`.sldprt`)

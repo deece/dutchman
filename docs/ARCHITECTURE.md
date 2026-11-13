@@ -245,7 +245,11 @@ feature's own input topology (a face of an earlier history state) is rebuilt as 
 an interior point from that state's boundary samples; a face that is not parallel to the
 sketch is refused. Curves that bound a selected trimmed sketch region stay solid (not
 construction), so SolidCraft splits the sketch there and sweeps that region, not the merged
-area around it. One-sided extrudes may
+area around it. Complete-loop extrudes whose regions those curves subdivide use an editable
+copy with unused splitters as construction; the original sketch's geometry, constraints, and
+parameters are preserved. Boundary matching remains exact and unique. Trimmed boundary rings
+sharing a curved carrier resolve their parameter reading together, retaining the refusal when
+the surviving readings disagree. One-sided extrudes may
 carry draft (positive grows outward), end on such a face with an offset, or end on a resolved
 parallel plane. Before any body-building feature, a plane end uses its origin as a fixed
 To Object point (SolidCraft accepts a free point without a construction plane or body face).

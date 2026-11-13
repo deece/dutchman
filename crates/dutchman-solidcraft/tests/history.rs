@@ -4020,6 +4020,155 @@ fn solidcraft_replays_a_region_beside_curves_no_loop_uses() {
     assert!((volume[0] - 1000.0).abs() < 1e-6, "{volume:?}");
 }
 
+/// One consumer takes the square with its circular hole; a later cut takes the strip
+/// left of a divider. Both selections must keep their own complete source region.
+fn whole_and_trimmed_history() -> Model {
+    let profile = json!({"kind": "sketch_regions", "value": {"sketch": SKETCH,
+        "regions": [{"region": "loops", "outer": 0, "holes": [1]}]}});
+    let mut model = cube_with_history(2.0, profile, None);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let m = &mut wire["model"];
+    m["sketch_entities"]
+        .as_array_mut()
+        .unwrap()
+        .extend([line(5, [3.0, 0.0], [3.0, 10.0]), circle(6, [7.0, 5.0], 1.0)]);
+    m["sketches"][0]["profiles"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!([
+            {"entity": "f3d:model:sketch-entity#6"}
+        ]));
+    let boundary = |key: u32, range: [f64; 2]| {
+        json!({
+            "entity": format!("f3d:model:sketch-entity#{key}"), "parameter_range": range
+        })
+    };
+    let mut cut = m["features"][1].clone();
+    cut["id"] = json!("synthetic:strip:feature#cut");
+    cut["name"] = json!("Strip cut");
+    cut["ordinal"] = json!(2);
+    cut["outputs"] = json!([]);
+    cut["definition"]["op"] = json!("cut");
+    cut["definition"]["extent"]["side"]["termination"]["length"] = json!(1.0);
+    cut["definition"]["profile"] = json!({"kind": "sketch_regions", "value": {
+        "sketch": SKETCH, "regions": [{"region": "trimmed", "outer_boundary": [
+            boundary(1, [0.0, 0.3]), boundary(5, [0.0, 1.0]),
+            boundary(3, [0.7, 1.0]), boundary(4, [0.0, 1.0])]}]}});
+    m["features"].as_array_mut().unwrap().push(cut);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+#[test]
+fn whole_regions_keep_their_boundaries_beside_another_consumers_trimmed_regions() {
+    let (document, report) = convert(
+        &whole_and_trimmed_history(),
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(
+        history_line(&report).starts_with("3 of 3 features rebuilt"),
+        "{report:?}"
+    );
+    let features = document["features"].as_array().unwrap();
+    let sketches: Vec<_> = features.iter().filter(|f| f["type"] == "sketch").collect();
+    assert_eq!(sketches.len(), 2);
+    let divider = |sketch: &Value| {
+        sketch["sketch"]["curves"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|curve| curve["id"] == "l5")
+            .unwrap()["construction"]
+            .clone()
+    };
+    assert_eq!(divider(sketches[0]), false);
+    assert_eq!(divider(sketches[1]), true);
+    assert_eq!(
+        sketches[0]["sketch"]["points"],
+        sketches[1]["sketch"]["points"]
+    );
+    assert_eq!(
+        sketches[0]["sketch"]["constraints"],
+        sketches[1]["sketch"]["constraints"]
+    );
+    let extrudes: Vec<_> = features.iter().filter(|f| f["type"] == "extrude").collect();
+    assert_eq!(extrudes[0]["sketch"], sketches[1]["id"]);
+    assert_eq!(extrudes[1]["sketch"], sketches[0]["id"]);
+    assert_eq!(extrudes[0]["profiles"]["type"], "whole_boundaries");
+}
+
+#[test]
+fn solidcraft_replays_whole_and_trimmed_regions_of_the_same_source_sketch() {
+    let Some(cli) = solidcraft() else { return };
+    let got = volumes(&cli, &written(&whole_and_trimmed_history()).0);
+    assert_eq!(got.len(), 1);
+    let want = 170.0 - 2.0 * std::f64::consts::PI;
+    // Relative, like the other curved replays: older SolidCraft measures arcs less exactly.
+    assert!((got[0] - want).abs() / want < 1e-3, "{got:?} vs {want}");
+}
+
+fn shared_circle_regions() -> Model {
+    let boundary = |key: u32, range: [f64; 2]| {
+        json!({
+            "entity": format!("f3d:model:sketch-entity#{key}"), "parameter_range": range
+        })
+    };
+    let pi = std::f64::consts::PI;
+    let profile = json!({"kind": "sketch_regions", "value": {"sketch": SKETCH,
+    "regions": [
+        {"region": "trimmed", "outer_boundary": [boundary(1, [0.0, pi / 2.0]),
+            boundary(3, [0.0, 1.0]), boundary(2, [0.5, 1.0])]},
+        {"region": "trimmed", "outer_boundary": [boundary(1, [pi, 2.0 * pi]),
+            boundary(2, [0.0, 1.0])]}
+    ]}});
+    let mut model = cube_with_history(2.0, profile, None);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["sketches"][0]["profiles"] = json!([
+        [{"entity": "f3d:model:sketch-entity#1"}]
+    ]);
+    wire["model"]["sketch_constraints"] = json!([]);
+    wire["model"]["sketch_entities"] = json!([
+        circle(1, [0.0, 0.0], 4.0),
+        line(2, [-4.0, 0.0], [4.0, 0.0]),
+        line(3, [0.0, 0.0], [0.0, 4.0]),
+    ]);
+    // Keep the example body's end cap from purporting to prove a circular profile.
+    wire["model"]["features"][1]["outputs"] = json!([]);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+#[test]
+fn selected_regions_resolve_their_shared_circle_before_choosing_points() {
+    let (document, report) = convert(
+        &shared_circle_regions(),
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(
+        history_line(&report).starts_with("2 of 2 features rebuilt"),
+        "{report:?}"
+    );
+    assert_eq!(document["features"][1]["profiles"]["type"], "points");
+    assert_eq!(
+        document["features"][1]["profiles"]["points"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+}
+
+#[test]
+fn solidcraft_replays_regions_resolved_by_a_shared_circle() {
+    let Some(cli) = solidcraft() else { return };
+    let got = volumes(&cli, &written(&shared_circle_regions()).0);
+    let want = 24.0 * std::f64::consts::PI;
+    assert!(
+        (got.iter().sum::<f64>() - want).abs() / want < 1e-3,
+        "{got:?} vs {want}"
+    );
+}
+
 fn circle(key: u32, center: [f64; 2], radius: f64) -> Value {
     entity(
         key,

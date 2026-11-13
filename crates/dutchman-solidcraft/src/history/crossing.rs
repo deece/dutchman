@@ -780,21 +780,85 @@ fn area_and_centre(ring: &[P2]) -> (f64, P2) {
 /// The ring of a region's boundary uses. Every reading that closes must give the same shape;
 /// readings that close on different shapes can't be told apart, so there is no ring.
 pub(super) fn trimmed_ring(uses: &[Value], entities: &[&Value]) -> Option<Vec<P2>> {
-    let mut found: Option<Vec<P2>> = None;
+    trimmed_rings(&[uses], entities)?.pop()
+}
+
+/// Resolve parameter readings together only for rings sharing a curved carrier. A diameter
+/// alone cannot distinguish the two halves of a circle, but another closed boundary using
+/// that same circle can settle its reading. Unrelated carriers supply no such evidence.
+pub(super) fn trimmed_rings(uses: &[&[Value]], entities: &[&Value]) -> Option<Vec<Vec<P2>>> {
+    if uses.is_empty()
+        || uses.len() > MAX_LINES
+        || uses
+            .iter()
+            .any(|ring| ring.is_empty() || ring.len() > MAX_LINES)
+    {
+        return None;
+    }
+    let carriers: Vec<BTreeSet<&str>> = uses
+        .iter()
+        .map(|ring| {
+            ring.iter()
+                .filter_map(|use_| use_.get("entity")?.as_str())
+                .filter(|id| {
+                    entity_named(entities, id)
+                        .and_then(|entity| entity.pointer("/geometry/kind"))
+                        .and_then(Value::as_str)
+                        .is_some_and(|kind| matches!(kind, "arc" | "circle"))
+                })
+                .collect()
+        })
+        .collect();
+    let mut out = vec![None; uses.len()];
+    for start in 0..uses.len() {
+        if out.get(start)?.is_some() {
+            continue;
+        }
+        let mut component = BTreeSet::from([start]);
+        let mut pending = vec![start];
+        while let Some(index) = pending.pop() {
+            for (other, curves) in carriers.iter().enumerate() {
+                if !carriers.get(index)?.is_disjoint(curves) && component.insert(other) {
+                    pending.push(other);
+                }
+            }
+        }
+        let boundaries: Vec<&[Value]> = component
+            .iter()
+            .filter_map(|index| uses.get(*index).copied())
+            .collect();
+        for (index, ring) in component
+            .into_iter()
+            .zip(rings_under_readings(&boundaries, entities)?)
+        {
+            *out.get_mut(index)? = Some(ring);
+        }
+    }
+    out.into_iter().collect()
+}
+
+fn rings_under_readings(uses: &[&[Value]], entities: &[&Value]) -> Option<Vec<Vec<P2>>> {
+    let mut found: Option<Vec<Vec<P2>>> = None;
     for reading in READINGS {
-        let Some(ring) = ring_under(uses, entities, reading) else {
+        let Some(rings) = uses
+            .iter()
+            .map(|uses| ring_under(uses, entities, reading))
+            .collect::<Option<Vec<_>>>()
+        else {
             continue;
         };
         if let Some(known) = &found {
-            let (a, c) = area_and_centre(known);
-            let (b, d) = area_and_centre(&ring);
-            if (a - b).abs() > 1e-3 * a.max(b).max(1e-9)
-                || super::sketch::distance(c, d) > RING_CLOSES * 10.0
-            {
-                return None;
+            for (known, ring) in known.iter().zip(&rings) {
+                let (a, c) = area_and_centre(known);
+                let (b, d) = area_and_centre(ring);
+                if (a - b).abs() > 1e-3 * a.max(b).max(1e-9)
+                    || super::sketch::distance(c, d) > RING_CLOSES * 10.0
+                {
+                    return None;
+                }
             }
         } else {
-            found = Some(ring);
+            found = Some(rings);
         }
     }
     found

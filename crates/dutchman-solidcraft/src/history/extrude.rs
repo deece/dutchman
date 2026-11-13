@@ -10,7 +10,12 @@ use super::{name, Context};
 const ALONG_NORMAL: f64 = 1.0 - 1e-9;
 
 /// Maps an extrude feature whose operation is `definition`.
-pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Result<Value, String> {
+pub(crate) fn map(
+    feature: &Value,
+    definition: &Value,
+    ctx: &mut Context,
+    preceding: &[Value],
+) -> Result<Value, String> {
     let face_profile =
         definition.pointer("/profile/kind").and_then(Value::as_str) == Some("historical_faces");
     let (sketch_id, profiles) = if face_profile {
@@ -35,11 +40,16 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
     } else {
         profile(definition.get("profile"), ctx)?
     };
+    let profile_sketch = if face_profile {
+        None
+    } else {
+        super::profile::whole_region_sketch(feature, &sketch_id, ctx, preceding)
+    };
     let sketch = ctx
         .sketches
         .get(&sketch_id)
         .ok_or("its sketch is not an earlier mapped sketch")?;
-    let sketch_feature = sketch.feature;
+    let sketch_feature = profile_sketch.unwrap_or(sketch.feature);
     let forward = forward(definition.get("direction"), sketch.normal)?;
     let mut extent = extent(
         feature,
