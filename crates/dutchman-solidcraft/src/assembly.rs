@@ -143,7 +143,6 @@ pub(crate) fn write(
     }
     let prepared = prepare_parts(writer, assembly, &repeats, report, progress).into_iter();
     let mut builder = Builder {
-        model,
         progress,
         writer,
         prepared,
@@ -582,7 +581,7 @@ fn prepare_history(
         if history.stop.is_some() {
             None
         } else {
-            let written = writer.history_design(part, history, step, Live::History)?;
+            let written = writer.history_design(part, history, step, Live::History, false)?;
             Some(writer.check(part, history, step, &written, progress)?)
         }
     } else {
@@ -606,7 +605,7 @@ fn prepare_history(
     crate::report_sketches(&mapping.features, &mut part_report);
     if let Ok(history) = &mapping.result {
         if history.stop.is_some() {
-            let original = writer.history_design(part, history, step, Live::Original)?;
+            let original = writer.history_design(part, history, step, Live::Original, false)?;
             writer.check_import(part, &original, &mut part_report, progress);
         }
     }
@@ -734,7 +733,6 @@ fn prepare_parts(
 
 /// The design's components, occurrences and Import features as they are built.
 struct Builder<'r> {
-    model: &'r Model,
     progress: Option<&'r dutchman_core::Progress<'r>>,
     prepared: std::vec::IntoIter<Option<PreparedPart>>,
     writer: &'r SolidCraftWriter,
@@ -865,7 +863,7 @@ impl Builder<'_> {
                     continue;
                 }
             };
-            if parent == 0 && self.writer.should_stand_up(self.model) {
+            if parent == 0 && self.writer.should_stand_up() {
                 transform = compose(&dutchman_core::placement::STAND_UP_Y_TO_Z, &transform);
             }
             let Some(Some((component, name))) = components.get(placement.part).cloned() else {

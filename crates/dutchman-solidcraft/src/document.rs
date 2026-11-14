@@ -244,13 +244,13 @@ pub(crate) fn history_design(
             step_blob,
         ));
     }
-    let next_id = orig_occurrence
-        .unwrap_or(if live == Live::Whole && wrap_in_occurrence {
-            history.next_id
-        } else {
-            original
-        })
-        .saturating_add(1);
+    let next_id = if let Some(occ) = orig_occurrence {
+        occ.saturating_add(1)
+    } else if live == Live::Whole && wrap_in_occurrence {
+        history.next_id
+    } else {
+        original.saturating_add(1)
+    };
     let mut doc = json!({
         "format": FORMAT,
         "name": model.name,

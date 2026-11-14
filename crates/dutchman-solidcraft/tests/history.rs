@@ -10193,6 +10193,38 @@ fn a_fillet_of_tangency_weight_one_maps_as_a_circular_fillet() {
     }
 }
 
+#[test]
+fn a_fillet_remains_mapped_when_standing_up() {
+    let model = input_blend("fillet", json!({"kind": "constant", "radius": 1.0}), false);
+    let _fake;
+    let cli_path = match solidcraft() {
+        Some(cli) => cli,
+        None => {
+            _fake = fake_cli(&[("unit cube", prism_edges(&SQUARE, 0.0, 10.0))], 0);
+            _fake.path.clone()
+        }
+    };
+    let writer = SolidCraftWriter::new()
+        .verification(Verification::With(cli_path))
+        .stand_up(Some(true));
+    let (document, report) = convert(&model, &writer);
+    let features = document["features"].as_array().unwrap();
+    assert!(
+        features.iter().any(|f| f["type"] == "fillet"),
+        "{}",
+        history_line(&report)
+    );
+    assert_eq!(
+        document["occurrences"][0]["transform"],
+        json!([
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, -1.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ])
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn blends_keep_multiple_picks_and_groups_and_refuse_repeated_geometry_and_weights() {
