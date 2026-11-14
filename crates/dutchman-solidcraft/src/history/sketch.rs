@@ -147,6 +147,8 @@ pub(crate) fn map(
     }
     let id = ctx.id();
     let name = name(feature)
+        .or_else(|| sketch.get("name").and_then(Value::as_str))
+        .filter(|n| !n.trim().is_empty())
         .map(str::to_owned)
         .unwrap_or_else(|| format!("Sketch{id}"));
     if stray_count > 0 {

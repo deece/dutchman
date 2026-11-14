@@ -1,0 +1,489 @@
+From 0180b861ffa1851b9489341ec5d9d014ed27d28a Mon Sep 17 00:00:00 2001
+From: Alastair D'Silva <alastair@d-silva.org>
+Date: Tue, 10 Nov 2026 18:43:33 +1100
+Subject: [PATCH 1/2] Translate Fusion 360 Y-up coordinates to SolidCraft Z-up
+ by default
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fusion 360 uses a Y-up right-handed coordinate system by default,
+whereas SolidCraft uses a standard Z-up right-handed coordinate system.
+This causes Fusion 360 models imported into SolidCraft to appear lying on
+their side.
+
+Orient root occurrences for Fusion 360 designs (+90° about +X:
+X -> X, Y -> Z, Z -> -Y) by default, while providing --stand-up and
+--no-stand-up CLI flags for user override.
+---
+ crates/dutchman-core/src/lib.rs               | 14 ++++
+ crates/dutchman-core/src/placement.rs         |  8 ++
+ crates/dutchman-solidcraft/src/assembly.rs    |  7 +-
+ crates/dutchman-solidcraft/src/document.rs    | 74 ++++++++++++++++---
+ crates/dutchman-solidcraft/src/lib.rs         | 18 ++++-
+ .../golden/generated_unit_cube.document.json  |  4 +-
+ crates/dutchman-solidcraft/tests/history.rs   |  7 +-
+ crates/dutchman/src/lib.rs                    | 21 ++++++
+ crates/dutchman/src/mcp.rs                    |  6 +-
+ crates/dutchman/src/worker.rs                 |  6 ++
+ 10 files changed, 148 insertions(+), 17 deletions(-)
+
+diff --git a/crates/dutchman-core/src/lib.rs b/crates/dutchman-core/src/lib.rs
+index 6920f62..13b5b5b 100644
+--- a/crates/dutchman-core/src/lib.rs
++++ b/crates/dutchman-core/src/lib.rs
+@@ -64,6 +64,20 @@ pub struct Model {
+ }
+ 
+ impl Model {
++    /// Whether this model was decoded from a Fusion 360 design (.f3d, .f3z).
++    pub fn is_fusion(&self) -> bool {
++        if let Some(source) = &self.source_file {
++            let path = Path::new(source);
++            if matches!(
++                Format::from_path(path),
++                Some(Format::FusionArchive | Format::FusionMultiDocument)
++            ) {
++                return true;
++            }
++        }
++        false
++    }
++
+     /// Classifies an assignment no placed component retained, using decoded identities.
+     pub fn unplaced_appearance_cause(
+         &self,
+diff --git a/crates/dutchman-core/src/placement.rs b/crates/dutchman-core/src/placement.rs
+index 26c6045..4be2fd3 100644
+--- a/crates/dutchman-core/src/placement.rs
++++ b/crates/dutchman-core/src/placement.rs
+@@ -18,6 +18,14 @@ pub const MIRROR_X: Placement3x4 = [
+     [0.0, 0.0, 1.0, 0.0],
+ ];
+ 
++/// Rotation from Fusion 360's default Y-up coordinate system to SolidCraft's default Z-up
++/// coordinate system (+90° about +X: X -> X, Y -> Z, Z -> -Y).
++pub const STAND_UP_Y_TO_Z: Placement3x4 = [
++    [1.0, 0.0, 0.0, 0.0],
++    [0.0, 0.0, -1.0, 0.0],
++    [0.0, 1.0, 0.0, 0.0],
++];
++
+ /// Admit orthogonal placements within 1e-6, remove numeric drift, and factor out an X
+ /// reflection when needed. The returned placement is always proper rigid; translation is
+ /// unchanged. Scaling and shear outside that tolerance are refused, never repaired.
+diff --git a/crates/dutchman-solidcraft/src/assembly.rs b/crates/dutchman-solidcraft/src/assembly.rs
+index de43bb4..e63c511 100644
+--- a/crates/dutchman-solidcraft/src/assembly.rs
++++ b/crates/dutchman-solidcraft/src/assembly.rs
+@@ -143,6 +143,7 @@ pub(crate) fn write(
+     }
+     let prepared = prepare_parts(writer, assembly, &repeats, report, progress).into_iter();
+     let mut builder = Builder {
++        model,
+         progress,
+         writer,
+         prepared,
+@@ -733,6 +734,7 @@ fn prepare_parts(
+ 
+ /// The design's components, occurrences and Import features as they are built.
+ struct Builder<'r> {
++    model: &'r Model,
+     progress: Option<&'r dutchman_core::Progress<'r>>,
+     prepared: std::vec::IntoIter<Option<PreparedPart>>,
+     writer: &'r SolidCraftWriter,
+@@ -851,7 +853,7 @@ impl Builder<'_> {
+                     .get(index)
+                     .unwrap_or(&placement.transform)
+             };
+-            let transform = match rigid(transform) {
++            let mut transform = match rigid(transform) {
+                 Ok((rotation, false)) => rotation,
+                 result => {
+                     let kind = result.err().unwrap_or("unresolved reflected placement");
+@@ -863,6 +865,9 @@ impl Builder<'_> {
+                     continue;
+                 }
+             };
++            if parent == 0 && self.writer.should_stand_up(self.model) {
++                transform = compose(&dutchman_core::placement::STAND_UP_Y_TO_Z, &transform);
++            }
+             let Some(Some((component, name))) = components.get(placement.part).cloned() else {
+                 occurrences.push(None);
+                 continue;
+diff --git a/crates/dutchman-solidcraft/src/document.rs b/crates/dutchman-solidcraft/src/document.rs
+index 67e971a..7e7cc71 100644
+--- a/crates/dutchman-solidcraft/src/document.rs
++++ b/crates/dutchman-solidcraft/src/document.rs
+@@ -33,10 +33,24 @@ const IDENTITY: [[f64; 4]; 4] = [
+     [0.0, 0.0, 0.0, 1.0],
+ ];
+ 
++/// Rotation from Fusion 360's default Y-up coordinate system to SolidCraft's default Z-up
++/// coordinate system (+90° about +X: X -> X, Y -> Z, Z -> -Y), column-major.
++pub(crate) const STAND_UP_Y_TO_Z: [[f64; 4]; 4] = [
++    [1.0, 0.0, 0.0, 0.0],
++    [0.0, 0.0, 1.0, 0.0],
++    [0.0, -1.0, 0.0, 0.0],
++    [0.0, 0.0, 0.0, 1.0],
++];
++
+ /// A design holding the model as one Import feature in its own component, the STEP text kept
+ /// in the container at `step_blob`.
+-pub(crate) fn import_design(model: &Model, step_blob: &str) -> Value {
++pub(crate) fn import_design(model: &Model, step_blob: &str, stand_up: bool) -> Value {
+     let component = component_name(&model.name);
++    let transform = if stand_up {
++        STAND_UP_Y_TO_Z
++    } else {
++        IDENTITY
++    };
+     json!({
+         "format": FORMAT,
+         "name": model.name,
+@@ -50,7 +64,7 @@ pub(crate) fn import_design(model: &Model, step_blob: &str) -> Value {
+             "component": COMPONENT,
+             "parent": 0,
+             "grounded": false,
+-            "transform": IDENTITY,
++            "transform": transform,
+         }],
+         "features": [import_feature(model, FEATURE, &feature_name(model), Some(COMPONENT), false, step_blob)],
+     })
+@@ -198,11 +212,12 @@ pub(crate) fn history_design(
+     step_blob: &str,
+     live: Live,
+     target: SolidCraftVersion,
++    stand_up: bool,
+ ) -> Value {
+     let mut history = history.clone();
++    let hidden = matches!(live, Live::Partial | Live::Unverified);
+     let component = history.next_id;
+     let occurrence = component.saturating_add(1);
+-    let hidden = matches!(live, Live::Partial | Live::Unverified);
+     if hidden {
+         history.relocate(0, component, "", &mut Default::default());
+         history.next_id = occurrence.saturating_add(1);
+@@ -216,22 +231,32 @@ pub(crate) fn history_design(
+         }
+     }
+     let original = history.next_id;
++    let (orig_component, orig_occurrence, original_feature_comp) = if hidden && stand_up {
++        let comp = original.saturating_add(1);
++        let occ = comp.saturating_add(1);
++        (Some(comp), Some(occ), Some(comp))
++    } else {
++        (None, None, None)
++    };
+     if live != Live::Whole {
+         features.push(import_feature(
+             model,
+             original,
+             ORIGINAL,
+-            None,
++            original_feature_comp,
+             live == Live::History,
+             step_blob,
+         ));
+     }
++    let next_id = orig_occurrence
++        .unwrap_or(original)
++        .saturating_add(1);
+     let mut doc = json!({
+         "format": FORMAT,
+         "name": model.name,
+         "units": "mm",
+         "params": history.params,
+-        "next_id": original.saturating_add(1),
++        "next_id": next_id,
+         "features": features,
+     });
+     if let (Some(first), Some(fields)) = (history.sheet_rules.first(), doc.as_object_mut()) {
+@@ -246,11 +271,34 @@ pub(crate) fn history_design(
+         } else {
+             "Editable history (partial)"
+         };
+-        fields.insert(
+-            "components".to_owned(),
+-            json!([editable_history_component(component, part, 0, target)]),
+-        );
+-        fields.insert("occurrences".to_owned(), json!([{"id": occurrence, "name": format!("{part}:1"), "component": component, "parent": 0, "grounded": true, "transform": IDENTITY}]));
++        let hist_transform = if stand_up {
++            STAND_UP_Y_TO_Z
++        } else {
++            IDENTITY
++        };
++        let mut components = vec![editable_history_component(component, part, 0, target)];
++        let mut occurrences = vec![json!({
++            "id": occurrence,
++            "name": format!("{part}:1"),
++            "component": component,
++            "parent": 0,
++            "grounded": true,
++            "transform": hist_transform,
++        })];
++        if let (Some(orig_comp), Some(orig_occ)) = (orig_component, orig_occurrence) {
++            let cname = component_name(&model.name);
++            components.push(json!({"id": orig_comp, "name": cname, "parent": 0}));
++            occurrences.push(json!({
++                "id": orig_occ,
++                "name": format!("{cname}:1"),
++                "component": orig_comp,
++                "parent": 0,
++                "grounded": false,
++                "transform": STAND_UP_Y_TO_Z,
++            }));
++        }
++        fields.insert("components".to_owned(), json!(components));
++        fields.insert("occurrences".to_owned(), json!(occurrences));
+         let sketches: Vec<Value> = history
+             .features
+             .iter()
+@@ -262,6 +310,7 @@ pub(crate) fn history_design(
+             json!({"hidden_occurrences": [[occurrence]], "hidden_sketches": sketches}),
+         );
+     }
++
+     let has_looks = !history.looks.is_empty() || !history.face_looks.is_empty();
+     if let (true, Some(fields)) = (has_looks, doc.as_object_mut()) {
+         let mut appearances = json!({"bodies": history.looks});
+@@ -448,7 +497,7 @@ mod history_tests {
+                 Live::Whole,
+                 Live::Original,
+             ] {
+-                let doc = history_design(&model, &history(), "blobs/x.step", live, version);
++                let doc = history_design(&model, &history(), "blobs/x.step", live, version, false);
+                 assert_eq!(doc["format"], FORMAT);
+                 if matches!(live, Live::Partial | Live::Unverified) {
+                     let component = &doc["components"][0];
+@@ -478,6 +527,7 @@ mod history_tests {
+             "blobs/x.step",
+             Live::History,
+             SolidCraftVersion::default(),
++            false,
+         );
+         let features = doc["features"].as_array().unwrap();
+         assert_eq!(features.len(), 3);
+@@ -503,6 +553,7 @@ mod history_tests {
+             "",
+             Live::Whole,
+             SolidCraftVersion::default(),
++            false,
+         );
+         let features = doc["features"].as_array().unwrap();
+         assert_eq!(features.len(), 2);
+@@ -518,6 +569,7 @@ mod history_tests {
+             "blobs/x.step",
+             Live::Original,
+             SolidCraftVersion::default(),
++            false,
+         );
+         let features = doc["features"].as_array().unwrap();
+         assert!(features.iter().take(2).all(|f| f["suppressed"] == true));
+diff --git a/crates/dutchman-solidcraft/src/lib.rs b/crates/dutchman-solidcraft/src/lib.rs
+index ceb9f05..7ea7f68 100644
+--- a/crates/dutchman-solidcraft/src/lib.rs
++++ b/crates/dutchman-solidcraft/src/lib.rs
+@@ -82,6 +82,7 @@ pub struct SolidCraftWriter {
+     replay: Verification,
+     timeout: Duration,
+     hide_unverified: bool,
++    stand_up: Option<bool>,
+     memory_budget: Option<u64>,
+     memory_skip: OnceLock<(u64, u64)>,
+ }
+@@ -103,6 +104,7 @@ impl Default for SolidCraftWriter {
+             replay: Verification::Auto,
+             timeout: DEFAULT_TIMEOUT,
+             hide_unverified: false,
++            stand_up: None,
+             memory_budget: None,
+             memory_skip: OnceLock::new(),
+         }
+@@ -190,6 +192,17 @@ impl SolidCraftWriter {
+         self
+     }
+ 
++    /// Whether to orient Y-up models (such as Fusion 360 designs) to SolidCraft's Z-up
++    /// coordinate system. When `None` (the default), Fusion designs are stood up automatically.
++    pub fn stand_up(mut self, stand_up: Option<bool>) -> Self {
++        self.stand_up = stand_up;
++        self
++    }
++
++    pub(crate) fn should_stand_up(&self, model: &Model) -> bool {
++        self.stand_up.unwrap_or_else(|| model.is_fusion())
++    }
++
+     /// Additional memory estimated after reading the design. Recheck current free memory
+     /// immediately before every geometry replay; a skipped check stays skipped for this design.
+     pub fn history_check_memory(mut self, needed: u64, available: Option<u64>) -> Self {
+@@ -374,7 +387,8 @@ impl SolidCraftWriter {
+         let references = references.filter(|_| self.sketches);
+         document::report_unmapped(model, references, report);
+         let design = container::Container::new(step.as_bytes())?;
+-        let mut doc = document::import_design(model, design.step_blob());
++        let mut doc =
++            document::import_design(model, design.step_blob(), self.should_stand_up(model));
+         let looks = history::imported(model, step, report, false)?;
+         document::import_looks(&mut doc, &looks);
+         if let Some(references) = references {
+@@ -426,6 +440,7 @@ impl SolidCraftWriter {
+             design.step_blob(),
+             live,
+             self.resolved_version(),
++            self.should_stand_up(model),
+         );
+         if matches!(live, Live::Partial | Live::Unverified) {
+             let mut looks = history::imported(model, step, report, false)?;
+@@ -444,6 +459,7 @@ impl SolidCraftWriter {
+         design.finish(&doc)
+     }
+ 
++
+     /// What inspecting says of the blends, which it does not replay: refused when no
+     /// SolidCraft CLI would find their edges, as writing would refuse them.
+     fn plan_blends(&self, mapping: &mut history::Mapping) {
+diff --git a/crates/dutchman-solidcraft/tests/golden/generated_unit_cube.document.json b/crates/dutchman-solidcraft/tests/golden/generated_unit_cube.document.json
+index 6b029cc..fce92d4 100644
+--- a/crates/dutchman-solidcraft/tests/golden/generated_unit_cube.document.json
++++ b/crates/dutchman-solidcraft/tests/golden/generated_unit_cube.document.json
+@@ -37,14 +37,14 @@
+         ],
+         [
+           0.0,
+-          1.0,
+           0.0,
++          1.0,
+           0.0
+         ],
+         [
+           0.0,
++          -1.0,
+           0.0,
+-          1.0,
+           0.0
+         ],
+         [
+diff --git a/crates/dutchman-solidcraft/tests/history.rs b/crates/dutchman-solidcraft/tests/history.rs
+index 201264a..ff50e09 100644
+--- a/crates/dutchman-solidcraft/tests/history.rs
++++ b/crates/dutchman-solidcraft/tests/history.rs
+@@ -9703,7 +9703,12 @@ fn assert_partial(document: &Value, report: &Report, sketches: usize) {
+     let original = features.last().unwrap();
+     assert_eq!(original["type"], "import");
+     assert_eq!(original["suppressed"], false);
+-    assert!(original.get("component").is_none());
++    let stood_up = document["components"].as_array().map_or(0, |c| c.len()) > 1;
++    if stood_up {
++        assert_eq!(original["component"], document["components"][1]["id"]);
++    } else {
++        assert!(original.get("component").is_none());
++    }
+     let component = &document["components"][0]["id"];
+     assert!(features
+         .iter()
+diff --git a/crates/dutchman/src/lib.rs b/crates/dutchman/src/lib.rs
+index 454f40a..4e59122 100644
+--- a/crates/dutchman/src/lib.rs
++++ b/crates/dutchman/src/lib.rs
+@@ -203,6 +203,13 @@ pub struct ConvertOptions {
+     /// Seconds each SolidCraft check may run before the history is written unverified.
+     #[arg(long, value_name = "SECONDS", default_value_t = DEFAULT_TIMEOUT.as_secs())]
+     pub verify_timeout: u64,
++    /// Rotate Y-up models (such as Fusion 360) so their +Y axis becomes SolidCraft's +Z axis.
++    /// Active by default for Fusion designs; pass --no-stand-up to preserve source axes.
++    #[arg(long, conflicts_with = "no_stand_up")]
++    pub stand_up: bool,
++    /// Keep source axes without standing Y-up models up along +Z.
++    #[arg(long, conflicts_with = "stand_up")]
++    pub no_stand_up: bool,
+     /// The project folder an assembly's part files are searched in when they are not at their
+     /// stored paths (default: the nearest folder above the assembly holding an Inventor .ipj,
+     /// else two folders up; for convert-all, each folder given).
+@@ -241,6 +248,8 @@ impl Default for ConvertOptions {
+             freecad_timeout: 300,
+             no_clobber: false,
+             verify_timeout: DEFAULT_TIMEOUT.as_secs(),
++            stand_up: false,
++            no_stand_up: false,
+             project: None,
+             search: Vec::new(),
+             part: None,
+@@ -304,6 +313,17 @@ impl ConvertOptions {
+         choices
+     }
+ 
++    /// User's explicit choice for standing up Y-up models, if any.
++    pub fn stand_up_choice(&self) -> Option<bool> {
++        if self.stand_up {
++            Some(true)
++        } else if self.no_stand_up {
++            Some(false)
++        } else {
++            None
++        }
++    }
++
+     /// The legacy switch is an alias of first-placed.
+     pub fn effective_part_positions(&self) -> dutchman_core::PartPositions {
+         if self.stored_placements {
+@@ -342,6 +362,7 @@ impl ConvertOptions {
+                     .joints(self.choices().joints)
+                     .verification(self.verification())
+                     .target_version(self.solidcraft_version)
++                    .stand_up(self.stand_up_choice())
+                     .timeout(Duration::from_secs(self.verify_timeout)),
+             ),
+             OutputFormat::Freecad | OutputFormat::Fcstd => {
+diff --git a/crates/dutchman/src/mcp.rs b/crates/dutchman/src/mcp.rs
+index f8f5f3d..8bd5428 100644
+--- a/crates/dutchman/src/mcp.rs
++++ b/crates/dutchman/src/mcp.rs
+@@ -552,7 +552,7 @@ fn count(arguments: &Arguments, key: &str) -> Result<Option<NonZeroUsize>, Strin
+     }
+ }
+ 
+-const OPTIONS: [&str; 19] = [
++const OPTIONS: [&str; 21] = [
+     "diagnostics",
+     "diagnostics_default",
+     "threads",
+@@ -569,6 +569,8 @@ const OPTIONS: [&str; 19] = [
+     "solidcraft",
+     "solidcraft_version",
+     "verify_timeout",
++    "stand_up",
++    "no_stand_up",
+     "overwrite",
+     "project",
+     "search",
+@@ -680,6 +682,8 @@ fn options(arguments: &Arguments) -> Result<ConvertOptions, String> {
+         no_clobber: !flag(arguments, "overwrite", true)?,
+         solidcraft,
+         solidcraft_version,
++        stand_up: flag(arguments, "stand_up", false)?,
++        no_stand_up: flag(arguments, "no_stand_up", false)?,
+         verify_timeout: count(arguments, "verify_timeout")?
+             .map_or(defaults.verify_timeout, |n| n.get() as u64),
+         project: search.project,
+diff --git a/crates/dutchman/src/worker.rs b/crates/dutchman/src/worker.rs
+index 1ac853e..9f79174 100644
+--- a/crates/dutchman/src/worker.rs
++++ b/crates/dutchman/src/worker.rs
+@@ -358,6 +358,12 @@ impl ConvertOptions {
+         if self.import_only {
+             args.push("--import-only".into());
+         }
++        if self.stand_up {
++            args.push("--stand-up".into());
++        }
++        if self.no_stand_up {
++            args.push("--no-stand-up".into());
++        }
+         if let Some(cli) = &self.solidcraft {
+             args.push("--solidcraft".into());
+             args.push(cli.clone().into_os_string());
+-- 
+2.53.0
+

@@ -1,0 +1,323 @@
+From f2e7ef6007216bd3a27a83c4f62cce98797ee882 Mon Sep 17 00:00:00 2001
+From: Alastair D'Silva <alastair@d-silva.org>
+Date: Tue, 10 Nov 2026 18:43:44 +1100
+Subject: [PATCH 2/2] Resolve Fusion 360 presentation body names and preserve
+ them in STEP shapes
+
+- Extract BulkStream.dat presentation records (name and visual GUID) using cadmpeg-container's ArchiveSnapshot, safely decompressing zstd frames via ruzstd
+- Map bodies with missing presentation names by matching their appearance visual GUID or remaining presentation order
+- Restate STEP shapes (MANIFOLD_SOLID_BREP, BREP_WITH_VOIDS, SHELL_BASED_SURFACE_MODEL) with their explicit body names so SolidCraft imports retain true body names (e.g. 'Bottom', 'Top') instead of generic container names
+---
+ .gitignore                             |   2 +
+ Cargo.lock                             |   1 +
+ Cargo.toml                             |   1 +
+ crates/dutchman-core/Cargo.toml        |   1 +
+ crates/dutchman-core/src/decode.rs     | 158 +++++++++++++++++++++++++
+ crates/dutchman-solidcraft/src/step.rs |  63 +++++++++-
+ 6 files changed, 225 insertions(+), 1 deletion(-)
+
+diff --git a/.gitignore b/.gitignore
+index 9280984..bafcf56 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -1,2 +1,4 @@
+ target/
+ __pycache__/
++/fixtures/
++/patches/
+diff --git a/Cargo.lock b/Cargo.lock
+index 58b2fe8..73c67de 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -1420,6 +1420,7 @@ name = "dutchman-core"
+ version = "0.2.8"
+ dependencies = [
+  "cadmpeg-codec-f3d",
++ "cadmpeg-container",
+  "cadmpeg-core",
+  "cadmpeg-ir",
+  "cadmpeg-registry",
+diff --git a/Cargo.toml b/Cargo.toml
+index fca300e..0c8ed53 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -24,6 +24,7 @@ aho-corasick = "1.1"
+ # cadmpeg at one tested commit of its main branch, the same for every cadmpeg crate. Move it
+ # after a batch of cadmpeg merges (docs/releasing.md); the nightly build takes cadmpeg's main.
+ cadmpeg-codec-f3d = { git = "https://github.com/cadmpeg/cadmpeg", rev = "52ba5a155fe3857737a0944315988ada5338c4ae" }
++cadmpeg-container = { git = "https://github.com/cadmpeg/cadmpeg", rev = "52ba5a155fe3857737a0944315988ada5338c4ae" }
+ cadmpeg-core = { git = "https://github.com/cadmpeg/cadmpeg", rev = "52ba5a155fe3857737a0944315988ada5338c4ae" }
+ cadmpeg-ir = { git = "https://github.com/cadmpeg/cadmpeg", rev = "52ba5a155fe3857737a0944315988ada5338c4ae" }
+ # Each crate turns on the cadmpeg codecs it needs: dutchman-core per input format (its
+diff --git a/crates/dutchman-core/Cargo.toml b/crates/dutchman-core/Cargo.toml
+index a750ba6..89c793a 100644
+--- a/crates/dutchman-core/Cargo.toml
++++ b/crates/dutchman-core/Cargo.toml
+@@ -11,6 +11,7 @@ publish = false
+ [dependencies]
+ cadmpeg-core.workspace = true
+ cadmpeg-codec-f3d.workspace = true
++cadmpeg-container.workspace = true
+ cadmpeg-ir.workspace = true
+ cadmpeg-registry.workspace = true
+ roxmltree.workspace = true
+diff --git a/crates/dutchman-core/src/decode.rs b/crates/dutchman-core/src/decode.rs
+index 3089ca5..1b07b89 100644
+--- a/crates/dutchman-core/src/decode.rs
++++ b/crates/dutchman-core/src/decode.rs
+@@ -235,6 +235,9 @@ fn decode_unguarded(
+         with_fallback(&mut ir, report, &policy, bytes.len() as u64)
+     };
+     drop_removed_bodies(&mut ir, report);
++    if format == Format::FusionArchive {
++        resolve_f3d_presentation_names(&mut ir, bytes);
++    }
+ 
+     let model = Model {
+         ir,
+@@ -510,6 +513,161 @@ fn drop_removed_bodies(ir: &mut cadmpeg_ir::CadIr, report: &mut Report) {
+     }
+ }
+ 
++/// Fusion archives record body names in `BulkStream.dat` presentations beside their visual GUID.
++/// When cadmpeg's body-suffix matching misses a body whose suffix changed across edits, match
++/// it by its assigned appearance visual GUID or remaining unused presentation order.
++fn resolve_f3d_presentation_names(ir: &mut cadmpeg_ir::CadIr, bytes: &[u8]) {
++    if !ir.model.bodies.iter().any(|b| b.name.is_none()) {
++        return;
++    }
++
++    let arena = cadmpeg_core::decode::DecodeArena::new();
++    let policy = cadmpeg_core::decode::DecodePolicy::default();
++    let Ok((ctx, root)) =
++        cadmpeg_core::decode::DecodeContext::from_root_bytes(bytes, &arena, &policy)
++    else {
++        return;
++    };
++    let Ok(snapshot) = cadmpeg_container::ArchiveSnapshot::new(&ctx, root) else {
++        return;
++    };
++
++    let mut presentations = Vec::new();
++    for entry in snapshot.entries() {
++        if entry.name.ends_with("BulkStream.dat") {
++            if let Ok(view) = snapshot.open(&ctx, &entry.name) {
++                extract_f3d_presentations(view.window(), &mut presentations);
++            }
++        }
++    }
++
++    if presentations.is_empty() {
++        return;
++    }
++
++    use cadmpeg_ir::appearance::AppearanceTarget;
++    let mut body_guids = std::collections::HashMap::new();
++    for binding in &ir.model.appearance_bindings {
++        let AppearanceTarget::Body(body_id) = &binding.target else {
++            continue;
++        };
++        let app_str = binding.appearance.as_str();
++        if let Some((_, guid)) = app_str.split_once('#') {
++            let clean_guid = guid.strip_suffix("_Post2015").unwrap_or(guid);
++            body_guids.insert(body_id.clone(), clean_guid.to_ascii_uppercase());
++        }
++    }
++
++    let mut used_names = std::collections::HashSet::new();
++    for body in ir.model.bodies.iter().filter_map(|b| b.name.as_ref()) {
++        used_names.insert(body.clone());
++    }
++
++    for body in &mut ir.model.bodies {
++        if body.name.is_some() {
++            continue;
++        }
++        if let Some(guid) = body_guids.get(&body.id) {
++            if let Some((name, _)) = presentations
++                .iter()
++                .find(|(name, p_guid)| p_guid == guid && !used_names.contains(name))
++            {
++                body.name = Some(name.clone());
++                used_names.insert(name.clone());
++            }
++        }
++    }
++
++    let remaining_unnamed: Vec<_> = ir
++        .model
++        .bodies
++        .iter_mut()
++        .filter(|b| b.name.is_none() && b.kind == cadmpeg_ir::topology::BodyKind::Solid)
++        .collect();
++
++    let mut unused_pres: Vec<_> = presentations
++        .iter()
++        .map(|(name, _)| name.clone())
++        .filter(|name| !used_names.contains(name))
++        .collect();
++    unused_pres.dedup();
++
++    for (body, name) in remaining_unnamed.into_iter().zip(unused_pres) {
++        body.name = Some(name);
++    }
++}
++
++fn extract_f3d_presentations(data: &[u8], presentations: &mut Vec<(String, String)>) {
++    const PATTERN: &[u8] = b"\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x24\x00\x00\x00";
++    let mut offset = 0;
++    while offset + PATTERN.len() + 72 <= data.len() {
++        let Some(window) = data.get(offset..) else {
++            break;
++        };
++        if let Some(pos) = window
++            .windows(PATTERN.len())
++            .position(|w| w == PATTERN)
++        {
++            let idx = offset + pos;
++            let guid_start = idx + PATTERN.len();
++            let guid_end = guid_start + 72;
++            if let Some(guid_bytes) = data.get(guid_start..guid_end) {
++                let guid: String = std::char::decode_utf16(
++                    guid_bytes
++                        .as_chunks::<2>()
++                        .0
++                        .iter()
++                        .map(|c| u16::from_le_bytes(*c)),
++                )
++                .filter_map(Result::ok)
++                .collect();
++
++                if guid.len() == 36 && guid.contains('-') {
++                    let min_back = idx.saturating_sub(120);
++                    let max_back = idx.saturating_sub(16);
++                    for back in (min_back..max_back).rev() {
++                        let Some(len_bytes) = data.get(back..back + 4) else {
++                            continue;
++                        };
++                        let Ok(arr) = <[u8; 4]>::try_from(len_bytes) else {
++                            continue;
++                        };
++                        let len = u32::from_le_bytes(arr) as usize;
++                        if (1..=64).contains(&len) {
++                            let str_start = back + 4;
++                            let str_end = str_start + len * 2;
++                            if str_end <= idx {
++                                if let Some(str_bytes) = data.get(str_start..str_end) {
++                                    let name: String = std::char::decode_utf16(
++                                        str_bytes
++                                            .as_chunks::<2>()
++                                            .0
++                                            .iter()
++                                            .map(|c| u16::from_le_bytes(*c)),
++                                    )
++                                    .filter_map(Result::ok)
++                                    .collect();
++
++                                    if name.len() == len
++                                        && name.chars().all(|c| !c.is_control())
++                                        && !name.starts_with("Prism")
++                                    {
++                                        presentations.push((name, guid.to_ascii_uppercase()));
++                                        break;
++                                    }
++                                }
++                            }
++                        }
++                    }
++                }
++            }
++            offset = idx + PATTERN.len();
++        } else {
++            break;
++        }
++    }
++}
++
+ fn geometry_only(ir: &mut cadmpeg_ir::CadIr) {
+     let mut source = std::mem::take(&mut ir.model);
+     macro_rules! keep {
+diff --git a/crates/dutchman-solidcraft/src/step.rs b/crates/dutchman-solidcraft/src/step.rs
+index 64f7326..7a3e596 100644
+--- a/crates/dutchman-solidcraft/src/step.rs
++++ b/crates/dutchman-solidcraft/src/step.rs
+@@ -123,7 +123,8 @@ fn restate_unguarded(model: &Model, report: &mut Report) -> Result<String, Error
+     }
+     let text = String::from_utf8(bytes)
+         .map_err(|_| Error::Restate("cadmpeg wrote STEP that is not UTF-8".to_owned()))?;
+-    Ok(name_unnamed_product(text, &model.name))
++    let step = name_unnamed_product(text, &model.name);
++    Ok(name_step_shapes(step, model))
+ }
+ 
+ /// What the procedural surfaces cadmpeg could not restate are, said plainly: a coil's helix
+@@ -170,6 +171,66 @@ fn name_unnamed_product(step: String, design: &str) -> String {
+     }
+ }
+ 
++/// Names the solid and surface shapes cadmpeg left unnamed in the STEP text,
++/// using the corresponding body names from the model in shape arena order.
++fn name_step_shapes(step: String, model: &Model) -> String {
++    let names: Vec<String> = model
++        .ir
++        .model
++        .bodies
++        .iter()
++        .filter(|b| {
++            matches!(
++                b.kind,
++                cadmpeg_ir::topology::BodyKind::Solid | cadmpeg_ir::topology::BodyKind::Sheet
++            )
++        })
++        .filter_map(|b| b.name.as_ref())
++        .map(|name| {
++            name.chars()
++                .filter(|c| c.is_ascii_alphanumeric() || matches!(c, ' ' | '-' | '_' | '.'))
++                .collect::<String>()
++        })
++        .collect();
++    if names.is_empty() {
++        return step;
++    }
++    let mut out = String::with_capacity(step.len() + names.len() * 32);
++    let mut name_idx = 0;
++    for line in step.lines() {
++        let trimmed = line.trim_start();
++        if let Some((id, def)) = trimmed.split_once('=') {
++            let def_trimmed = def.trim_start();
++            let is_shape = [
++                "MANIFOLD_SOLID_BREP('',",
++                "BREP_WITH_VOIDS('',",
++                "SHELL_BASED_SURFACE_MODEL('',",
++            ]
++            .iter()
++            .find(|prefix| def_trimmed.starts_with(*prefix));
++            if let Some(prefix) = is_shape {
++                if let Some(name) = names.get(name_idx) {
++                    if !name.trim().is_empty() {
++                        let new_prefix = prefix.replace("''", &format!("'{name}'"));
++                        let remainder = &def_trimmed[prefix.len()..];
++                        out.push_str(id);
++                        out.push('=');
++                        out.push_str(&new_prefix);
++                        out.push_str(remainder);
++                        out.push('\n');
++                        name_idx += 1;
++                        continue;
++                    }
++                }
++                name_idx += 1;
++            }
++        }
++        out.push_str(line);
++        out.push('\n');
++    }
++    out
++}
++
+ /// The product name of our single-part STEP restatement, used by SolidCraft
+ /// when an Import has no explicit body names. STEP escapes a quote by doubling it.
+ pub(crate) fn import_name(step: &str) -> Option<String> {
+-- 
+2.53.0
+

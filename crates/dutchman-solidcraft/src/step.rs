@@ -123,7 +123,8 @@ fn restate_unguarded(model: &Model, report: &mut Report) -> Result<String, Error
     }
     let text = String::from_utf8(bytes)
         .map_err(|_| Error::Restate("cadmpeg wrote STEP that is not UTF-8".to_owned()))?;
-    Ok(name_unnamed_product(text, &model.name))
+    let step = name_unnamed_product(text, &model.name);
+    Ok(name_step_shapes(step, model))
 }
 
 /// What the procedural surfaces cadmpeg could not restate are, said plainly: a coil's helix
@@ -168,6 +169,66 @@ fn name_unnamed_product(step: String, design: &str) -> String {
     } else {
         step.replace(PLACEHOLDER, &format!("'{name}'"))
     }
+}
+
+/// Names the solid and surface shapes cadmpeg left unnamed in the STEP text,
+/// using the corresponding body names from the model in shape arena order.
+fn name_step_shapes(step: String, model: &Model) -> String {
+    let names: Vec<String> = model
+        .ir
+        .model
+        .bodies
+        .iter()
+        .filter(|b| {
+            matches!(
+                b.kind,
+                cadmpeg_ir::topology::BodyKind::Solid | cadmpeg_ir::topology::BodyKind::Sheet
+            )
+        })
+        .filter_map(|b| b.name.as_ref())
+        .map(|name| {
+            name.chars()
+                .filter(|c| c.is_ascii_alphanumeric() || matches!(c, ' ' | '-' | '_' | '.'))
+                .collect::<String>()
+        })
+        .collect();
+    if names.is_empty() {
+        return step;
+    }
+    let mut out = String::with_capacity(step.len() + names.len() * 32);
+    let mut name_idx = 0;
+    for line in step.lines() {
+        let trimmed = line.trim_start();
+        if let Some((id, def)) = trimmed.split_once('=') {
+            let def_trimmed = def.trim_start();
+            let is_shape = [
+                "MANIFOLD_SOLID_BREP('',",
+                "BREP_WITH_VOIDS('',",
+                "SHELL_BASED_SURFACE_MODEL('',",
+            ]
+            .iter()
+            .find(|prefix| def_trimmed.starts_with(*prefix));
+            if let Some(prefix) = is_shape {
+                if let Some(name) = names.get(name_idx) {
+                    if !name.trim().is_empty() {
+                        let new_prefix = prefix.replace("''", &format!("'{name}'"));
+                        let remainder = &def_trimmed[prefix.len()..];
+                        out.push_str(id);
+                        out.push('=');
+                        out.push_str(&new_prefix);
+                        out.push_str(remainder);
+                        out.push('\n');
+                        name_idx += 1;
+                        continue;
+                    }
+                }
+                name_idx += 1;
+            }
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
 }
 
 /// The product name of our single-part STEP restatement, used by SolidCraft
@@ -269,5 +330,15 @@ mod tests {
             name_unnamed_product(step.to_owned(), "it's"),
             "PRODUCT('its')"
         );
+    }
+
+    #[test]
+    fn step_shapes_are_named_from_model_bodies() {
+        let mut model = crate::testing::cube();
+        model.ir.model.bodies[0].name = Some("Bottom".to_owned());
+        let step = "#10 = MANIFOLD_SOLID_BREP('',#11);\n#20 = BREP_WITH_VOIDS('',#21,#22);\n";
+        let named = name_step_shapes(step.to_owned(), &model);
+        assert!(named.contains("MANIFOLD_SOLID_BREP('Bottom',#11);"));
+        assert!(named.contains("BREP_WITH_VOIDS('',#21,#22);"));
     }
 }
